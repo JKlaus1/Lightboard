@@ -1,0 +1,36 @@
+{
+  "name": "StrobeA",
+  "scene_type": "effect",
+  "effect": "strobe",
+  "primary": {
+    "a": 255,
+    "b": 255,
+    "g": 255,
+    "r": 255,
+    "uv": 255,
+    "w": 255
+  },
+  "secondary": {
+    "a": 0,
+    "b": 0,
+    "g": 0,
+    "r": 0,
+    "uv": 0,
+    "w": 0
+  },
+  "accent": null,
+  "primary_sample": false,
+  "secondary_sample": true,
+  "accent_sample": false,
+  "params": {
+    "duty": 0.15,
+    "speed": 6
+  },
+  "fixtures_enabled": [
+    "blizzard_exa_54ch_1779867499106_0",
+    "blizzard_exa_54ch_1779867499106_1"
+  ],
+  "rendering_mode": "continuous_strip",
+  "launch_fade": 0,
+  "folder": "Bars"
+}

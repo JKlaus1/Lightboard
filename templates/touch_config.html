@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Touch Screen Config</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg:      #0a0a0f;
+    --surface: #13131c;
+    --border:  #1e1e2e;
+    --accent:  #e8630a;
+    --text:    #d4d4e8;
+    --dim:     #555570;
+    --success: #27ae60;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100dvh;
+    padding: 1rem 1rem 3rem;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    font-size: 0.9rem;
+    font-weight: 800;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .hbtn {
+    padding: 0.4rem 0.75rem;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .hbtn.accent { background: var(--accent); color: #000; border-color: var(--accent); }
+
+  .label {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 0.4rem;
+  }
+
+  /* Grid size controls */
+  .size-row {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    align-items: center;
+  }
+  .size-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    flex: 1;
+  }
+  .size-field input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    outline: none;
+  }
+  .size-field input:focus { border-color: var(--accent); }
+
+  /* Grid cells */
+  #grid-wrap {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 1.25rem;
+  }
+  .grid-cell {
+    min-height: 52px;
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 6px;
+    position: relative;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .grid-cell:active { background: #1a1a2e; }
+  .grid-cell.filled { border-style: solid; border-color: var(--accent); }
+  .grid-cell .cell-name {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: center;
+    line-height: 1.2;
+  }
+  .grid-cell.filled .cell-name { color: #fff; }
+  .grid-cell .cell-type {
+    font-size: 0.55rem;
+    color: var(--dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .grid-cell .cell-empty {
+    font-size: 0.65rem;
+    color: var(--dim);
+    letter-spacing: 0.08em;
+  }
+  .grid-cell .clear-btn {
+    position: absolute;
+    top: 3px; right: 5px;
+    background: none;
+    border: none;
+    color: var(--dim);
+    font-size: 0.7rem;
+    cursor: pointer;
+    padding: 2px 4px;
+    line-height: 1;
+  }
+  .grid-cell .clear-btn:active { color: #e74c3c; }
+
+  /* Save status */
+  #save-msg {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-align: center;
+    min-height: 1.2rem;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.5rem;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 100;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: #13131c;
+    border: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    padding: 1rem;
+    width: 100%;
+    max-width: 480px;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .modal h2 {
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+  }
+  .modal-btns {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .modal-btns button {
+    flex: 1;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .btn-cancel { background: var(--surface); color: var(--dim); }
+  .picker-section {
+    margin-bottom: 0.75rem;
+  }
+  .picker-section-label {
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 0.4rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    margin-bottom: 0.35rem;
+    cursor: pointer;
+    transition: border-color 0.1s, background 0.1s;
+  }
+  .picker-item:active { background: #1a1a2e; border-color: var(--accent); }
+  .picker-item .pname {
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .picker-item .ptype {
+    font-size: 0.6rem;
+    color: var(--dim);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* Label editor */
+  #label-wrap {
+    margin-bottom: 0.75rem;
+  }
+  #label-input {
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 700;
+    outline: none;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  #label-input:focus { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎛 Touch Config</h1>
+  <div style="display:flex;gap:0.5rem">
+    <button class="hbtn" onclick="location.href='/'">← Back</button>
+    <button class="hbtn accent" onclick="saveConfig()">Save</button>
+  </div>
+</header>
+
+<div class="label">Grid Size</div>
+<div class="size-row">
+  <div class="size-field">
+    <div class="label">Columns</div>
+    <input type="number" id="cols-input" min="1" max="4" value="2" onchange="rebuildGrid()">
+  </div>
+  <div class="size-field">
+    <div class="label">Rows</div>
+    <input type="number" id="rows-input" min="1" max="8" value="4" onchange="rebuildGrid()">
+  </div>
+</div>
+
+<div class="label">Button Grid — tap a cell to assign</div>
+<div id="grid-wrap"></div>
+
+<div id="save-msg"></div>
+<button class="hbtn accent" style="width:100%;padding:0.75rem;font-size:0.85rem;" onclick="saveConfig()">Save Configuration</button>
+
+<!-- Picker modal -->
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <h2>Assign Button</h2>
+
+    <div id="label-wrap">
+      <div class="label">Custom Label (optional)</div>
+      <input type="text" id="label-input" placeholder="Leave blank for default" maxlength="24">
+    </div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    </div>
+
+    <!-- Action buttons section -->
+    <div class="picker-section">
+      <div class="picker-section-label">⚡ Actions</div>
+      <div id="action-list"></div>
+    </div>
+
+    <!-- Scenes section -->
+    <div class="picker-section">
+      <div class="picker-section-label">🎬 Scenes</div>
+      <div id="scene-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const ACTIONS = [
+    { action: 'blackout',    label: '⬛ Blackout',       type: 'action' },
+    { action: 'singer',      label: '🎤 Singer Toggle',  type: 'action' },
+    { action: 'master-up',   label: '🔆 Master Brighter', type: 'action' },
+    { action: 'master-down', label: '🔅 Master Dimmer',   type: 'action' },
+    { action: 'singer-up',   label: '🎤 Singer + Level',  type: 'action' },
+    { action: 'singer-down', label: '🎤 Singer - Level',  type: 'action' },
+    { action: 'tempo',       label: '👆 Tap Tempo',       type: 'action' },
+    { action: 'tempo-cancel',label: '✕ Cancel Tempo',     type: 'action' },
+    { action: 'cycler',      label: '🔁 Beat Cycler',     type: 'action' },
+  ];
+
+  let cells      = [];
+  let scenes     = [];
+  let editingIdx = null;
+
+  async function init() {
+    try {
+      const [cfgRes, sceneRes] = await Promise.all([
+        fetch('/api/touch/config'),
+        fetch('/api/library/scenes'),
+      ]);
+      const cfg = await cfgRes.json();
+      scenes = await sceneRes.json();
+
+      document.getElementById('cols-input').value = cfg.cols || 2;
+      document.getElementById('rows-input').value = cfg.rows || 4;
+      cells = cfg.cells || [];
+
+      const total = (cfg.cols || 2) * (cfg.rows || 4);
+      while (cells.length < total) cells.push(null);
+      cells = cells.slice(0, total);
+
+      buildGrid();
+    } catch(e) {
+      document.getElementById('save-msg').textContent = 'Error loading config';
+      document.getElementById('save-msg').style.color = '#e74c3c';
+    }
+  }
+
+  function rebuildGrid() {
+    const cols  = parseInt(document.getElementById('cols-input').value) || 2;
+    const rows  = parseInt(document.getElementById('rows-input').value) || 4;
+    const total = cols * rows;
+    while (cells.length < total) cells.push(null);
+    cells = cells.slice(0, total);
+    buildGrid();
+  }
+
+  function buildGrid() {
+    const cols = parseInt(document.getElementById('cols-input').value) || 2;
+    const wrap = document.getElementById('grid-wrap');
+    wrap.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    wrap.innerHTML = '';
+
+    cells.forEach((cell, i) => {
+      const el = document.createElement('div');
+      el.className = 'grid-cell' + (cell ? ' filled' : '');
+      el.onclick = () => openModal(i);
+
+      if (cell) {
+        const typeLabel = cell.action ? 'action' :
+                          cell.scene_type === 'effect' ? 'effect' :
+                          cell.scene_type === 'mover_motion' ? 'motion' :
+                          cell.scene_type === 'mover_look'   ? 'look'   : 'scene';
+        el.innerHTML = `
+          <span class="cell-name">${cell.label || cell.name || cell.action || ''}</span>
+          <span class="cell-type">${typeLabel}</span>
+          <button class="clear-btn" onclick="event.stopPropagation();clearCell(${i})">✕</button>`;
+      } else {
+        el.innerHTML = `<span class="cell-empty">tap to assign</span>`;
+      }
+      wrap.appendChild(el);
+    });
+  }
+
+  function clearCell(i) {
+    cells[i] = null;
+    buildGrid();
+  }
+
+  function openModal(i) {
+    editingIdx = i;
+    document.getElementById('label-input').value = cells[i]?.label || '';
+
+    // Build action list
+    const actionList = document.getElementById('action-list');
+    actionList.innerHTML = '';
+    ACTIONS.forEach(a => {
+      const el = document.createElement('div');
+      el.className = 'picker-item';
+      el.innerHTML = `<span class="pname">${a.label}</span><span class="ptype">action</span>`;
+      el.onclick = () => assignAction(a);
+      actionList.appendChild(el);
+    });
+
+    // Clear option
+    const clearEl = document.createElement('div');
+    clearEl.className = 'picker-item';
+    clearEl.innerHTML = `<span class="pname" style="color:var(--dim)">— Clear slot —</span>`;
+    clearEl.onclick = () => { cells[editingIdx] = null; closeModal(); buildGrid(); };
+    actionList.appendChild(clearEl);
+
+    // Build scene list
+    const sceneList = document.getElementById('scene-list');
+    sceneList.innerHTML = '';
+    scenes.forEach(scene => {
+      const typeLabel = scene.scene_type === 'effect' ? 'effect' :
+                        scene.scene_type === 'mover_motion' ? 'motion' :
+                        scene.scene_type === 'mover_look'   ? 'look'   : 'scene';
+      const el = document.createElement('div');
+      el.className = 'picker-item';
+      el.innerHTML = `<span class="pname">${scene.name || scene.id}</span><span class="ptype">${typeLabel}</span>`;
+      el.onclick = () => assignScene(scene);
+      sceneList.appendChild(el);
+    });
+
+    document.getElementById('modal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open');
+    editingIdx = null;
+  }
+
+  function assignAction(a) {
+    const customLabel = document.getElementById('label-input').value.trim().toUpperCase();
+    cells[editingIdx] = {
+      action: a.action,
+      name:   a.label,
+      label:  customLabel || '',
+    };
+    closeModal();
+    buildGrid();
+  }
+
+  function assignScene(scene) {
+    const customLabel = document.getElementById('label-input').value.trim().toUpperCase();
+    cells[editingIdx] = {
+      scene_id:   scene.id,
+      name:       scene.name || scene.id,
+      label:      customLabel || '',
+      scene_type: scene.scene_type,
+    };
+    closeModal();
+    buildGrid();
+  }
+
+  async function saveConfig() {
+    const cols    = parseInt(document.getElementById('cols-input').value) || 2;
+    const rows    = parseInt(document.getElementById('rows-input').value) || 4;
+    const payload = { cols, rows, cells };
+    const msg     = document.getElementById('save-msg');
+    try {
+      const r = await fetch('/api/touch/config', {
+        method:  'POST',
+        headers: {'Content-Type': 'application/json'},
+        body:    JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        msg.textContent  = '✓ Saved — reloading display…';
+        msg.style.color  = 'var(--success)';
+        // Signal kiosk to reload
+        await fetch('/api/touch/reload', { method: 'POST' });
+      } else {
+        msg.textContent  = 'Error saving';
+        msg.style.color  = '#e74c3c';
+      }
+    } catch(e) {
+      msg.textContent = 'Connection error';
+      msg.style.color = '#e74c3c';
+    }
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+  }
+
+  // Close modal on backdrop click
+  document.getElementById('modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+
+  init();
+</script>
+</body>
+</html>

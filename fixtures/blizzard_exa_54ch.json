@@ -1,0 +1,10 @@
+{
+  "id": "blizzard_exa_54ch",
+  "name": "Blizzard Weather System EXA (54ch)",
+  "channels": 54,
+  "pods": 8,
+  "dimmer_channel": 1,
+  "first_pod_channel": 2,
+  "channels_per_pod": 6,
+  "pod_color_offsets": {"r": 0, "g": 1, "b": 2, "a": 3, "w": 4, "uv": 5}
+}

@@ -1,0 +1,18 @@
+{
+  "id": "betopper_lpc1818_rgblauv",
+  "name": "Betopper LPC1818 RGBLAUV",
+  "type": "pod",
+  "channels": 7,
+  "pods": 1,
+  "dimmer_channel": 0,
+  "first_pod_channel": 1,
+  "channels_per_pod": 7,
+  "pod_color_offsets": {
+    "r": 0,
+    "g": 1,
+    "b": 2,
+    "l": 3,
+    "a": 4,
+    "uv": 5
+  }
+}

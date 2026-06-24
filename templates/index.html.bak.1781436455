@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Lightboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:       #0d0d0d;
+    --surface:  #1a1a1a;
+    --surface2: #252525;
+    --border:   #333;
+    --text:     #e0e0e0;
+    --sub:      #888;
+    --accent:   #3b82f6;
+    --green:    #22c55e;
+    --red:      #ef4444;
+    --amber:    #f59e0b;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+               font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+               font-size: 15px; -webkit-tap-highlight-color: transparent; }
+
+  /* ── Header ── */
+  header { display:flex; align-items:center; justify-content:space-between;
+           padding:10px 14px; background:var(--surface);
+           border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10; }
+  .show-name { font-weight:700; font-size:16px; color:var(--accent); }
+  .header-btns { display:flex; gap:8px; }
+  .icon-btn { background:var(--surface2); border:1px solid var(--border);
+              color:var(--text); border-radius:8px; padding:6px 10px;
+              font-size:13px; cursor:pointer; }
+  .icon-btn:active { opacity:0.7; }
+
+  /* ── Main layout ── */
+  main { padding:12px; display:flex; flex-direction:column; gap:12px; }
+
+  /* ── Cards ── */
+  .card { background:var(--surface); border:1px solid var(--border);
+          border-radius:12px; padding:14px; }
+  .card-title { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+                color:var(--sub); margin-bottom:10px; }
+
+  /* ── Master + Singer controls ── */
+  .controls-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .fader-block { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .fader-label { font-size:12px; color:var(--sub); }
+  .fader-value { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+  input[type=range] { -webkit-appearance:none; width:100%; height:6px;
+                      border-radius:3px; background:var(--border); outline:none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none;
+    width:24px; height:24px; border-radius:50%; background:var(--accent);
+    cursor:pointer; box-shadow:0 0 6px rgba(59,130,246,.5); }
+  input[type=range].singer-range::-webkit-slider-thumb { background:var(--green); }
+
+  .singer-toggle-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .toggle-btn { flex:1; padding:10px; border-radius:8px; border:none;
+                font-size:13px; font-weight:600; cursor:pointer; transition:background .2s; }
+  .toggle-btn.singer-on  { background:var(--green); color:#000; }
+  .toggle-btn.singer-off { background:var(--surface2); color:var(--sub);
+                           border:1px solid var(--border); }
+
+  /* ── Blackout ── */
+  #blackout-btn { width:100%; padding:16px; background:var(--red); color:#fff;
+                  font-size:18px; font-weight:800; border:none; border-radius:12px;
+                  cursor:pointer; letter-spacing:.05em; }
+  #blackout-btn:active { filter:brightness(0.8); }
+
+  /* ── Now playing ── */
+  #now-playing { font-size:13px; color:var(--sub); text-align:center;
+                 padding:6px 0; min-height:22px; }
+  #now-playing span { color:var(--accent); font-weight:600; }
+
+  /* ── Scene grid ── */
+  .scene-grid { display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; }
+  @media (min-width:600px) { .scene-grid { grid-template-columns:repeat(3,1fr); } }
+  @media (min-width:900px) { .scene-grid { grid-template-columns:repeat(4,1fr); } }
+
+  .scene-btn { background:var(--surface2); border:2px solid var(--border);
+               border-radius:10px; padding:14px 8px; text-align:center;
+               cursor:pointer; user-select:none; transition:border-color .15s, background .15s; }
+  .scene-btn:active { filter:brightness(1.2); }
+  .scene-btn.active { border-color:var(--accent); background:rgba(59,130,246,.12); }
+  /* Effect-buttons use the same shape as main scenes but a distinct purple
+     accent when active, matching the effect editor's theme. */
+  .scene-btn.effect-btn.active { border-color:#a855f7; background:rgba(168,85,247,.13); }
+  .scene-btn .scene-name { font-size:13px; font-weight:600; line-height:1.3; }
+  .scene-btn .scene-meta { font-size:10px; color:var(--sub); margin-top:3px; }
+
+  /* ── Freeze / pending change states ── */
+  /* Pending start: will start playing on unfreeze (currently inactive) */
+  .scene-btn.pending-start { border-color:#dbcb7f; background:rgba(219,203,127,.10);
+                              border-style:dashed; }
+  /* Pending stop: currently playing but will stop on unfreeze */
+  .scene-btn.pending-stop  { border-color:#dbcb7f; background:rgba(219,203,127,.10);
+                              border-style:dashed; opacity:0.65; }
+  .scene-btn.pending-start::after,
+  .scene-btn.pending-stop::after {
+    content: ''; position:absolute; top:4px; right:4px;
+    width:10px; height:10px; border-radius:50%;
+    background:#dbcb7f; box-shadow:0 0 6px rgba(219,203,127,.6);
+  }
+  .scene-btn.pending-stop::after { background:#cf7a45; }
+  /* Immediate tap-confirmation — applied before the poll responds.
+     optimistic-start: bright white ring + halo pulse — unambiguous in a dark venue.
+     optimistic-stop:  immediate dimming — scene visually leaves right away. */
+  @keyframes opt-start-flash {
+    0%   { box-shadow: 0 0 0 5px rgba(255,255,255,0.55); }
+    100% { box-shadow: 0 0 0 5px rgba(255,255,255,0); }
+  }
+  .scene-btn.optimistic-start {
+    border-color:#e8e8e8; background:rgba(255,255,255,0.16);
+    transition:none;  /* instant — skip the base transition delay */
+    animation:opt-start-flash 0.4s ease-out forwards;
+  }
+  .scene-btn.optimistic-stop {
+    border-color:#555; background:rgba(0,0,0,0.2);
+    opacity:0.45; transition:opacity 0.1s ease, border-color 0.1s ease;
+  }
+  /* Position relative so the pending dot anchors correctly */
+  .scene-btn { position:relative; }
+  /* Freeze banner */
+  .freeze-banner {
+    background:linear-gradient(135deg,#1e3a52,#1e2e52);
+    border:1px solid #4a6fb0;
+    color:#a8d0ff;
+    padding:8px 12px;
+    border-radius:8px;
+    text-align:center;
+    font-size:12px;
+    font-weight:600;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+  }
+
+  /* ── Import ── */
+  .import-row { display:flex; gap:8px; }
+  .import-row button { flex:1; padding:10px; background:var(--surface2);
+                       border:1px solid var(--border); color:var(--text);
+                       border-radius:8px; font-size:13px; cursor:pointer; }
+  .import-row button:active { opacity:.7; }
+  #import-file { display:none; }
+
+  /* ── Toast ── */
+  #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(80px);
+           background:#222; color:#fff; padding:10px 20px; border-radius:20px;
+           font-size:13px; transition:transform .3s; z-index:100; white-space:nowrap; }
+  #toast.show { transform:translateX(-50%) translateY(0); }
+
+  /* ── Show switcher modal ── */
+  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7);
+             z-index:50; align-items:flex-end; }
+  .overlay.open { display:flex; }
+  .sheet { background:var(--surface); width:100%; border-radius:16px 16px 0 0;
+           padding:16px; max-height:60vh; overflow-y:auto; }
+  .sheet h3 { font-size:14px; margin-bottom:12px; color:var(--sub);
+              text-transform:uppercase; letter-spacing:.08em; }
+  .show-item { padding:14px; border-radius:8px; background:var(--surface2);
+               margin-bottom:8px; cursor:pointer; font-size:15px;
+               border:2px solid transparent; }
+  .show-item.current { border-color:var(--accent); }
+  .show-item:active { filter:brightness(1.3); }
+
+  /* ── Status dot ── */
+  .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block;
+                background:var(--red); margin-right:6px; }
+  .status-dot.ok { background:var(--green); }
+
+  /* ── DMX status bar ── */
+  .dmx-bar { display:flex; align-items:center; font-size:11px; color:var(--sub);
+             padding:6px 14px; background:var(--surface); border-top:1px solid var(--border); }
+  /* ── Collision modal ── */
+  .collision-list { display:flex; flex-direction:column; gap:8px; }
+  .collision-item { background:var(--surface2); padding:10px; border-radius:8px;
+                    display:flex; justify-content:space-between; align-items:center; font-size:13px; }
+  .collision-item button { padding:6px 12px; border-radius:6px; border:none;
+                           cursor:pointer; font-size:12px; font-weight:600; }
+  .btn-over { background:var(--red); color:#fff; }
+  .btn-skip { background:var(--surface); color:var(--sub); border:1px solid var(--border) !important; }
+
+  /* ── Tap Tempo ── */
+  .tempo-row { display:flex; align-items:center; gap:12px; }
+  .tap-btn { flex:0 0 auto; width:92px; height:64px; border-radius:12px;
+             border:2px solid var(--accent); background:rgba(59,130,246,.12);
+             color:var(--text); font-size:18px; font-weight:800; letter-spacing:.08em;
+             cursor:pointer; user-select:none; transition:transform .05s, background .1s; }
+  .tap-btn:active { transform:scale(0.95); background:rgba(59,130,246,.28); }
+  @keyframes tap-flash-kf { 0% { background:rgba(59,130,246,.55);} 100%{ background:rgba(59,130,246,.12);} }
+  .tap-btn.tap-flash { animation:tap-flash-kf .25s ease-out; }
+  .bpm-readout { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .bpm-num-row { display:flex; align-items:center; gap:10px; }
+  .beat-dot { width:13px; height:13px; border-radius:50%; background:var(--accent);
+              box-shadow:0 0 10px var(--accent); will-change:transform,opacity; }
+  .bpm-val { font-size:34px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+  .bpm-val.preview { color:var(--amber); }
+  .bpm-label { font-size:11px; color:var(--sub); text-transform:uppercase; letter-spacing:.1em; margin-top:3px; }
+  .tempo-cancel { flex:0 0 auto; background:#3a1010; border:1px solid #5a1818; color:#ff8888;
+                  border-radius:8px; padding:0 14px; height:64px; font-size:16px; font-weight:700; cursor:pointer; }
+  .tempo-cancel:active { filter:brightness(1.3); }
+  .tempo-nudge-row { display:flex; gap:8px; margin-top:10px; }
+  .nudge-btn { flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text);
+               border-radius:8px; padding:8px; font-size:13px; font-weight:600; cursor:pointer; }
+  .nudge-btn:active { filter:brightness(1.3); }
+
+  /* ── Beat Cycler ── */
+  .cyc-start, .cyc-stop { border:none; border-radius:6px; padding:4px 12px; font-size:12px;
+                          font-weight:700; cursor:pointer; white-space:nowrap; }
+  .cyc-start { background:var(--green); color:#000; }
+  .cyc-start:disabled { background:var(--surface2); color:var(--sub); cursor:default; }
+  .cyc-stop  { background:var(--red); color:#fff; }
+  .cyc-status { font-size:12px; color:var(--sub); margin-bottom:10px; min-height:16px; }
+  .cyc-div-row { display:flex; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .cyc-div-lbl { font-size:11px; color:var(--sub); margin-right:2px; }
+  .cyc-div-btn { background:var(--surface2); border:1px solid var(--border); color:var(--text);
+                 border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; }
+  .cyc-div-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .cyc-chips { display:flex; flex-wrap:wrap; gap:6px; max-height:170px; overflow-y:auto; }
+  .cyc-chip { display:flex; align-items:center; gap:5px; background:var(--surface2);
+              border:1px solid var(--border); border-radius:16px; padding:6px 12px;
+              font-size:12px; font-weight:600; cursor:pointer; user-select:none; }
+  .cyc-chip.sel { background:rgba(34,197,94,.16); border-color:var(--green); color:#fff; }
+  .cyc-chip .cyc-num { font-size:10px; font-weight:800; color:var(--green); }
+
+  /* ── Reorderable edit-list rows (membership + order in one modal) ── */
+  .reorder-row { display:flex; align-items:center; gap:10px; padding:10px;
+                 border-radius:8px; background:var(--surface2); margin-bottom:6px;
+                 font-size:14px; }
+  .reorder-row input { width:18px; height:18px; accent-color:var(--green);
+                       flex:0 0 auto; cursor:pointer; }
+  .reorder-row .ro-name { flex:1; cursor:pointer; user-select:none; }
+  .reorder-row .ro-arrows { display:flex; gap:4px; flex:0 0 auto; }
+  .reorder-row .ro-arrows button { background:var(--surface); border:1px solid var(--border);
+    color:var(--text); width:30px; height:30px; border-radius:6px; cursor:pointer;
+    font-size:13px; line-height:1; padding:0; }
+  .reorder-row .ro-arrows button:active { filter:brightness(1.4); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="show-name">🎛 {{ show.name }}</div>
+  <div class="header-btns">
+    <button class="icon-btn" onclick="toggleDmxMonitor()">DMX</button>
+    <button class="icon-btn" onclick="location.href='/messenger'">💬</button>
+    <button class="icon-btn" onclick="location.href='/settings'">⚙</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- DMX status -->
+  <div id="dmx-status" style="font-size:11px;color:var(--sub);display:flex;align-items:center;">
+    <span class="status-dot" id="dmx-dot"></span>
+    <span id="dmx-label">Checking DMX…</span>
+  </div>
+
+  <!-- Blackout -->
+  <div id="blackout-row" style="display:flex;gap:0;border-radius:10px;overflow:hidden;">
+    <button id="color-blackout-btn" style="flex:1;padding:16px 8px;background:#7a2020;color:#fff;border:none;font-weight:700;font-size:14px;cursor:pointer;border-right:1px solid #000;"
+            onclick="colorBlackout()">■ COLOR BLACKOUT</button>
+    <button id="full-blackout-btn" style="flex:1;padding:16px 8px;background:var(--red);color:#fff;border:none;font-weight:700;font-size:14px;cursor:pointer;"
+            onclick="fullBlackout()">■ FULL BLACKOUT</button>
+  </div>
+
+  {% if show.overlay_scene %}
+  <div style="display:flex;gap:0;border-radius:10px;overflow:hidden;">
+    <button id="overlay-btn" style="flex:1;padding:14px 6px;background:#5b2a8a;color:#fff;border:none;font-weight:700;font-size:13px;cursor:pointer;border-right:1px solid #000;"
+            onclick="toggleOverlay()">⚡ {{ show.overlay_label or 'STROBE' }}</button>
+    <button id="overlay-hold-btn" style="flex:1;padding:14px 6px;background:#5b2a8a;color:#fff;border:none;font-weight:700;font-size:13px;cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:manipulation;">⚡ HOLD</button>
+  </div>
+  {% endif %}
+
+  <!-- Now playing -->
+  <div style="display:flex;align-items:center;justify-content:center;gap:10px;">
+    <div id="now-playing" style="flex:1;">Stopped</div>
+    <button id="freeze-btn" onclick="toggleFreeze()"
+            style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;font-size:0.78rem;cursor:pointer;font-weight:600;white-space:nowrap;">
+      ❄ Freeze
+    </button>
+    <button id="stop-all-btn" onclick="stopAllScenes()"
+            style="display:none;background:#3a1010;border:1px solid #5a1818;color:#ff8888;padding:5px 12px;border-radius:6px;font-size:0.7rem;cursor:pointer;font-weight:600;white-space:nowrap;">
+      ⏹ Stop all
+    </button>
+  </div>
+
+  <!-- Freeze banner (shown when freeze is active) -->
+  <div id="freeze-banner" class="freeze-banner" style="display:none;">
+    <span>❄</span>
+    <span id="freeze-banner-text">FROZEN</span>
+  </div>
+
+  <!-- Tap Tempo -->
+  <div class="card" id="tempo-card">
+    <div class="card-title">Tap Tempo</div>
+    <div class="tempo-row">
+      <button id="tap-btn" class="tap-btn" onclick="tapTempo()">TAP</button>
+      <div class="bpm-readout">
+        <div class="bpm-num-row">
+          <span class="beat-dot" id="beat-dot" style="display:none;"></span>
+          <div class="bpm-val" id="bpm-val">––</div>
+        </div>
+        <div class="bpm-label" id="bpm-label">BPM</div>
+      </div>
+      <button id="tempo-cancel-btn" class="tempo-cancel" onclick="cancelTempo()" style="display:none;" title="Cancel tempo">✕</button>
+    </div>
+    <div class="tempo-nudge-row" id="tempo-nudge-row" style="display:none;">
+      <button class="nudge-btn" onclick="nudgeTempo(-1)">– 1</button>
+      <button class="nudge-btn" onclick="resyncTempo()">⟳ Downbeat</button>
+      <button class="nudge-btn" onclick="nudgeTempo(1)">+ 1</button>
+    </div>
+  </div>
+
+  <!-- Color Dimmer -->
+  <div class="card">
+    <div class="card-title">Color Dimmer</div>
+    <div class="fader-block">
+      <div class="fader-value" id="master-val">100%</div>
+      <input type="range" id="master-fader" min="0" max="100" value="100"
+             oninput="onMaster(this.value)">
+    </div>
+  </div>
+
+  <!-- Singer Controls -->
+  {% if show.fixtures | selectattr('singer_pods') | list %}
+  <div class="card">
+    <div class="card-title">Singer Lighting</div>
+    <div class="singer-toggle-row">
+      <button class="toggle-btn singer-on" id="singer-btn" onclick="toggleSinger()">
+        🎤 SINGER ON
+      </button>
+    </div>
+    <div class="fader-block">
+      <div class="fader-value" id="singer-val">100%</div>
+      <input type="range" class="singer-range" id="singer-fader" min="0" max="100" value="100"
+             oninput="onSinger(this.value)">
+      <div class="fader-label">Singer Dimmer</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Scenes -->
+  <div class="card">
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">Scenes</span>
+      <button onclick="location.href='/editor?from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
+      <button onclick="openScenesEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
+    </div>
+    <div class="scene-grid" id="scene-grid">
+      {% for scene in scenes %}
+      <div class="scene-btn" id="scene-{{ scene.id }}" data-id="{{ scene.id }}"
+           onclick="playScene('{{ scene.id }}')"
+           oncontextmenu="editScene(event,'{{ scene.id }}')"
+           style="position:relative;">
+        <div class="scene-name">{{ scene.name }}</div>
+        <div class="scene-meta">{{ scene.steps }} step{% if scene.steps != 1 %}s{% endif %}</div>
+        <button class="edit-icon" onclick="event.stopPropagation();location.href='/editor/{{ scene.id }}?from=home'"
+                style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.4);border:none;color:#bbb;width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:12px;line-height:1;padding:0;"
+                title="Edit scene">✎</button>
+      </div>
+      {% endfor %}
+      {% if not scenes %}
+      <div style="grid-column:1/-1;text-align:center;color:var(--sub);padding:20px;font-size:13px;">
+        No scenes assigned to this show.<br>
+        Tap <strong>✎ Edit list</strong> to enable scenes from the library, or <strong>+ New</strong> to create a new one.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Effect scenes -->
+  <div class="card">
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">🌀 Effects</span>
+      <button onclick="location.href='/editor?type=effect&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:#d4b6ff;padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
+      <button onclick="openEffectsEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
+    </div>
+    <div class="scene-grid" id="effect-grid">
+      {% for s in effect_scenes %}
+      <div class="scene-btn effect-btn" id="effect-{{ s.id }}" data-id="{{ s.id }}"
+           onclick="playEffect('{{ s.id }}')"
+           style="position:relative;">
+        <div class="scene-name">{{ s.name }}</div>
+        <div class="scene-meta">🌀 {{ (s.effect or 'effect') | capitalize }}</div>
+        <button onclick="event.stopPropagation();location.href='/editor/{{ s.id }}?from=home'"
+                style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.4);border:none;color:#bbb;width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:12px;line-height:1;padding:0;">✎</button>
+      </div>
+      {% endfor %}
+      {% if not effect_scenes %}
+      <div style="grid-column:1/-1;text-align:center;color:var(--sub);padding:14px;font-size:12px;">
+        No effects yet. Tap <strong>+ New</strong> or <strong>✎ Edit list</strong> to enable some.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Beat Cycler -->
+  <div class="card" id="cycler-card">
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">🔁 Beat Cycler</span>
+      <button class="cyc-start" id="cyc-start-btn" onclick="startCycler()" disabled>▶ Start</button>
+      <button class="cyc-stop"  id="cyc-stop-btn"  onclick="stopCycler()" style="display:none;">⏹ Stop</button>
+      <button onclick="openCyclerEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
+    </div>
+    <div class="cyc-status" id="cyc-status">Pick looks below, then Start</div>
+    <div class="cyc-div-row">
+      <span class="cyc-div-lbl">Advance every</span>
+      <button class="cyc-div-btn" data-div="0.5" onclick="setCyclerDiv(0.5,this)">½ beat</button>
+      <button class="cyc-div-btn" data-div="1"   onclick="setCyclerDiv(1,this)">1 beat</button>
+      <button class="cyc-div-btn" data-div="2"   onclick="setCyclerDiv(2,this)">2 beats</button>
+      <button class="cyc-div-btn" data-div="4"   onclick="setCyclerDiv(4,this)">4 beats</button>
+    </div>
+    <div class="cyc-chips" id="cyc-chips">
+      {% for scene in cycler_scenes %}
+      <div class="cyc-chip" data-id="{{ scene.id }}" onclick="toggleCyclerScene('{{ scene.id }}', this)">
+        <span class="cyc-num"></span>{{ scene.name }}
+      </div>
+      {% endfor %}
+      {% if not cycler_scenes %}
+      <div style="color:var(--sub);font-size:12px;">No cycler scenes for this show. Tap <strong>✎ Edit list</strong> to choose some.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Cycler scene picker (per show) -->
+  <div class="overlay" id="cycler-edit-overlay" onclick="if(event.target===this)closeCyclerEdit()">
+    <div class="sheet">
+      <h3>Cycler Scenes — this show</h3>
+      <div style="font-size:12px;color:var(--sub);margin-bottom:10px;">Choose which of this show's scenes appear in the Beat Cycler, and use ▲▼ to set their cycle order.</div>
+      <div id="cycler-edit-list">
+        {% set cyc_ids = cycler_scenes | map(attribute='id') | list %}
+        {% for scene in cycler_scenes %}
+        <div class="reorder-row" data-id="{{ scene.id }}">
+          <input type="checkbox" value="{{ scene.id }}" checked>
+          <span class="ro-name" onclick="this.closest('.reorder-row').querySelector('input').click()">{{ scene.name }}</span>
+          <span class="ro-arrows">
+            <button type="button" onclick="moveRow(this,-1)">▲</button>
+            <button type="button" onclick="moveRow(this,1)">▼</button>
+          </span>
+        </div>
+        {% endfor %}
+        {% for scene in scenes if scene.id not in cyc_ids %}
+        <div class="reorder-row" data-id="{{ scene.id }}">
+          <input type="checkbox" value="{{ scene.id }}">
+          <span class="ro-name" onclick="this.closest('.reorder-row').querySelector('input').click()">{{ scene.name }}</span>
+          <span class="ro-arrows">
+            <button type="button" onclick="moveRow(this,-1)">▲</button>
+            <button type="button" onclick="moveRow(this,1)">▼</button>
+          </span>
+        </div>
+        {% endfor %}
+        {% if not scenes %}
+        <div style="color:var(--sub);font-size:13px;">No main scenes in this show.</div>
+        {% endif %}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="nudge-btn" style="flex:0 0 auto;" onclick="closeCyclerEdit()">Cancel</button>
+        <button class="cyc-start" style="flex:1;padding:10px;" onclick="saveCyclerScenes()">Save list</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scenes list editor (per show) -->
+  <div class="overlay" id="scenes-edit-overlay" onclick="if(event.target===this)closeScenesEdit()">
+    <div class="sheet">
+      <h3>Scenes — this show</h3>
+      <div style="font-size:12px;color:var(--sub);margin-bottom:10px;">Choose which library scenes are in this show, and use ▲▼ to set the order they appear on the home screen.</div>
+      <div id="scenes-edit-list">
+        {% set en_main = scenes | map(attribute='id') | list %}
+        {% for s in scenes %}
+        <div class="reorder-row" data-id="{{ s.id }}">
+          <input type="checkbox" value="{{ s.id }}" checked>
+          <span class="ro-name" onclick="this.closest('.reorder-row').querySelector('input').click()">{{ s.name }}</span>
+          <span class="ro-arrows">
+            <button type="button" onclick="moveRow(this,-1)">▲</button>
+            <button type="button" onclick="moveRow(this,1)">▼</button>
+          </span>
+        </div>
+        {% endfor %}
+        {% for ls in library_scenes if ls.scene_type == 'main' and ls.id not in en_main %}
+        <div class="reorder-row" data-id="{{ ls.id }}">
+          <input type="checkbox" value="{{ ls.id }}">
+          <span class="ro-name" onclick="this.closest('.reorder-row').querySelector('input').click()">{{ ls.name }}</span>
+          <span class="ro-arrows">
+            <button type="button" onclick="moveRow(this,-1)">▲</button>
+            <button type="button" onclick="moveRow(this,1)">▼</button>
+          </span>
+        </div>
+        {% endfor %}
+        {% if not library_scenes %}
+        <div style="color:var(--sub);font-size:13px;">No scenes in the library yet.</div>
+        {% endif %}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="nudge-btn" style="flex:0 0 auto;" onclick="closeScenesEdit()">Cancel</button>
+        <button class="cyc-start" style="flex:1;padding:10px;" onclick="saveScenesList()">Save list</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Effects list editor (per show) -->
+  <div class="overlay" id="effects-edit-overlay" onclick="if(event.target===this)closeEffectsEdit()">
+    <div class="sheet">
+      <h3>Effects — this show</h3>
+      <div style="font-size:12px;color:var(--sub);margin-bottom:10px;">Choose which library effects are enabled in this show, and use ▲▼ to set their order.</div>
+      <div id="effects-edit-list">
+        {% set en_eff = effect_scenes | map(attribute='id') | list %}
+        {% for s in effect_scenes %}
+        <div class="reorder-row" data-id="{{ s.id }}">
+          <input type="checkbox" value="{{ s.id }}" checked>
+          <span class="ro-name" onclick="this.closest('.reorder-row').querySelector('input').click()">{{ s.name }}</span>
+          <span class="ro-arrows">
+            <button type="button" onclick="moveRow(this,-1)">▲</button>
+            <button type="button" onclick="moveRow(this,1)">▼</button>
+          </span>
+        </div>
+        {% endfor %}
+        {% for ls in library_scenes if ls.scene_type == 'effect' and ls.id not in en_eff %}
+        <div class="reorder-row" data-id="{{ ls.id }}">
+          <input type="checkbox" value="{{ ls.id }}">
+          <span class="ro-name" onclick="this.closest('.reorder-row').querySelector('input').click()">{{ ls.name }}</span>
+          <span class="ro-arrows">
+            <button type="button" onclick="moveRow(this,-1)">▲</button>
+            <button type="button" onclick="moveRow(this,1)">▼</button>
+          </span>
+        </div>
+        {% endfor %}
+        {% if not library_scenes %}
+        <div style="color:var(--sub);font-size:13px;">No effects in the library yet.</div>
+        {% endif %}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="nudge-btn" style="flex:0 0 auto;" onclick="closeEffectsEdit()">Cancel</button>
+        <button class="cyc-start" style="flex:1;padding:10px;" onclick="saveEffectsList()">Save list</button>
+      </div>
+    </div>
+  </div>
+
+  {% if has_movers %}
+  <!-- Mover Motion scenes -->
+  <div class="card">
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">🎯 Mover Motion</span>
+      <button onclick="location.href='/editor?type=mover_motion&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
+    </div>
+    <div class="scene-grid" id="motion-grid">
+      {% for s in motion_scenes %}
+      <div class="scene-btn motion-btn" id="motion-{{ s.id }}" data-id="{{ s.id }}"
+           onclick="playMotion('{{ s.id }}')"
+           style="position:relative;">
+        <div class="scene-name">{{ s.name }}</div>
+        <div class="scene-meta">{{ s.steps }} step{% if s.steps != 1 %}s{% endif %}</div>
+        <button onclick="event.stopPropagation();location.href='/editor/{{ s.id }}?from=home'"
+                style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.4);border:none;color:#bbb;width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:12px;line-height:1;padding:0;">✎</button>
+      </div>
+      {% endfor %}
+      {% if not motion_scenes %}
+      <div style="grid-column:1/-1;text-align:center;color:var(--sub);padding:14px;font-size:12px;">
+        No motion scenes yet. Tap <strong>+ New</strong>, or enable some from <strong>Settings → 📚 Library</strong>.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Mover Look scenes -->
+  <div class="card">
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">💡 Mover Look</span>
+      <button onclick="location.href='/editor?type=mover_look&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
+    </div>
+    <div class="scene-grid" id="look-grid">
+      {% for s in look_scenes %}
+      <div class="scene-btn look-btn" id="look-{{ s.id }}" data-id="{{ s.id }}"
+           onclick="playLook('{{ s.id }}')"
+           style="position:relative;">
+        <div class="scene-name">{{ s.name }}</div>
+        <div class="scene-meta">{{ s.steps }} step{% if s.steps != 1 %}s{% endif %}</div>
+        <button onclick="event.stopPropagation();location.href='/editor/{{ s.id }}?from=home'"
+                style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.4);border:none;color:#bbb;width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:12px;line-height:1;padding:0;">✎</button>
+      </div>
+      {% endfor %}
+      {% if not look_scenes %}
+      <div style="grid-column:1/-1;text-align:center;color:var(--sub);padding:14px;font-size:12px;">
+        No look scenes yet. Tap <strong>+ New</strong>, or enable some from <strong>Settings → 📚 Library</strong>.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+const activeShow = "{{ active_show }}";
+let singerOn = true;
+// Set of currently-active main scene IDs (live, from engine)
+let activeSceneIds = new Set();
+// Set of EFFECTIVE active IDs — pending if frozen, else equal to activeSceneIds
+let effectiveSceneIds = new Set();
+// Freeze state
+let freezeActive = false;
+let pendingMainIds = [];
+let pendingMotionAction = null;     // null | 'play' | 'stop'
+let pendingMotionId     = null;
+let pendingLookAction   = null;
+let pendingLookId       = null;
+let pendingEffectAction = null;     // null | 'play' | 'stop'
+let pendingEffectId     = null;
+
+// ── State polling ──────────────────────────────────────────────────────
+
+function pollState() {
+  fetch('/api/state').then(r => r.json()).then(s => {
+    // DMX status
+    const dot   = document.getElementById('dmx-dot');
+    const label = document.getElementById('dmx-label');
+    dot.className = 'status-dot' + (s.dmx_connected ? ' ok' : '');
+    label.textContent = s.dmx_connected ? 'DMX connected' : 'DMX not found — check USB';
+
+    // Tap tempo + beat cycler
+    applyTempoState(s);
+
+    // Freeze state
+    const fz = s.freeze || {};
+    freezeActive = !!fz.active;
+    pendingMainIds      = fz.pending_main_ids || [];
+    pendingMotionAction = fz.pending_motion_action || null;
+    pendingMotionId     = fz.pending_motion_id     || null;
+    pendingLookAction   = fz.pending_look_action   || null;
+    pendingLookId       = fz.pending_look_id       || null;
+    pendingEffectAction = fz.pending_effect_action || null;
+    pendingEffectId     = fz.pending_effect_id     || null;
+
+    // Live active main scenes
+    const activeScenes = s.scenes || [];
+    activeSceneIds = new Set(activeScenes.filter(sc => !sc.stopping).map(sc => sc.id));
+
+    // Effective scene set: pending if frozen, else live
+    effectiveSceneIds = freezeActive
+      ? new Set(pendingMainIds)
+      : new Set(activeSceneIds);
+
+    highlightScenes();
+
+    // Freeze button + banner
+    const fbtn = document.getElementById('freeze-btn');
+    if (fbtn) {
+      if (freezeActive) {
+        fbtn.style.background    = '#2a4566';
+        fbtn.style.borderColor   = '#4a6fb0';
+        fbtn.style.color         = '#a8d0ff';
+        fbtn.textContent         = '❄ Unfreeze';
+      } else {
+        fbtn.style.background    = 'var(--surface2)';
+        fbtn.style.borderColor   = 'var(--border)';
+        fbtn.style.color         = 'var(--text)';
+        fbtn.textContent         = '❄ Freeze';
+      }
+    }
+    const banner = document.getElementById('freeze-banner');
+    if (banner) {
+      if (freezeActive) {
+        // Count pending changes (diff between effective and live)
+        const adds  = [...effectiveSceneIds].filter(id => !activeSceneIds.has(id)).length;
+        const drops = [...activeSceneIds].filter(id => !effectiveSceneIds.has(id)).length;
+        let motionChange = pendingMotionAction !== null ? 1 : 0;
+        let lookChange   = pendingLookAction   !== null ? 1 : 0;
+        let effectChange = pendingEffectAction !== null ? 1 : 0;
+        const totalChanges = adds + drops + motionChange + lookChange + effectChange;
+        const bt = document.getElementById('freeze-banner-text');
+        if (bt) {
+          if (totalChanges === 0) {
+            bt.textContent = 'FROZEN — tap scenes to queue changes';
+          } else {
+            const parts = [];
+            if (adds)         parts.push(adds + ' to start');
+            if (drops)        parts.push(drops + ' to stop');
+            if (motionChange) parts.push('motion change');
+            if (lookChange)   parts.push('look change');
+            if (effectChange) parts.push('effect change');
+            bt.textContent = 'FROZEN — ' + parts.join(', ');
+          }
+        }
+        banner.style.display = '';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    // Now playing label: show all active scene names
+    const np = document.getElementById('now-playing');
+    const activeNames = activeScenes
+      .filter(sc => !sc.stopping)
+      .map(sc => sc.name)
+      .filter(Boolean);
+    let sceneLabel;
+    if (activeNames.length === 0) {
+      sceneLabel = 'Stopped';
+    } else if (activeNames.length === 1) {
+      sceneLabel = '▶ <span>' + activeNames[0] + '</span>';
+    } else {
+      sceneLabel = '▶ <span>' + activeNames.join(' + ') + '</span>';
+    }
+    if (s.blackout_mode === 'color') {
+      np.innerHTML = '🔴 <span style="color:#ff8888">COLOR BLACKOUT</span> &nbsp;<small style="color:var(--sub)">' + (activeNames.length ? 'over ' + activeNames.join(' + ') : '') + '</small>';
+    } else if (s.blackout_mode === 'full') {
+      np.innerHTML = '🔴 <span style="color:#ff6666">FULL BLACKOUT</span> &nbsp;<small style="color:var(--sub)">' + (activeNames.length ? 'over ' + activeNames.join(' + ') : '') + '</small>';
+    } else {
+      np.innerHTML = sceneLabel;
+    }
+
+    // Show / hide the "Stop all" button based on active count
+    const stopAllBtn = document.getElementById('stop-all-btn');
+    if (stopAllBtn) {
+      stopAllBtn.style.display = effectiveSceneIds.size > 1 ? '' : 'none';
+    }
+
+    // Sync singer fader visual to engine state. The HTML renders at a
+    // hardcoded 100%, so after any page load (e.g. coming back from an
+    // editor) the displayed value is stale. Poll updates it here so the
+    // slider always reflects what the engine is actually doing.
+    // Guard: only update when the user isn't actively dragging (no active
+    // pointer events on the slider — browser sets :active; we track this
+    // via a flag set in onSinger to suppress the poll overwrite mid-drag).
+    if (!window._singerDragging && s.singer_level != null) {
+      const lvlPct = Math.round(s.singer_level * 100);
+      const fader  = document.getElementById('singer-fader');
+      const valEl  = document.getElementById('singer-val');
+      if (fader && fader.value != lvlPct) {
+        fader.value = lvlPct;
+        if (valEl) valEl.textContent = lvlPct + '%';
+      }
+    }
+
+    // Singer ON/OFF button — markup hardcodes ON, so sync from engine state.
+    if (s.singer_mode != null) {
+      singerOn = !!s.singer_mode;
+      const sbtn = document.getElementById('singer-btn');
+      if (sbtn) {
+        sbtn.className   = 'toggle-btn ' + (singerOn ? 'singer-on' : 'singer-off');
+        sbtn.textContent = singerOn ? '🎤 SINGER ON' : '🎤 SINGER OFF';
+      }
+    }
+    // Master fader — same hardcoded-100% staleness; sync unless dragging.
+    if (!window._masterDragging && s.master_level != null) {
+      const mPct = Math.round(s.master_level * 100);
+      const mF   = document.getElementById('master-fader');
+      const mV   = document.getElementById('master-val');
+      if (mF && mF.value != mPct) {
+        mF.value = mPct;
+        if (mV) mV.textContent = mPct + '%';
+      }
+    }
+
+    // Highlight active blackout button(s)
+    const cb = document.getElementById('color-blackout-btn');
+    const fb = document.getElementById('full-blackout-btn');
+    if (cb) cb.style.outline = (s.blackout_mode === 'color') ? '2px solid #fff' : 'none';
+    if (fb) fb.style.outline = (s.blackout_mode === 'full')  ? '2px solid #fff' : 'none';
+
+    // Highlight overlay button when active
+    const ob = document.getElementById('overlay-btn');
+    if (ob) {
+      ob.style.outline = s.overlay_active ? '2px solid #fff' : 'none';
+      ob.style.background = s.overlay_active ? '#8a45cf' : '#5b2a8a';
+    }
+
+    // Compute effective motion/look IDs (pending if frozen, else live)
+    let effMotion = s.current_motion_id;
+    if (freezeActive && pendingMotionAction !== null) {
+      effMotion = pendingMotionAction === 'play' ? pendingMotionId : null;
+    }
+    let effLook = s.current_look_id;
+    if (freezeActive && pendingLookAction !== null) {
+      effLook = pendingLookAction === 'play' ? pendingLookId : null;
+    }
+
+    // Highlight motion buttons + pending indicators
+    if (effMotion !== currentMotion || freezeActive) {
+      currentMotion = effMotion;
+      document.querySelectorAll('.motion-btn').forEach(b => {
+        b.classList.remove('active', 'pending-start', 'pending-stop');
+        const id = b.getAttribute('data-id');
+        const liveActive = (s.current_motion_id === id);
+        const effActive  = (effMotion === id);
+        if (effActive) b.classList.add('active');
+        if (effActive && !liveActive) b.classList.add('pending-start');
+        if (!effActive && liveActive) b.classList.add('pending-stop');
+      });
+    }
+    if (effLook !== currentLook || freezeActive) {
+      currentLook = effLook;
+      document.querySelectorAll('.look-btn').forEach(b => {
+        b.classList.remove('active', 'pending-start', 'pending-stop');
+        const id = b.getAttribute('data-id');
+        const liveActive = (s.current_look_id === id);
+        const effActive  = (effLook === id);
+        if (effActive) b.classList.add('active');
+        if (effActive && !liveActive) b.classList.add('pending-start');
+        if (!effActive && liveActive) b.classList.add('pending-stop');
+      });
+    }
+
+    // Effect: compute effective id (pending if frozen, else live) and
+    // highlight the matching button. Same shape as motion/look, just a
+    // different DOM class and source field.
+    let effEffect = s.current_effect_id;
+    if (freezeActive && pendingEffectAction !== null) {
+      effEffect = pendingEffectAction === 'play' ? pendingEffectId : null;
+    }
+    if (effEffect !== currentEffect || freezeActive) {
+      currentEffect = effEffect;
+      document.querySelectorAll('.effect-btn').forEach(b => {
+        b.classList.remove('active', 'pending-start', 'pending-stop');
+        const id = b.getAttribute('data-id');
+        const liveActive = (s.current_effect_id === id);
+        const effActive  = (effEffect === id);
+        if (effActive) b.classList.add('active');
+        if (effActive && !liveActive) b.classList.add('pending-start');
+        if (!effActive && liveActive) b.classList.add('pending-stop');
+      });
+    }
+  }).catch(() => {});
+}
+setInterval(pollState, 1500);
+pollState();
+
+// ── Scene grid highlight ───────────────────────────────────────────────
+
+function highlightScenes() {
+  // Expire stale optimistic entries (safety net if poll never confirms)
+  const now = Date.now();
+  for (const id of Object.keys(optimisticUpdates)) {
+    if (now - optimisticUpdates[id].time > OPT_TTL) delete optimisticUpdates[id];
+  }
+
+  document.querySelectorAll('.scene-btn').forEach(b => {
+    if (b.classList.contains('motion-btn') || b.classList.contains('look-btn')
+        || b.classList.contains('effect-btn')) return;
+    const id = b.getAttribute('data-id');
+    b.classList.remove('active', 'pending-start', 'pending-stop',
+                       'optimistic-start', 'optimistic-stop');
+    if (!id) return;
+
+    const liveActive = activeSceneIds.has(id);
+    const effActive  = effectiveSceneIds.has(id);
+    const opt        = optimisticUpdates[id];
+
+    // Clear optimistic entry once the poll has caught up to what we predicted.
+    if (opt) {
+      if (opt.action === 'starting' && effActive)  delete optimisticUpdates[id];
+      if (opt.action === 'stopping' && !effActive) delete optimisticUpdates[id];
+    }
+
+    const stillOpt = !!optimisticUpdates[id];
+
+    // Determine display active state: optimistic prediction wins until confirmed
+    const displayActive = stillOpt ? (opt.action === 'starting') : effActive;
+
+    if (displayActive) b.classList.add('active');
+
+    if (stillOpt) {
+      // Show immediate tap-feedback classes (no freeze-pending dashes yet)
+      b.classList.add(opt.action === 'starting' ? 'optimistic-start' : 'optimistic-stop');
+    } else {
+      // Confirmed state — show freeze-pending indicators if applicable
+      if (effActive  && !liveActive) b.classList.add('pending-start');
+      if (!effActive && liveActive)  b.classList.add('pending-stop');
+    }
+  });
+}
+
+// ── Freeze ──────────────────────────────────────────────────────────────
+
+function toggleFreeze() {
+  fetch('/api/freeze', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ enable: !freezeActive })
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) toast('Freeze error: ' + d.error, 'err');
+    // Repoll right away so the UI updates without waiting for the interval
+    pollState();
+  }).catch(e => toast('Freeze failed: ' + e, 'err'));
+}
+
+// ── Controls ──────────────────────────────────────────────────────────
+
+// Optimistic scene-button updates: applied immediately on tap, cleared once
+// the poll confirms the real state matches the prediction.
+// Structure: { [sceneId]: { action: 'starting'|'stopping', time: ms } }
+const optimisticUpdates = {};
+const OPT_TTL = 2500; // ms — fallback expiry in case poll never confirms
+
+function playScene(id) {
+  // Optimistic feedback: update the button visual immediately before the
+  // network round-trip. The poll will confirm and settle to the real state.
+  optimisticUpdates[id] = {
+    action: effectiveSceneIds.has(id) ? 'stopping' : 'starting',
+    time:   Date.now(),
+  };
+  highlightScenes();
+
+  // Tap-to-toggle based on EFFECTIVE state (pending when frozen, live otherwise)
+  if (effectiveSceneIds.has(id)) {
+    fetch('/api/stop/' + id, { method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}' })
+      .then(r => r.json()).then(d => {
+        if (!d.ok) { delete optimisticUpdates[id]; highlightScenes(); toast('Error: ' + d.error); }
+        if (freezeActive) pollState();
+      });
+    return;
+  }
+  fetch('/api/scene/' + id, { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { delete optimisticUpdates[id]; highlightScenes(); toast('Error: ' + d.error); }
+      if (freezeActive) pollState();
+    });
+}
+
+function stopAllScenes() {
+  // Use the "graceful stop" endpoint to fade out each scene
+  fetch('/api/stop', { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) toast('Error: ' + d.error);
+    });
+}
+
+let currentMotion = null;
+let currentLook   = null;
+let currentEffect = null;
+
+function playMotion(id) {
+  if (currentMotion === id) {
+    fetch('/api/motion/stop', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}' });
+    return;
+  }
+  fetch('/api/motion/' + id, { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r => r.json()).then(d => { if (!d.ok) toast('Motion error: ' + d.error, 'err'); });
+}
+
+function playLook(id) {
+  if (currentLook === id) {
+    fetch('/api/look/stop', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}' });
+    return;
+  }
+  fetch('/api/look/' + id, { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r => r.json()).then(d => { if (!d.ok) toast('Look error: ' + d.error, 'err'); });
+}
+
+function playEffect(id) {
+  // When frozen, the SERVER does the tap-to-toggle on the pending queue, so
+  // we always hit /api/effect/<id> and let the engine route it correctly.
+  // When live, tapping the currently-playing effect stops it; otherwise
+  // play. Same shape as motion/look.
+  if (!freezeActive && currentEffect === id) {
+    fetch('/api/effect/stop', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}' });
+    return;
+  }
+  fetch('/api/effect/' + id, { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r => r.json()).then(d => { if (!d.ok) toast('Effect error: ' + d.error, 'err'); });
+}
+
+function moveRow(btn, delta) {
+  // Reorder a row within an edit-list modal. Order is committed on Save.
+  const row = btn.closest('.reorder-row');
+  if (!row) return;
+  const sibling = delta < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if (!sibling || !sibling.classList.contains('reorder-row')) return;
+  const list = row.parentElement;
+  if (delta < 0) list.insertBefore(row, sibling);
+  else           list.insertBefore(sibling, row);
+}
+
+function colorBlackout() {
+  fetch('/api/blackout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'color' })
+  });
+}
+function fullBlackout() {
+  fetch('/api/blackout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'full' })
+  });
+}
+function toggleOverlay() {
+  fetch('/api/overlay', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'toggle' }) })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) toast('Overlay error: ' + d.error, 'err');
+    });
+}
+
+function overlaySet(state) {
+  // state: 'on' or 'off' — explicit, idempotent
+  fetch('/api/overlay', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: state }) })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) toast('Overlay error: ' + d.error, 'err');
+    });
+}
+
+// Hold-to-strobe button: press starts overlay, release stops it.
+// Wired up after DOM is ready. Handles touch + mouse + lost-touch
+// fallbacks so the overlay always stops even if the touch is interrupted.
+function bindOverlayHold() {
+  const btn = document.getElementById('overlay-hold-btn');
+  if (!btn) return;
+  let pressed = false;
+  const press   = (e) => {
+    if (pressed) return;
+    pressed = true;
+    btn.style.background = '#a060e8';
+    overlaySet('on');
+    if (e.cancelable) e.preventDefault();
+  };
+  const release = (e) => {
+    if (!pressed) return;
+    pressed = false;
+    btn.style.background = '';     // back to default (poll will repaint)
+    overlaySet('off');
+    if (e && e.cancelable) e.preventDefault();
+  };
+  btn.addEventListener('mousedown',   press);
+  btn.addEventListener('mouseup',     release);
+  btn.addEventListener('mouseleave',  release);  // finger/cursor slides off
+  btn.addEventListener('touchstart',  press,   { passive: false });
+  btn.addEventListener('touchend',    release, { passive: false });
+  btn.addEventListener('touchcancel', release);
+  // Safety net: if the window loses focus mid-press, release anyway
+  window.addEventListener('blur', release);
+}
+document.addEventListener('DOMContentLoaded', bindOverlayHold);
+
+let masterDebounce;
+let masterDragTimer;
+function onMaster(v) {
+  window._masterDragging = true;
+  clearTimeout(masterDragTimer);
+  masterDragTimer = setTimeout(() => { window._masterDragging = false; }, 500);
+  document.getElementById('master-val').textContent = v + '%';
+  clearTimeout(masterDebounce);
+  masterDebounce = setTimeout(() => {
+    fetch('/api/master', { method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({level: v/100}) });
+  }, 30);
+}
+
+let singerDebounce;
+let singerDragTimer;
+function onSinger(v) {
+  // Suppress poll-driven slider updates while user is dragging
+  window._singerDragging = true;
+  clearTimeout(singerDragTimer);
+  singerDragTimer = setTimeout(() => { window._singerDragging = false; }, 500);
+
+  document.getElementById('singer-val').textContent = v + '%';
+  clearTimeout(singerDebounce);
+  singerDebounce = setTimeout(() => {
+    fetch('/api/singer/level', { method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({level: v/100}) });
+  }, 30);
+}
+
+function toggleSinger() {
+  singerOn = !singerOn;
+  const btn = document.getElementById('singer-btn');
+  if (singerOn) {
+    btn.className = 'toggle-btn singer-on';
+    btn.textContent = '🎤 SINGER ON';
+  } else {
+    btn.className = 'toggle-btn singer-off';
+    btn.textContent = '🎤 SINGER OFF';
+  }
+  fetch('/api/singer/mode', { method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({enabled: singerOn}) });
+}
+
+// ── Scene editor ──────────────────────────────────────────────────────
+
+function editScene(e, id) {
+  e.preventDefault();
+  if (confirm('Edit scene "' + id + '"?'))
+    location.href = '/editor/' + id + '?from=home';
+}
+
+// ── Shows ─────────────────────────────────────────────────────────────
+// (Show switching lives in Settings → Shows. activeShow is retained for
+//  any code that needs to know the current show id.)
+
+// ── Toast ─────────────────────────────────────────────────────────────
+
+// ══ Tap tempo + beat cycler ════════════════════════════════════════════
+let tempoBpm        = 0;
+let tempoActive     = false;
+let tempoPeriodMs   = 0;
+let tempoAnchorPerf = 0;       // performance.now() of a downbeat, for local pulse
+let cyclerSel       = [];      // scene ids in cycle order
+let cyclerDiv       = 1;
+let cyclerActive    = false;
+let postTapTimers   = [];
+
+function tapTempo() {
+  const btn = document.getElementById('tap-btn');
+  if (btn) { btn.classList.remove('tap-flash'); void btn.offsetWidth; btn.classList.add('tap-flash'); }
+  fetch('/api/tempo/tap', { method:'POST' })
+    .then(r => r.json()).then(d => {
+      const t = d.tempo || {};
+      // Only flip to the yellow preview once we actually have a preview estimate
+      // (2nd tap onward). On the first tap leave the current readout as-is so we
+      // don't briefly recolour the existing committed BPM.
+      if (t.tapping && t.preview_bpm) setBpmReadout(t.preview_bpm, false);
+      schedulePostTapCheck();   // catch the commit a beat after tapping stops
+    }).catch(()=>{});
+}
+
+function schedulePostTapCheck() {
+  postTapTimers.forEach(clearTimeout);
+  postTapTimers = [800, 1300].map(ms => setTimeout(refreshTempo, ms));
+}
+function refreshTempo() {
+  fetch('/api/tempo').then(r => r.json()).then(applyTempo).catch(()=>{});
+}
+
+function cancelTempo() {
+  fetch('/api/tempo/cancel', { method:'POST' })
+    .then(r => r.json()).then(d => applyTempo(d.tempo || {})).catch(()=>{});
+  cyclerActive = false; updateCyclerUI();   // cancel stops the cycler too
+}
+function nudgeTempo(delta) {
+  fetch('/api/tempo/nudge', { method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({delta}) })
+    .then(r => r.json()).then(d => applyTempo(d.tempo || {})).catch(()=>{});
+}
+function resyncTempo() {
+  fetch('/api/tempo/resync', { method:'POST' })
+    .then(r => r.json()).then(d => applyTempo(d.tempo || {})).catch(()=>{});
+}
+
+function applyTempo(t) {
+  t = t || {};
+  tempoActive = !!t.active;
+  tempoBpm    = t.bpm || 0;
+  // Keep the local beat-pulse synced to the committed tempo whenever one is
+  // active — the engine is still running it even while you tap a new one in.
+  if (tempoActive && tempoBpm > 0) {
+    tempoPeriodMs = 60000 / tempoBpm;
+    const phase = t.beat_phase || 0;
+    tempoAnchorPerf = performance.now() - phase * tempoPeriodMs;   // re-sync local pulse
+  }
+  // Display priority: while a tap burst is in progress, show the live preview
+  // in yellow — even over an existing tempo — so it doesn't bounce back to the
+  // old BPM between taps and look like it isn't registering.
+  if (t.tapping && t.preview_bpm) {
+    setBpmReadout(t.preview_bpm, false);
+  } else if (tempoActive && tempoBpm > 0) {
+    setBpmReadout(tempoBpm, true);
+  } else {
+    setBpmReadout(0, false);
+  }
+  updateTempoButtons();
+}
+
+function applyTempoState(s) {
+  applyTempo(s.tempo || {});
+  applyCyclerState(s.cycler || {});
+}
+
+function setBpmReadout(bpm, committed) {
+  const el  = document.getElementById('bpm-val');
+  const lab = document.getElementById('bpm-label');
+  if (!el) return;
+  if (bpm > 0) {
+    el.textContent = Math.round(bpm);
+    el.classList.toggle('preview', !committed);
+    if (lab) lab.textContent = committed ? 'BPM' : 'tapping…';
+  } else {
+    el.textContent = '––';
+    el.classList.remove('preview');
+    if (lab) lab.textContent = 'BPM';
+  }
+}
+
+function updateTempoButtons() {
+  const cancel = document.getElementById('tempo-cancel-btn');
+  const nudge  = document.getElementById('tempo-nudge-row');
+  const dot    = document.getElementById('beat-dot');
+  if (cancel) cancel.style.display = tempoActive ? '' : 'none';
+  if (nudge)  nudge.style.display  = tempoActive ? '' : 'none';
+  if (dot)    dot.style.display    = tempoActive ? '' : 'none';
+}
+
+// Smooth on-beat pulse between polls
+function beatPulse() {
+  const dot = document.getElementById('beat-dot');
+  if (dot && tempoActive && tempoPeriodMs > 0) {
+    const phase = ((performance.now() - tempoAnchorPerf) % tempoPeriodMs) / tempoPeriodMs;
+    const b = Math.pow(1 - phase, 2.2);          // 1 on the beat, decaying to 0
+    dot.style.transform = 'scale(' + (0.8 + 0.55*b).toFixed(3) + ')';
+    dot.style.opacity   = (0.30 + 0.70*b).toFixed(3);
+  }
+  requestAnimationFrame(beatPulse);
+}
+
+// ── Cycler ──
+function toggleCyclerScene(id) {
+  const i = cyclerSel.indexOf(id);
+  if (i >= 0) cyclerSel.splice(i, 1); else cyclerSel.push(id);
+  updateCyclerChips();
+  if (cyclerActive && cyclerSel.length) startCycler();   // live re-config while running
+}
+function updateCyclerChips() {
+  document.querySelectorAll('.cyc-chip').forEach(chip => {
+    const pos = cyclerSel.indexOf(chip.dataset.id);
+    chip.classList.toggle('sel', pos >= 0);
+    const badge = chip.querySelector('.cyc-num');
+    if (badge) badge.textContent = pos >= 0 ? (pos + 1) : '';
+  });
+  const startBtn = document.getElementById('cyc-start-btn');
+  if (startBtn) startBtn.disabled = cyclerSel.length < 1;
+}
+function setCyclerDiv(d, el) {
+  cyclerDiv = d;
+  document.querySelectorAll('.cyc-div-btn').forEach(b => b.classList.toggle('active', b === el));
+  if (cyclerActive) startCycler();   // live-update division
+}
+function startCycler() {
+  if (cyclerSel.length < 1) { toast('Pick at least one look to cycle'); return; }
+  fetch('/api/cycler/start', { method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ scene_ids: cyclerSel, division: cyclerDiv }) })
+    .then(r => r.json()).then(d => {
+      cyclerActive = !!(d.cycler && d.cycler.active);
+      updateCyclerUI();
+      if (!tempoActive) toast('Cycler armed — tap a tempo to start it');
+    }).catch(()=>{});
+}
+function stopCycler() {
+  fetch('/api/cycler/stop', { method:'POST' })
+    .then(r => r.json()).then(() => { cyclerActive = false; updateCyclerUI(); }).catch(()=>{});
+}
+function applyCyclerState(c) {
+  c = c || {};
+  cyclerActive = !!c.active;
+  const status = document.getElementById('cyc-status');
+  if (status) {
+    if (c.active) {
+      status.textContent = '▶ ' + c.count + ' look' + (c.count==1?'':'s') + ' · ' + fmtDiv(c.division) +
+                           (c.name ? ' · now: ' + c.name : '');
+    } else {
+      status.textContent = cyclerSel.length ? (cyclerSel.length + ' selected — Start to arm')
+                                            : 'Pick looks below, then Start';
+    }
+  }
+  updateCyclerUI();
+}
+function fmtDiv(d) {
+  if (d === 0.5) return '2 / beat';
+  if (d === 1)   return '1 / beat';
+  return 'every ' + d + ' beats';
+}
+function updateCyclerUI() {
+  const startBtn = document.getElementById('cyc-start-btn');
+  const stopBtn  = document.getElementById('cyc-stop-btn');
+  if (startBtn) startBtn.style.display = cyclerActive ? 'none' : '';
+  if (stopBtn)  stopBtn.style.display  = cyclerActive ? '' : 'none';
+}
+
+// Per-show cycler scene list editor
+function openCyclerEdit()  { document.getElementById('cycler-edit-overlay').classList.add('open'); }
+function closeCyclerEdit() { document.getElementById('cycler-edit-overlay').classList.remove('open'); }
+
+// Collect the checked rows of an edit-list modal in their displayed order.
+// The save routes persist submitted order, so this sets membership AND order
+// in one shot.
+function _checkedIdsInOrder(listId) {
+  return Array.from(document.querySelectorAll('#' + listId + ' .reorder-row'))
+    .filter(row => row.querySelector('input[type=checkbox]').checked)
+    .map(row => row.dataset.id);
+}
+
+function saveCyclerScenes() {
+  const ids = _checkedIdsInOrder('cycler-edit-list');
+  fetch('/api/show/cycler-scenes', { method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({ scenes: ids }) })
+    .then(r => r.json()).then(() => { location.reload(); }).catch(()=>{});
+}
+
+function openScenesEdit()  { document.getElementById('scenes-edit-overlay').classList.add('open'); }
+function closeScenesEdit() { document.getElementById('scenes-edit-overlay').classList.remove('open'); }
+function openEffectsEdit() { document.getElementById('effects-edit-overlay').classList.add('open'); }
+function closeEffectsEdit(){ document.getElementById('effects-edit-overlay').classList.remove('open'); }
+
+function saveEnabledTyped(type, ids) {
+  fetch('/api/show/enabled-scenes/' + type, { method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({ scenes: ids }) })
+    .then(r => r.json()).then(() => { location.reload(); }).catch(()=>{});
+}
+function saveScenesList() {
+  saveEnabledTyped('main', _checkedIdsInOrder('scenes-edit-list'));
+}
+function saveEffectsList() {
+  saveEnabledTyped('effect', _checkedIdsInOrder('effects-edit-list'));
+}
+
+// Init tempo/cycler UI
+document.querySelectorAll('.cyc-div-btn').forEach(b => {
+  if (parseFloat(b.dataset.div) === 1) b.classList.add('active');
+});
+updateCyclerChips();
+refreshTempo();
+requestAnimationFrame(beatPulse);
+
+function toast(msg, ms=2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), ms);
+}
+</script>
+
+<!-- ── DMX Monitor overlay ───────────────────────────────────────── -->
+<div id="dmx-overlay" style="
+  display:none; position:fixed; inset:0; z-index:200;
+  background:rgba(0,0,0,0.88); flex-direction:column;">
+
+  <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;
+              background:#1a1a1a;border-bottom:1px solid #333;flex-shrink:0;">
+    <span style="font-size:0.9rem;font-weight:700;color:#00b4d8;">
+      📊 DMX Monitor
+    </span>
+    <select id="dmx-universe-sel" onchange="onUniverseChange()" style="
+      background:#242424;border:1px solid #444;border-radius:6px;
+      color:#e0e0e0;padding:4px 8px;font-size:0.78rem;cursor:pointer;"></select>
+    <span style="flex:1;"></span>
+    <span id="dmx-active-count" style="font-size:0.75rem;color:#888;"></span>
+    <button onclick="closeDmxMonitor()" style="
+      background:#242424;border:1px solid #444;border-radius:7px;
+      color:#e0e0e0;padding:6px 14px;font-size:0.82rem;cursor:pointer;">✕ Close</button>
+  </div>
+
+  <div style="flex:1;overflow:auto;padding:14px;-webkit-overflow-scrolling:touch;">
+    <canvas id="dmx-canvas" style="display:block;"></canvas>
+  </div>
+
+  <div style="padding:8px 14px;background:#1a1a1a;border-top:1px solid #333;
+              font-size:0.7rem;color:#666;display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+    <span id="dmx-legend"></span>
+    <span style="margin-left:auto;">Groups of 10 · Hover for value</span>
+  </div>
+</div>
+
+<script>
+// ── DMX Monitor ────────────────────────────────────────────────────────
+let dmxPollTimer  = null;
+let dmxUniverse   = new Array(512).fill(0);
+let dmxHoverCh    = -1;
+
+const BAR_W      = 7;
+const BAR_GAP    = 1;
+const GROUP_GAP  = 5;
+const GROUP_SIZE = 10;
+const CANVAS_H   = 216;
+const LABEL_H    = 32;
+const DOT_GAP    = 8;     // gap between bar bottom and color dots
+const DOT_H      = 8;     // height of color indicator row
+const BAR_MAX_H  = CANVAS_H - LABEL_H - 4 - DOT_GAP - DOT_H;  // 164
+const DOT_Y      = 2 + BAR_MAX_H + DOT_GAP;  // top y of color dot row
+
+// Distinct colors per fixture, indexed by fixture order
+const FX_PALETTE = [
+  '#00b4d8','#4caf50','#ff9800','#e040fb',
+  '#e63946','#ffb347','#26c6da','#f06292',
+  '#aed581','#ffd54f','#80cbc4','#ce93d8',
+];
+const FX_DIM_PALETTE = [
+  '#005a6e','#1e5c1e','#7a4200','#5c007a',
+  '#6e0010','#7a5200','#0e5c64','#7a2040',
+  '#4a6620','#8a6e00','#2a5c58','#5c2878',
+];
+
+// Build channel→fixture index maps from show config (per universe)
+const SHOW_FIXTURES = {{ show.fixtures | tojson }};
+const channelFxIdxByUni = {};   // {uni: Int8Array(512)}
+const channelColorFnByUni = {}; // {uni: array[512]}
+const universesInShow = new Set();
+
+function ensureUni(uni) {
+  if (!(uni in channelFxIdxByUni)) {
+    channelFxIdxByUni[uni]   = new Int8Array(512).fill(-1);
+    channelColorFnByUni[uni] = new Array(512).fill(null);
+    universesInShow.add(uni);
+  }
+}
+ensureUni(0);  // always have universe 0
+
+SHOW_FIXTURES.forEach((fx, idx) => {
+  const uni = fx.universe || 0;
+  ensureUni(uni);
+  const start = (fx.start_address || 1) - 1;
+  const len   = fx.channels || 1;
+  for (let i = start; i < start + len && i < 512; i++) {
+    channelFxIdxByUni[uni][i] = idx;
+  }
+});
+
+// Channel color function map per universe
+SHOW_FIXTURES.forEach(fx => {
+  const uni        = fx.universe || 0;
+  const fxStart    = fx.start_address || 1;
+  const dimCh      = fx.dimmer_channel;
+  const firstPodCh = fx.first_pod_channel;
+  const chPerPod   = fx.channels_per_pod;
+  const offsets    = fx.pod_color_offsets || {};
+  const podCount   = fx.pods || 1;
+  const colorMap   = channelColorFnByUni[uni];
+
+  if (dimCh && dimCh > 0) {
+    const absCh = fxStart + dimCh - 1;
+    if (absCh >= 1 && absCh <= 512) colorMap[absCh - 1] = 'dim';
+  }
+  if (firstPodCh && chPerPod) {
+    for (let p = 0; p < podCount; p++) {
+      const podStart = fxStart + firstPodCh - 1 + p * chPerPod;
+      Object.entries(offsets).forEach(([color, off]) => {
+        const absCh = podStart + off;
+        if (absCh >= 1 && absCh <= 512) colorMap[absCh - 1] = color;
+      });
+    }
+  }
+});
+
+// Active universe selector state — start with the lowest-numbered universe
+let currentUniverse = Math.min(...universesInShow);
+// Current view shims; drawMonitor reads these
+let channelFxIdx   = channelFxIdxByUni[currentUniverse];
+let channelColorFn = channelColorFnByUni[currentUniverse];
+let dmxAllUniverses = {};  // { uni: [512 values] }
+
+const CH_COLOR_MAP = {
+  r:   '#f44336',
+  g:   '#4caf50',
+  b:   '#2196f3',
+  a:   '#ff9800',
+  w:   '#e0e0e0',
+  uv:  '#9c27b0',
+  dim: '#666666',
+};
+
+function barColor(ch0, value) {
+  const fxIdx = channelFxIdx[ch0];
+  if (fxIdx < 0) {
+    // Unpatched channel — muted gray
+    return value > 0 ? `rgba(120,120,120,${0.3 + (value/255)*0.7})` : '#222';
+  }
+  const base = FX_PALETTE[fxIdx % FX_PALETTE.length];
+  if (value === 0) {
+    // Zero-value channel — dim version of fixture color so groupings stay visible
+    return base + '33';  // ~20% opacity
+  }
+  // Active channel — bright fixture color, opacity modulated by value
+  const alpha = 0.45 + (value / 255) * 0.55;
+  return base + Math.round(alpha * 255).toString(16).padStart(2,'0');
+}
+
+function calcCanvasWidth(numChannels) {
+  const groups = Math.ceil(numChannels / GROUP_SIZE);
+  return groups * (GROUP_SIZE * (BAR_W + BAR_GAP) - BAR_GAP) +
+         (groups - 1) * GROUP_GAP + 2;
+}
+
+function chToX(ch0) {
+  const group  = Math.floor(ch0 / GROUP_SIZE);
+  const offset = ch0 % GROUP_SIZE;
+  return group * (GROUP_SIZE * (BAR_W + BAR_GAP) - BAR_GAP + GROUP_GAP) +
+         offset * (BAR_W + BAR_GAP) + 1;
+}
+
+function drawMonitor() {
+  const canvas = document.getElementById('dmx-canvas');
+  if (!canvas) return;
+
+  let maxActive = 0;
+  for (let i = 511; i >= 0; i--) {
+    if (dmxUniverse[i] > 0) { maxActive = i + 1; break; }
+  }
+  // Also include all patched fixture ranges in this universe even if zero
+  SHOW_FIXTURES.forEach(fx => {
+    if ((fx.universe || 0) !== currentUniverse) return;
+    const end = (fx.start_address||1) + (fx.channels||1) - 1;
+    if (end > maxActive) maxActive = end;
+  });
+  const limited = Math.min(Math.max(20, Math.ceil(maxActive/10)*10+10), 512);
+
+  canvas.width  = calcCanvasWidth(limited);
+  canvas.height = CANVAS_H;
+  canvas.style.minWidth  = canvas.width + 'px';
+  canvas.style.minHeight = canvas.height + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Grid lines
+  ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1;
+  [0.25,0.5,0.75,1.0].forEach(pct => {
+    const y = 2 + BAR_MAX_H*(1-pct);
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
+  });
+
+  // Fixture range backgrounds — subtle tint of the fixture color
+  SHOW_FIXTURES.forEach((fx, fxIdx) => {
+    if ((fx.universe || 0) !== currentUniverse) return;
+    const start = (fx.start_address||1) - 1;
+    const end   = Math.min(start + (fx.channels||1), limited) - 1;
+    if (start >= limited) return;
+    const x1 = chToX(start);
+    const x2 = chToX(end) + BAR_W;
+    const color = FX_PALETTE[fxIdx % FX_PALETTE.length];
+    // Background tint
+    ctx.fillStyle = color + '12';   // ~7% opacity
+    ctx.fillRect(x1 - 1, 0, x2 - x1 + 2, CANVAS_H - LABEL_H);
+    // Vertical separator lines at fixture boundaries
+    ctx.strokeStyle = color + '55';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.moveTo(x1 - 1, 0); ctx.lineTo(x1 - 1, CANVAS_H - LABEL_H);
+    ctx.moveTo(x2 + 1, 0); ctx.lineTo(x2 + 1, CANVAS_H - LABEL_H);
+    ctx.stroke();
+    // Fixture name label at top
+    ctx.fillStyle = color;
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'left';
+    const label = fx.name.length > 18 ? fx.name.slice(0, 17) + '…' : fx.name;
+    ctx.fillText(label, x1 + 2, 10);
+  });
+
+  // Bars
+  for (let i = 0; i < limited; i++) {
+    const val  = dmxUniverse[i];
+    const x    = chToX(i);
+    const barH = val === 0 ? 1 : Math.max(2, Math.round((val/255)*BAR_MAX_H));
+    const y    = 2 + BAR_MAX_H - barH;
+
+    ctx.fillStyle = barColor(i, val);
+    ctx.fillRect(x, y, BAR_W, barH);
+
+    if (i === dmxHoverCh) {
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.fillRect(x, 14, BAR_W, BAR_MAX_H-12);
+    }
+
+    if (i % GROUP_SIZE === 0 || i === 0) {
+      ctx.fillStyle  = '#555';
+      ctx.font       = '8px monospace';
+      ctx.textAlign  = 'left';
+      ctx.fillText(i+1, x, CANVAS_H-18);
+    }
+
+    if (val > 0 && (i === dmxHoverCh || val === 255)) {
+      ctx.fillStyle  = '#fff';
+      ctx.font       = 'bold 8px monospace';
+      ctx.textAlign  = 'center';
+      ctx.fillText(val, x+BAR_W/2, Math.max(y-2, 22));
+    }
+  }
+
+  // Color function indicators below bars
+  for (let i = 0; i < limited; i++) {
+    const fn = channelColorFn[i];
+    if (!fn) continue;
+    const x = chToX(i);
+    ctx.fillStyle = CH_COLOR_MAP[fn];
+    ctx.fillRect(x, DOT_Y, BAR_W, DOT_H);
+    // Subtle border on white indicator so it's visible against dark background
+    if (fn === 'w') {
+      ctx.strokeStyle = '#888';
+      ctx.lineWidth   = 0.5;
+      ctx.strokeRect(x + 0.5, DOT_Y + 0.5, BAR_W - 1, DOT_H - 1);
+    }
+  }
+
+  // Hover tooltip
+  if (dmxHoverCh >= 0 && dmxHoverCh < limited) {
+    const val   = dmxUniverse[dmxHoverCh];
+    const fxIdx = channelFxIdx[dmxHoverCh];
+    let tip;
+    if (fxIdx >= 0) {
+      const fx       = SHOW_FIXTURES[fxIdx];
+      const relCh    = dmxHoverCh + 1 - (fx.start_address || 1) + 1;
+      tip = `${fx.name} · Ch ${relCh}: ${val}`;
+    } else {
+      tip = `DMX ${dmxHoverCh+1}: ${val} (unpatched)`;
+    }
+    const x     = chToX(dmxHoverCh);
+    ctx.font    = 'bold 10px sans-serif';
+    const tw    = ctx.measureText(tip).width + 14;
+    const tx    = Math.min(x, canvas.width - tw - 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    ctx.beginPath(); ctx.roundRect(tx, CANVAS_H-LABEL_H-20, tw, 17, 4); ctx.fill();
+    ctx.fillStyle = fxIdx >= 0 ? FX_PALETTE[fxIdx%FX_PALETTE.length] : '#888';
+    ctx.textAlign = 'left';
+    ctx.fillText(tip, tx+7, CANVAS_H-LABEL_H-7);
+  }
+
+  const active = dmxUniverse.filter(v=>v>0).length;
+  document.getElementById('dmx-active-count').textContent =
+    `${active} active channel${active!==1?'s':''}`;
+}
+
+function canvasMouseMove(e) {
+  const canvas = document.getElementById('dmx-canvas');
+  const rect   = canvas.getBoundingClientRect();
+  const mouseX = (e.clientX ?? e.touches?.[0]?.clientX ?? 0) - rect.left;
+  let found = -1;
+  for (let i = 0; i < 512; i++) {
+    const x = chToX(i);
+    if (mouseX >= x && mouseX <= x+BAR_W) { found = i; break; }
+  }
+  if (found !== dmxHoverCh) { dmxHoverCh = found; drawMonitor(); }
+}
+
+async function pollDmx() {
+  try {
+    const r = await fetch('/api/dmx');
+    const data = await r.json();
+    // New format: { universe_num_as_str: [512 values] }
+    let changed = false;
+    const newAll = {};
+    for (const [k, v] of Object.entries(data)) {
+      const uni = parseInt(k);
+      newAll[uni] = v;
+      const prev = dmxAllUniverses[uni];
+      if (!prev || prev.length !== v.length) { changed = true; continue; }
+      // Sample-compare a handful of channels; full compare would be wasteful
+      for (let i = 0; i < v.length; i += 16) {
+        if (prev[i] !== v[i]) { changed = true; break; }
+      }
+      if (!changed) {
+        // Sampled OK so far, do a quick full check
+        for (let i = 0; i < v.length; i++) {
+          if (prev[i] !== v[i]) { changed = true; break; }
+        }
+      }
+    }
+    dmxAllUniverses = newAll;
+    dmxUniverse = dmxAllUniverses[currentUniverse] || new Array(512).fill(0);
+    if (changed) drawMonitor();
+  } catch { }
+}
+
+function onUniverseChange() {
+  currentUniverse = parseInt(document.getElementById('dmx-universe-sel').value);
+  channelFxIdx   = channelFxIdxByUni[currentUniverse]   || new Int8Array(512).fill(-1);
+  channelColorFn = channelColorFnByUni[currentUniverse] || new Array(512).fill(null);
+  dmxUniverse    = dmxAllUniverses[currentUniverse]     || new Array(512).fill(0);
+  // Rebuild fixture legend for this universe
+  renderDmxLegend();
+  drawMonitor();
+}
+
+function renderDmxLegend() {
+  const legend = document.getElementById('dmx-legend');
+  legend.innerHTML = SHOW_FIXTURES
+    .map((fx, i) => ((fx.universe || 0) === currentUniverse) ? {fx, i} : null)
+    .filter(Boolean)
+    .map(({fx, i}) =>
+      `<span>■ <span style="color:${FX_PALETTE[i%FX_PALETTE.length]}">${fx.name} (${fx.start_address}–${(fx.start_address||1)+(fx.channels||1)-1})</span></span>`
+    ).join(' &nbsp;');
+}
+
+function toggleDmxMonitor() {
+  const overlay = document.getElementById('dmx-overlay');
+  if (overlay.style.display === 'flex') {
+    closeDmxMonitor();
+  } else {
+    openDmxMonitor();
+  }
+}
+
+function openDmxMonitor() {
+  const overlay = document.getElementById('dmx-overlay');
+  overlay.style.display = 'flex';
+
+  // Populate universe selector with the universes actually in use
+  const sel = document.getElementById('dmx-universe-sel');
+  const universes = Array.from(universesInShow).sort((a,b) => a-b);
+  sel.innerHTML = universes.map(u =>
+    `<option value="${u}" ${u===currentUniverse?'selected':''}>Universe ${u}</option>`
+  ).join('');
+  sel.style.display = universes.length > 1 ? '' : 'none';  // hide if single-universe
+
+  renderDmxLegend();
+
+  pollDmx();
+  dmxPollTimer = setInterval(pollDmx, 33);  // ~30fps for smooth fades
+  const canvas = document.getElementById('dmx-canvas');
+  canvas.addEventListener('mousemove', canvasMouseMove);
+  canvas.addEventListener('touchmove', e=>{e.preventDefault();canvasMouseMove(e);},{passive:false});
+  canvas.addEventListener('mouseleave', ()=>{dmxHoverCh=-1;drawMonitor();});
+}
+
+function closeDmxMonitor() {
+  document.getElementById('dmx-overlay').style.display = 'none';
+  clearInterval(dmxPollTimer); dmxPollTimer = null;
+}
+</script>
+
+<script>
+(function() {
+  const toastWrapper = document.createElement('div');
+  toastWrapper.style.cssText = 'position:fixed;bottom:1.2rem;right:1.2rem;z-index:10000;display:flex;flex-direction:column;gap:0.5rem;align-items:flex-end;pointer-events:none;';
+  document.body.appendChild(toastWrapper);
+  let msgrSocket = null;
+
+  const toastStyle = document.createElement('style');
+  toastStyle.textContent = '@keyframes toastFlash { 0%{background:#14142a} 15%{background:#ffaa00} 30%{background:#14142a} 45%{background:#ffaa00} 60%{background:#14142a} 75%{background:#ffaa00} 100%{background:#14142a} }';
+  document.head.appendChild(toastStyle);
+
+  function showToast(data) {
+    const color = data.color || '#ffaa00';
+    const toast = document.createElement('div');
+    toast.style.cssText = 'border:3px solid ' + color + ';border-radius:16px;padding:1.1rem 1.4rem;min-width:280px;max-width:420px;box-shadow:0 6px 32px rgba(0,0,0,0.8);pointer-events:all;position:relative;animation:toastFlash 0.8s ease 3;';
+    const dismiss = '<button onclick="this.parentNode.parentNode.removeChild(this.parentNode)" style="position:absolute;top:0.5rem;right:0.7rem;background:none;border:none;color:#55557a;font-size:1.1rem;cursor:pointer;line-height:1;padding:0.1rem 0.3rem;">✕</button>';
+    toast.innerHTML = dismiss + '<div style="font-size:0.65rem;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;color:#ffaa00;margin-bottom:0.4rem;">📨 ' + (data.from||'Stage Messenger') + '</div><div style="font-size:1.3rem;font-weight:900;color:#e0e0f0;letter-spacing:0.03em;">' + String(data.message).replace(/</g,'&lt;') + '</div>';
+    toastWrapper.appendChild(toast);
+    setTimeout(function() { if(toast.parentNode) toast.parentNode.removeChild(toast); }, 10000);
+  }
+
+  function connect(cfg) {
+    const host = cfg.host || window.location.hostname;
+    const url = 'http://' + host + ':' + (cfg.port||3000);
+    const script = document.createElement('script');
+    script.src = url + '/socket.io.min.js';
+    script.onload = function() {
+      msgrSocket = io(url, {transports:['websocket','polling'],reconnection:true,reconnectionDelay:3000});
+      msgrSocket.on('connect', function() { msgrSocket.emit('register-control'); });
+      msgrSocket.on('message', showToast);
+    };
+    document.head.appendChild(script);
+  }
+
+  fetch('/api/messenger-config').then(function(r){return r.json();}).then(connect).catch(function(){});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "id": "wled_single_drgb",
+  "name": "WLED Single DRGB (4ch realtime)",
+  "channels": 4,
+  "pods": 1,
+  "dimmer_channel": 1,
+  "first_pod_channel": 2,
+  "channels_per_pod": 3,
+  "pod_color_offsets": {
+    "r": 0,
+    "g": 1,
+    "b": 2
+  }
+}

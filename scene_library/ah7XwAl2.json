@@ -1,0 +1,48 @@
+{
+  "name": "Pink pulse",
+  "scene_type": "effect",
+  "effect": "pulse",
+  "primary": {
+    "a": 0,
+    "b": 60,
+    "g": 0,
+    "l": 0,
+    "r": 200,
+    "uv": 255
+  },
+  "secondary": {
+    "r": 255,
+    "g": 90,
+    "b": 50,
+    "l": 90,
+    "a": 140,
+    "uv": 0
+  },
+  "accent": null,
+  "primary_sample": false,
+  "secondary_sample": false,
+  "accent_sample": false,
+  "params": {
+    "attack": 0.01,
+    "curve": 1,
+    "speed": 1
+  },
+  "fixtures_enabled": [
+    "betopper_lpc1818_rgblauv_1781382204782_0",
+    "blizzard_exa_54ch_1779867499106_0",
+    "betopper_lpc1818_rgblauv_1781382204782_1",
+    "betopper_lpc1818_rgblauv_1781382204782_3",
+    "blizzard_exa_54ch_1779867499106_1",
+    "betopper_lpc1818_rgblauv_1781382204782_2"
+  ],
+  "rendering_mode": "continuous_strip",
+  "target_groups": [
+    "ge1jy1p",
+    "gr61bi2"
+  ],
+  "target_group": null,
+  "launch_fade": 500,
+  "folder": "Bars",
+  "tempo_sync": true,
+  "beat_division": 2
+}

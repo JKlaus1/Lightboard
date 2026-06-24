@@ -1,0 +1,49 @@
+{
+  "name": "Rainbow",
+  "scene_type": "effect",
+  "effect": "rainbow",
+  "primary": {
+    "a": 0,
+    "b": 0,
+    "g": 0,
+    "r": 180,
+    "uv": 0,
+    "w": 200
+  },
+  "secondary": {
+    "a": 0,
+    "b": 0,
+    "g": 0,
+    "r": 0,
+    "uv": 0,
+    "w": 0
+  },
+  "accent": null,
+  "primary_sample": false,
+  "secondary_sample": false,
+  "accent_sample": false,
+  "params": {
+    "density": 0.3,
+    "saturation": 1,
+    "speed": 0.5,
+    "value": 1
+  },
+  "fixtures_enabled": [
+    "blizzard_exa_54ch_1779867499106_0",
+    "blizzard_exa_54ch_1779867499106_1",
+    "betopper_lpc1818_rgblauv_1781382204782_0",
+    "betopper_lpc1818_rgblauv_1781382204782_1",
+    "betopper_lpc1818_rgblauv_1781382204782_2",
+    "betopper_lpc1818_rgblauv_1781382204782_3"
+  ],
+  "rendering_mode": "continuous_strip",
+  "target_groups": [
+    "ge1jy1p",
+    "gr61bi2"
+  ],
+  "target_group": null,
+  "launch_fade": 500,
+  "folder": "Bars",
+  "tempo_sync": true,
+  "beat_division": 4
+}

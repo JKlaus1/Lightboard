@@ -1,0 +1,41 @@
+{
+  "id": "120w_led_spot",
+  "name": "120w led spot",
+  "type": "mover",
+  "channels": 16,
+  "channel_roles": {
+    "pan": 1,
+    "pan_fine": 2,
+    "tilt": 3,
+    "tilt_fine": 4,
+    "dimmer": 6,
+    "strobe": 7,
+    "color_wheel": 8,
+    "gobo": 9,
+    "gobo2": 10,
+    "gobo2_rot": 11,
+    "prism": 13,
+    "focus": 12,
+    "speed": 5
+  },
+  "channel_slots": {
+    "color_wheel": [
+      {
+        "_v": 1782292781976,
+        "hi": 9,
+        "img": null,
+        "label": "White",
+        "lo": 0,
+        "uid": "smqrv3s0mj1"
+      },
+      {
+        "uid": "smqs6hey0hv",
+        "label": "Red/White ",
+        "lo": 10,
+        "hi": 20,
+        "img": null,
+        "_v": 1782311893992
+      }
+    ]
+  }
+}

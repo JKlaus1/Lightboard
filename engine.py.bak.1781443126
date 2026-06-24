@@ -1,0 +1,2177 @@
+"""
+Lighting engine.
+Handles scene playback with per-step fade interpolation,
+master dimmer scaling, and singer pod override with crossfade.
+
+Architecture:
+  Scene thread   → writes to _scene_dmx (what the scene wants)
+  Output thread  → reads _scene_dmx, applies singer + master, writes to DMX
+This means master/singer fader changes take effect within ~25ms
+even while a scene is in its hold phase.
+"""
+
+import threading
+import time
+import logging
+
+import cell_strip
+import effects
+
+log = logging.getLogger(__name__)
+
+
+class LightingEngine:
+
+    OUTPUT_HZ = 40   # how often the output thread updates DMX
+
+    def __init__(self, dmx, show_config):
+        self._dmx    = dmx
+        self._show   = show_config
+        self._lock   = threading.Lock()
+
+        # ── Multi-scene main scene playback ────────────────────────────────
+        # Each entry in _active_scenes is a dict with:
+        #   id, name, fade (launch_fade), launch_id (unique per play),
+        #   thread, stop_event,
+        #   dmx (current resolved values, {ch: val}),
+        #   owned_channels (set of (uni,ch) this scene controls per its fixtures
+        #                   participation - computed once at play time),
+        #   start_blend (0→1 fade in), stop_blend (1→0 fade out, when stopping),
+        #   stopping (bool)
+        self._active_scenes = []     # list of scene_state dicts, oldest first
+        self._scene_seq     = 0      # monotonic counter for launch_id
+
+        # Legacy single-slot scene_dmx kept as a *read-only* aggregate view so
+        # existing tools (DMX monitor, preview, etc) still work. It's recomputed
+        # every output tick from _active_scenes.
+        self._scene_dmx = {}
+
+        # Controls
+        self._master_level  = 1.0   # 0.0–1.0
+        self._singer_mode   = True  # True = override pods with warm white
+        self._singer_level  = 1.0   # 0.0–1.0
+        # Smooth singer toggle: 0.0 = fully scene, 1.0 = fully singer
+        self._singer_blend  = 1.0
+        self._singer_target = 1.0
+        self._singer_fade_ms = show_config.get("singer_fade_ms", 1500)
+
+        # Live preview slot (separate from active scenes; uses _scene_dmx
+        # write path so it appears identical to a playing scene from the
+        # output thread's perspective, but doesn't go through multi-scene
+        # layering). Set via preview_set() / cleared via preview_clear().
+        self._preview_dmx = {}
+        self._preview_active = False  # when True, _preview_dmx replaces _scene_dmx
+
+        # ── Freeze state ────────────────────────────────────────────────────
+        # When frozen, scene change actions (play/stop) are routed to a pending
+        # queue instead of immediately taking effect. The live scenes keep
+        # playing unchanged. Unfreezing diffs pending vs live and applies all
+        # changes at once. freeze_includes controls which scene categories
+        # participate in the queue; categories not listed bypass freeze.
+        self._freeze_active = False
+        # Pending scene queue for main scenes: ordered list of scene_ids that
+        # WILL be active after unfreeze. We also keep the scene data for any
+        # newly-added scenes so unfreeze can play them without a reload.
+        self._pending_main_ids    = []
+        self._pending_main_scenes = {}   # scene_id → scene data
+        self._pending_main_fades  = {}   # scene_id → launch_fade ms (for new adds)
+        # Pending motion/look (single-slot). None = no pending change.
+        # Otherwise: {"action": "play"|"stop", "id": scene_id, "scene": data}
+        self._pending_motion = None
+        self._pending_look   = None
+        # freeze_includes: which categories queue when freeze is active.
+        # Defaults match the user's preferred behavior: scene changes queue,
+        # raw control inputs (blackout, dimmers, singer toggle) stay live.
+        self._freeze_includes = self._load_freeze_includes(show_config)
+
+        # Blackout: mode + smooth fade blend.
+        # mode = None | 'color' | 'full'
+        # blend = 0.0 (normal scene) → 1.0 (blackout fully applied)
+        self._blackout_mode      = None
+        self._blackout_blend     = 0.0
+        self._blackout_target    = 0.0
+        self._blackout_fade_ms   = show_config.get("blackout_fade_ms", 600)
+
+        # Overlay (e.g. strobe layer that sits on top of the running scene).
+        # Plays a scene in a parallel loop; its DMX values replace the main
+        # scene's values for any channels it specifies. Fade in/out is smooth.
+        self._overlay_dmx          = {}
+        self._overlay_blend        = 0.0
+        self._overlay_target       = 0.0
+        self._overlay_fade_ms      = show_config.get("overlay_fade_ms", 200)
+        self._overlay_keep_singer  = show_config.get("overlay_keep_singer", True)
+        self._overlay_thread       = None
+        self._overlay_stop_event   = threading.Event()
+        self._current_overlay_name = None
+
+        # Mover Motion scene layer — controls pan/tilt of mover fixtures.
+        self._motion_dmx          = {}
+        self._motion_thread       = None
+        self._motion_stop_event   = threading.Event()
+        self._current_motion_name = None
+        self._current_motion_id   = None
+
+        # Mover Look scene layer — controls dimmer/color/gobo/prism etc. of movers.
+        self._look_dmx            = {}
+        self._look_thread         = None
+        self._look_stop_event     = threading.Event()
+        self._current_look_name   = None
+        self._current_look_id     = None
+
+        # ── Effect layer (Phase 2C) ─────────────────────────────────────────
+        # An effect scene renders animated colour to one or more fixtures'
+        # cell strips. The current scene is held in _current_effect_scene
+        # and re-rendered every output tick using _effect_start_time as
+        # the reference for `t`. The effect layer sits ABOVE the master-
+        # scaled main scenes and BELOW singer / overlay / blackout.
+        # Stopping fades out via _effect_blend like the overlay layer;
+        # when the blend reaches 0 the scene reference is cleared.
+        self._effect_dmx           = {}
+        self._effect_blend         = 0.0
+        self._effect_target        = 0.0
+        self._effect_fade_ms       = show_config.get("effect_fade_ms", 500)
+        self._current_effect_scene = None   # full scene dict for re-rendering
+        self._current_effect_id    = None
+        self._current_effect_name  = None
+        self._effect_start_time    = 0.0
+        # Pending effect change while frozen, mirroring _pending_motion shape:
+        #   {"action": "play"|"stop", "id": ..., "scene": ...}  or None
+        self._pending_effect       = None
+
+        # ── Effect colour sampling (Phase 2F) ───────────────────────────────
+        # Average non-singer cell colour across all currently-playing main
+        # scenes, refreshed once per output tick from the post-composite
+        # DMX. Effect scenes can opt into "sample from main scene" per
+        # colour slot, in which case _resolve_effect_params substitutes
+        # this value at render time. None when no scenes are playing.
+        self._sampled_scene_color = None
+
+        # ── Tempo / tap-tempo clock ─────────────────────────────────────────
+        self._tempo_active    = False   # master gate; tempo_cancel() clears it
+        self._bpm             = 0.0      # committed BPM (0 = none)
+        self._beat_anchor     = 0.0      # wall-clock time of a committed downbeat
+        self._tap_times       = []       # recent tap timestamps (buffer)
+        self._tap_pending     = False    # buffer waiting to settle+commit
+        self._tap_preview_bpm = 0.0      # live estimate during a burst (UI only)
+        self._tap_settle_s    = show_config.get("tap_settle_s", 0.7)
+        self._tap_reset_s     = show_config.get("tap_reset_s", 4.0)
+        self._tap_min         = int(show_config.get("tap_min", 3))
+        self._bpm_min         = float(show_config.get("bpm_min", 20.0))
+        self._bpm_max         = float(show_config.get("bpm_max", 240.0))
+
+        # ── Beat cycler ─────────────────────────────────────────────────────
+        self._cycler_active     = False
+        self._cycler_scenes     = []      # list of scene dicts to chase
+        self._cycler_division   = 1.0     # beats per look
+        self._cycler_xfade_ms   = 200     # crossfade between looks
+        self._cyc_index         = 0
+        self._cyc_deck          = None    # reserved id currently holding the look
+        self._cyc_started       = False   # fired the first look this active run?
+        self._cyc_last_idx      = 0
+        self._cyc_last_clock    = (0.0, 0.0)   # (bpm, anchor) change detector
+        self._cycler_thread     = None
+        self._cycler_stop_event = threading.Event()
+
+        # Pre-compute channel maps
+        self._dimmer_channels   = self._get_dimmer_channels()
+        self._singer_channels   = self._get_singer_channels()
+        self._singer_dmx_full   = self._build_singer_dmx()
+        self._patched_channels  = self._get_all_patched_channels()
+
+        # Pre-compute cell strips for every non-mover fixture in both
+        # rendering modes (Phase 2A). Used by main-scene pixel_strip
+        # resolution and by effect-scene rendering (Phase 2C).
+        self._cell_strips       = self._build_cell_strips_cache()
+
+        # Start output thread
+        self._output_running = True
+        self._output_thread  = threading.Thread(
+            target=self._output_loop, daemon=True, name="dmx-mixer"
+        )
+        self._output_thread.start()
+
+    # ── Fixture map helpers ───────────────────────────────────────────────
+
+    def _fx_universe(self, fx):
+        """Universe number for a fixture (defaults to 0 for backward compat)."""
+        try:
+            return int(fx.get("universe", 0))
+        except (ValueError, TypeError):
+            return 0
+
+    def _ch_overflow(self, start_uni, abs_ch):
+        """Convert a 1-indexed absolute channel number that may exceed 512
+        into a proper (universe, channel) tuple. Channels above 512 spill
+        into the next universe. This lets a fixture span multiple universes
+        seamlessly (e.g. a 756-channel WLED pixel strip starting at u2 ch 1
+        occupies u2 ch 1-512 + u3 ch 1-244).
+        """
+        if abs_ch <= 512:
+            return (start_uni, abs_ch)
+        universe_offset = (abs_ch - 1) // 512
+        ch_in_uni = ((abs_ch - 1) % 512) + 1
+        return (start_uni + universe_offset, ch_in_uni)
+
+    def _is_mover(self, fx):
+        return fx.get("type") == "mover"
+
+    def _is_pixel_strip(self, fx):
+        return fx.get("type") == "pixel_strip"
+
+    def _fx_pod_pixel_count(self, fx):
+        """How many physical LED pixels each 'pod' represents. Default 1 for
+        legacy fixtures (pod = one color cell). For pixel-strip fixtures like
+        a WLED tube where each pod represents N pixels (e.g. a side of the
+        tube), this is set higher. The pod's color is replicated across all
+        N pixels using bytes_per_pixel = channels_per_pod / pod_pixel_count.
+        """
+        try:
+            n = int(fx.get("pod_pixel_count", 1))
+            return max(1, n)
+        except (ValueError, TypeError):
+            return 1
+
+    def _mover_channel_for_role(self, fx, role):
+        """Resolve a role name (e.g. 'pan', 'dimmer', 'gobo') to its absolute
+        DMX channel number for this fixture. Returns None if not defined."""
+        roles = fx.get("channel_roles") or {}
+        offset = roles.get(role)
+        if offset is None:
+            return None
+        return fx.get("start_address", 1) + int(offset) - 1
+
+    def _mover_motion_roles(self):
+        return ("pan", "pan_fine", "tilt", "tilt_fine")
+
+    def _get_dimmer_channels(self):
+        """List of (universe, dmx_ch) for POD fixture master dimmers.
+        These are forced to 255 in normal play. Mover fixtures have their own
+        dimmer that's controlled by Mover Look scenes — they're NOT in this list.
+        """
+        out = []
+        for fx in self._show["fixtures"]:
+            if self._is_mover(fx):
+                continue   # mover dimmers are controlled by Look scenes
+            d = self._fx_dimmer_offset(fx)
+            if d > 0:
+                out.append(self._ch_overflow(
+                    self._fx_universe(fx),
+                    fx["start_address"] + d - 1
+                ))
+        return out
+
+    def _get_all_patched_channels(self):
+        """Set of (universe, dmx_ch) for every patched channel.
+        Handles fixtures that span multiple universes via channel overflow."""
+        chs = set()
+        for fx in self._show.get("fixtures", []):
+            uni    = self._fx_universe(fx)
+            start  = fx.get("start_address", 1)
+            length = fx.get("channels", 1)
+            for ch in range(start, start + length):
+                if ch >= 1:
+                    chs.add(self._ch_overflow(uni, ch))
+        return chs
+
+    def _fx_dimmer_offset(self, fx):
+        """1-indexed dimmer channel offset within fixture (0 = no dimmer)."""
+        if "dimmer_channel" in fx:
+            return fx["dimmer_channel"]
+        # Legacy fallback
+        return 1
+
+    def _fx_first_pod_channel(self, fx):
+        """1-indexed offset of pod 1's first channel."""
+        if "first_pod_channel" in fx:
+            return fx["first_pod_channel"]
+        # Legacy
+        return (fx.get("global_channels", 1) + 1)
+
+    def _fx_channels_per_pod(self, fx):
+        if "channels_per_pod" in fx:
+            return fx["channels_per_pod"]
+        return 6
+
+    def _fx_pod_color_offsets(self, fx):
+        """{color_function: 0-indexed offset within a pod}"""
+        if "pod_color_offsets" in fx:
+            return fx["pod_color_offsets"]
+        # Legacy RGBAWUV default
+        return {"r":0,"g":1,"b":2,"a":3,"w":4,"uv":5}
+
+    def _fx_pods(self, fx):
+        if "pods" in fx:
+            return fx["pods"]
+        # Legacy fallback
+        if fx.get("type") == "rgbawuv_par":
+            return 1
+        return 8
+
+    def _get_singer_channels(self):
+        """List of (universe, dmx_ch) for singer pod color channels."""
+        out = []
+        for fx in self._show["fixtures"]:
+            # Singer override is a pod-fixture concept. pixel_strip fixtures
+            # don't participate (no first_pod_channel/channels_per_pod).
+            if self._is_pixel_strip(fx):
+                if fx.get("singer_pods"):
+                    log.warning("singer_pods set on pixel_strip '%s' — ignored "
+                                "(not yet supported)", fx.get("id"))
+                continue
+            pods = fx.get("singer_pods", [])
+            if not pods:
+                continue
+            uni      = self._fx_universe(fx)
+            start    = fx["start_address"]
+            first_pc = self._fx_first_pod_channel(fx)
+            ch_per   = self._fx_channels_per_pod(fx)
+            colors   = self._fx_pod_color_offsets(fx)
+            for pod in pods:
+                base = start + first_pc - 1 + (pod - 1) * ch_per
+                for off in colors.values():
+                    out.append(self._ch_overflow(uni, base + off))
+        return out
+
+    def _build_singer_dmx(self):
+        """Build {(universe, dmx_ch): value} for singer pods at full brightness."""
+        sc = self._show.get("singer_color",
+                            {"r":20,"g":0,"b":0,"a":200,"w":220,"uv":0})
+        result = {}
+        for fx in self._show["fixtures"]:
+            if self._is_pixel_strip(fx):
+                continue  # Singer override not supported on pixel_strip (yet)
+            pods = fx.get("singer_pods", [])
+            if not pods:
+                continue
+            uni      = self._fx_universe(fx)
+            start    = fx["start_address"]
+            first_pc = self._fx_first_pod_channel(fx)
+            ch_per   = self._fx_channels_per_pod(fx)
+            colors   = self._fx_pod_color_offsets(fx)
+            for pod in pods:
+                base = start + first_pc - 1 + (pod - 1) * ch_per
+                for color, off in colors.items():
+                    result[self._ch_overflow(uni, base + off)] = sc.get(color, 0)
+        return result
+
+    def resolve_step(self, step_fixtures, scene_type="main"):
+        """Convert scene step fixture data → {(universe, dmx_ch): value}.
+
+        scene_type controls which channels can be written:
+          'main'         → standard pod-based fixtures (existing behavior)
+          'mover_motion' → only pan/tilt channels of mover fixtures
+          'mover_look'   → all non-pan/tilt channels of mover fixtures
+        """
+        dmx = {}
+        motion_roles = set(self._mover_motion_roles())
+        for fx in self._show["fixtures"]:
+            fxid = fx["id"]
+            if fxid not in step_fixtures:
+                continue
+            fd  = step_fixtures[fxid]
+            uni = self._fx_universe(fx)
+
+            if self._is_mover(fx):
+                if scene_type == "main":
+                    continue  # main scenes don't touch movers
+                for role, val in fd.items():
+                    in_motion = role in motion_roles
+                    if scene_type == "mover_motion" and not in_motion:
+                        continue
+                    if scene_type == "mover_look" and in_motion:
+                        continue
+                    ch = self._mover_channel_for_role(fx, role)
+                    if ch is not None:
+                        dmx[self._ch_overflow(uni, ch)] = int(val)
+                continue
+
+            # ── pixel_strip fixture (Phase 2A) ─────────────────────────
+            # Main scenes can paint a pixel_strip per-segment. The scene
+            # step data contains `segments: [color_or_None, ...]` (new
+            # canonical) or `pods: [...]` (alias for editor compat).
+            # Each entry fills every pixel of that segment with the
+            # given colour. Per-pixel control is the job of effect
+            # scenes (Phase 2B+), not main scenes.
+            if self._is_pixel_strip(fx):
+                if scene_type != "main":
+                    continue
+                seg_data = fd.get("segments")
+                if seg_data is None:
+                    seg_data = fd.get("pods", [])
+                any_active = any(s is not None for s in seg_data)
+
+                # Master dimmer (if defined): only write when this scene
+                # actually controls at least one segment of the fixture.
+                dim_off = self._fx_dimmer_offset(fx)
+                if dim_off > 0 and any_active:
+                    dmx[self._ch_overflow(uni, fx["start_address"] + dim_off - 1)] \
+                        = fd.get("dimmer", 255)
+
+                # Use the precomputed lock_to_segments strips to know
+                # exactly which channels each segment owns.
+                seg_strips = self._cell_strips.get(fxid, {}).get(
+                    cell_strip.MODE_LOCK_TO_SEGMENTS, []
+                )
+                for si, strip in enumerate(seg_strips):
+                    if si >= len(seg_data):
+                        break
+                    color = seg_data[si]
+                    if color is None:
+                        continue
+                    # Solid fill: every cell of this segment writes the same color.
+                    for cell_writes in strip["writes"]:
+                        for ch_tuple, key in cell_writes:
+                            dmx[ch_tuple] = int(color.get(key, 0))
+                continue
+
+            # Pod-based fixture (only for main scenes)
+            if scene_type != "main":
+                continue
+            start       = fx["start_address"]
+            dim_off     = self._fx_dimmer_offset(fx)
+            first_pc    = self._fx_first_pod_channel(fx)
+            ch_per      = self._fx_channels_per_pod(fx)
+            colors      = self._fx_pod_color_offsets(fx)
+            n_pods      = self._fx_pods(fx)
+            pixels_per  = self._fx_pod_pixel_count(fx)   # 1 for legacy fixtures
+            # When a pod represents multiple pixels (e.g. a 63-LED side of a
+            # WLED tube), the pod's color gets replicated across all of them.
+            # bytes_per_pixel is the channel block size for one pixel within
+            # the pod (e.g. 4 for RGBW).
+            bytes_per_pixel = ch_per // pixels_per if pixels_per > 0 else ch_per
+
+            pods_data = fd.get("pods")
+            if pods_data is None and "color" in fd:
+                pods_data = [fd["color"]]
+            if pods_data is None:
+                pods_data = []
+
+            # Does this scene participate in any pod of this fixture? It does
+            # if any pod entry in pods_data is non-None. (An entirely-None list
+            # means the fixture is listed but not actually controlled — useful
+            # for forward-compat shapes.)
+            any_pod_active = any(p is not None for p in pods_data)
+
+            # Write the master dimmer only if the scene actually controls some
+            # pod of this fixture. Otherwise some OTHER active scene (or the
+            # default 255-via-_get_dimmer_channels) handles the dimmer.
+            if dim_off > 0 and any_pod_active:
+                dmx[self._ch_overflow(uni, start + dim_off - 1)] = fd.get("dimmer", 255)
+
+            for pi in range(n_pods):
+                if pi >= len(pods_data):
+                    break
+                pod = pods_data[pi]
+                # None = "this pod doesn't participate in this scene" - skip it
+                # so a different active scene's value (or zero) takes effect.
+                if pod is None:
+                    continue
+                pod_base = start + first_pc - 1 + pi * ch_per
+                # Write the pod's color to each pixel in the pod. For legacy
+                # fixtures (pixels_per=1), this loop executes once and behaves
+                # identically to the original code.
+                for px in range(pixels_per):
+                    pixel_base = pod_base + px * bytes_per_pixel
+                    for color, off in colors.items():
+                        abs_ch = pixel_base + off
+                        dmx[self._ch_overflow(uni, abs_ch)] = pod.get(color, 0)
+
+        return dmx
+
+    # ── Cell-strip cache (Phase 2A) ───────────────────────────────────────
+    #
+    # Cell strips are an effect-engine abstraction that exposes every
+    # non-mover fixture as one or more linear, ordered arrays of cells.
+    # See cell_strip.py for the data structure and rendering modes.
+    #
+    # The cache is built once on init/load_show because the layout only
+    # depends on fixture geometry, not on scene playback state.
+
+    def _build_cell_strips_cache(self):
+        """Pre-compute cell strips for every non-mover fixture in BOTH
+        rendering modes. Returns:
+            {fixture_id: {mode: [CellStrip, ...]}}
+        Mover fixtures are not included (they have no cells)."""
+        cache = {}
+        for fx in self._show.get("fixtures", []):
+            if fx.get("type") == "mover":
+                continue
+            fxid = fx["id"]
+            cache[fxid] = {
+                m: cell_strip.build_cell_strips(fx, mode=m)
+                for m in cell_strip.ALL_MODES
+            }
+        return cache
+
+    def get_cell_strips(self, fixture_id=None, mode=cell_strip.MODE_CONTINUOUS_STRIP):
+        """Return cell strips. If fixture_id is None, returns a dict
+        {fxid: [strips]} for every non-mover fixture in the given mode.
+        Otherwise returns the list of strips for that fixture."""
+        if fixture_id is not None:
+            return self._cell_strips.get(fixture_id, {}).get(mode, [])
+        return {fxid: m.get(mode, []) for fxid, m in self._cell_strips.items()}
+
+    # ── Effect layer (Phase 2C) ───────────────────────────────────────────
+    #
+    # One effect scene at a time. The scene declares which fixtures
+    # participate (fixtures_enabled), which rendering mode to use
+    # (lock_to_segments | continuous_strip), an effect id, colour slots
+    # (primary/secondary/accent), and per-effect params. Every output
+    # tick the effect is re-rendered at the current time and laid over
+    # the main-scene composite for the cells it owns.
+
+    def _resolve_effect_params(self, scene):
+        """Merge scene's colour slots into params for effects.render().
+
+        Phase 2F: each slot has an optional `<slot>_sample` flag. When set
+        AND a main-scene colour sample is currently available, the slot's
+        rendered colour is replaced by the sampled value. The slot's static
+        colour acts as a fallback when nothing is playing (so the effect
+        keeps a sane appearance during silence).
+        """
+        params = dict(scene.get("params") or {})
+        sampled = self._sampled_scene_color   # may be None
+        for slot in ("primary", "secondary", "accent"):
+            base = scene.get(slot)
+            if base is None:
+                continue
+            if scene.get(slot + "_sample") and sampled is not None:
+                params[slot] = sampled
+            else:
+                params[slot] = base
+        return params
+
+    def _render_effect_frame(self, scene, t):
+        """Render the effect scene at time `t` into a {(uni,ch): val} dict.
+        Walks every fixture in fixtures_enabled, fetches its cell strips
+        for the scene's rendering mode, calls effects.render once per
+        strip, and merges the per-strip DMX dicts."""
+        if scene is None:
+            return {}
+        effect_id = scene.get("effect")
+        if not effect_id or effect_id not in effects.EFFECTS:
+            return {}
+        mode = scene.get("rendering_mode", cell_strip.MODE_CONTINUOUS_STRIP)
+        params = self._resolve_effect_params(scene)
+        out = {}
+        for fxid in scene.get("fixtures_enabled", []):
+            strips = self._cell_strips.get(fxid, {}).get(mode, [])
+            for strip in strips:
+                cells = effects.render(
+                    effect_id, strip["length"], t, params,
+                    color_keys=strip["color_keys"],
+                )
+                for ch, v in cell_strip.cell_strip_to_dmx(strip, cells).items():
+                    out[ch] = v
+        return out
+
+    def _tick_effect_blend(self):
+        """Advance the effect fade-in/out blend toward its target. When
+        the blend reaches 0 (fully faded out), clear the scene reference
+        so the renderer goes idle until something new is played."""
+        with self._lock:
+            target  = self._effect_target
+            current = self._effect_blend
+            fade_ms = self._effect_fade_ms
+        if abs(target - current) < 0.005:
+            with self._lock:
+                self._effect_blend = target
+                if target == 0.0 and self._current_effect_scene is not None:
+                    self._current_effect_scene = None
+                    self._current_effect_id    = None
+                    self._current_effect_name  = None
+                    self._effect_dmx           = {}
+            return
+        step = (1.0 / self.OUTPUT_HZ) / max(fade_ms / 1000.0, 0.05)
+        direction = 1 if target > current else -1
+        with self._lock:
+            self._effect_blend = max(0.0, min(1.0, current + direction * step))
+
+    def play_effect_scene(self, scene, scene_id=None):
+        """Start (or replace) the current effect scene. Smoothly fades in.
+        Re-tapping the currently-playing scene_id is a no-op (stays on);
+        use stop_effect_scene() to toggle off. Queued under freeze when
+        'effects' is in freeze_includes."""
+        # Freeze gate: queue the action instead of taking effect now.
+        if self._is_frozen_for("effects"):
+            with self._lock:
+                if self._pending_effect and self._pending_effect.get("id") == scene_id:
+                    # Tap-to-toggle while frozen
+                    self._pending_effect = None
+                else:
+                    self._pending_effect = {
+                        "action": "play", "id": scene_id, "scene": scene
+                    }
+            return
+
+        with self._lock:
+            # Idempotent: same id already playing forward → keep going
+            if (self._current_effect_id == scene_id
+                    and self._effect_target == 1.0
+                    and self._current_effect_scene is not None):
+                # Hot-swap scene data in case params changed
+                self._current_effect_scene = scene
+                return
+            # Replace any in-flight scene immediately; the blend continues
+            # from wherever it was so a quick swap doesn't go through 0.
+            self._current_effect_scene = scene
+            self._current_effect_id    = scene_id
+            self._current_effect_name  = scene.get("name")
+            self._effect_start_time    = time.time()
+            self._effect_target        = 1.0
+
+    def stop_effect_scene(self):
+        """Fade the current effect out. The blend tick will clear the
+        scene once it reaches 0. Queued under freeze."""
+        if self._is_frozen_for("effects"):
+            with self._lock:
+                if self._pending_effect and self._pending_effect.get("action") == "play":
+                    # A queued play is cancelled by a queued stop
+                    self._pending_effect = None
+                else:
+                    self._pending_effect = {"action": "stop"}
+            return
+        with self._lock:
+            self._effect_target = 0.0
+
+    def toggle_effect_scene(self, scene, scene_id=None):
+        """If this scene_id is the currently-playing effect (not stopping),
+        stop it. Otherwise play it. Convenience for tap-to-toggle UIs."""
+        with self._lock:
+            currently_on = (
+                self._current_effect_id == scene_id
+                and self._effect_target == 1.0
+                and self._current_effect_scene is not None
+            )
+        if currently_on:
+            self.stop_effect_scene()
+        else:
+            self.play_effect_scene(scene, scene_id=scene_id)
+
+    # ── Effect live preview (editor in Phase 2D will hit this) ─────────────
+    #
+    # preview_effect() hot-swaps the scene dict in-place if a preview is
+    # already running so editor slider drags don't restart the fade.
+    # preview_effect_clear() fades it out like a normal stop.
+
+    PREVIEW_EFFECT_TAG = "__effect_preview__"
+
+    def preview_effect(self, scene):
+        """Live-preview an effect scene from the editor. Bypasses freeze.
+        If a preview is already running, hot-swap the scene definition
+        so timing and fade-in state are preserved (no janky restart)."""
+        with self._lock:
+            already_previewing = (
+                self._current_effect_id == self.PREVIEW_EFFECT_TAG
+                and self._current_effect_scene is not None
+            )
+            if already_previewing:
+                self._current_effect_scene = scene
+                self._effect_target        = 1.0   # in case a fade-out had started
+                return
+            # Start fresh
+            self._current_effect_scene = scene
+            self._current_effect_id    = self.PREVIEW_EFFECT_TAG
+            self._current_effect_name  = "🟢 Live Preview"
+            self._effect_start_time    = time.time()
+            self._effect_target        = 1.0
+
+    def preview_effect_clear(self):
+        """End the preview. Same fade-out semantics as a normal stop."""
+        with self._lock:
+            if self._current_effect_id == self.PREVIEW_EFFECT_TAG:
+                self._effect_target = 0.0
+
+    # ── Output loop (mixer) ───────────────────────────────────────────────
+
+    def _output_loop(self):
+        """Runs at OUTPUT_HZ. Applies singer + master + overlay + blackout on top of scene DMX."""
+        interval = 1.0 / self.OUTPUT_HZ
+        while self._output_running:
+            t0 = time.time()
+            self._tick_active_scenes()
+            self._tick_tempo_commit()
+            self._tick_singer_blend()
+            self._tick_overlay_blend()
+            self._tick_blackout_blend()
+            self._tick_effect_blend()
+            self._push_to_dmx()
+            sleep = max(0.0, interval - (time.time() - t0))
+            time.sleep(sleep)
+
+    def _tick_singer_blend(self):
+        """Advance singer crossfade blend toward target."""
+        with self._lock:
+            target = self._singer_target
+            current = self._singer_blend
+        if abs(target - current) < 0.005:
+            with self._lock:
+                self._singer_blend = target
+            return
+        step = (1.0 / self.OUTPUT_HZ) / (self._singer_fade_ms / 1000.0)
+        direction = 1 if target > current else -1
+        with self._lock:
+            self._singer_blend = max(0.0, min(1.0, current + direction * step))
+
+    def _tick_blackout_blend(self):
+        """Advance blackout fade blend toward target. Clear mode when fully off."""
+        with self._lock:
+            target  = self._blackout_target
+            current = self._blackout_blend
+            fade_ms = self._blackout_fade_ms
+        if abs(target - current) < 0.005:
+            with self._lock:
+                self._blackout_blend = target
+                # Once fully faded out, clear the mode so output uses normal path
+                if target == 0.0 and self._blackout_mode is not None:
+                    self._blackout_mode = None
+            return
+        step = (1.0 / self.OUTPUT_HZ) / max(fade_ms / 1000.0, 0.05)
+        direction = 1 if target > current else -1
+        with self._lock:
+            self._blackout_blend = max(0.0, min(1.0, current + direction * step))
+
+    def _tick_overlay_blend(self):
+        """Advance overlay fade blend toward target. When fully faded out,
+        stop the overlay scene thread and clear overlay state."""
+        with self._lock:
+            target  = self._overlay_target
+            current = self._overlay_blend
+            fade_ms = self._overlay_fade_ms
+        if abs(target - current) < 0.005:
+            with self._lock:
+                self._overlay_blend = target
+                # Fully faded out: stop the overlay scene player
+                if target == 0.0 and self._overlay_thread is not None:
+                    self._overlay_stop_event.set()
+                    self._overlay_dmx          = {}
+                    self._current_overlay_name = None
+                    # Note: thread will exit on its own next loop check;
+                    # don't join here to avoid deadlocking the output thread
+                    self._overlay_thread       = None
+            return
+        step = (1.0 / self.OUTPUT_HZ) / max(fade_ms / 1000.0, 0.05)
+        direction = 1 if target > current else -1
+        with self._lock:
+            self._overlay_blend = max(0.0, min(1.0, current + direction * step))
+
+    def _push_to_dmx(self):
+        """Build the final DMX frame.
+
+        Pipeline (in order):
+          1. Start with all patched channels at 0 so old scene values
+             don't linger when a scene clears a channel.
+          2. Apply scene values; scale non-singer color channels by Color Dimmer.
+          2.5 Effect layer (Phase 2C): renders animated colour on the
+              fixtures named in the active effect scene's fixtures_enabled
+              list, overriding the main-scene values on those cells.
+              Singer / overlay / blackout still win over the effect.
+          3. Blend singer-color override onto singer channels (scaled by Singer Dimmer).
+          4. Force fixture dimmer channels to 255.
+          5. Apply blackout filter (smoothly faded by _blackout_blend):
+               - 'color': non-singer color channels → 0
+               - 'full' : every patched channel → 0
+        Result is sent in one shot so previously-set channels don't persist.
+        """
+        # Compute composite of all active main scenes (or preview override)
+        if self._preview_active:
+            scene = dict(self._preview_dmx)
+        else:
+            scene = self._composite_scene_dmx()
+        # Phase 2F: refresh sampled colour for any effect slots set to
+        # "sample from scene". Cheap; reads back through cell strips.
+        self._update_scene_color_sample(scene)
+        # Keep the legacy _scene_dmx field in sync for tools that read it
+        # directly (DMX monitor's snapshot path, etc.)
+        with self._lock:
+            self._scene_dmx = scene
+            motion        = dict(self._motion_dmx)
+            look          = dict(self._look_dmx)
+            sb            = self._singer_blend
+            singer        = dict(self._singer_dmx_full)
+            s_level       = self._singer_level
+            master        = self._master_level
+            s_chs         = set(self._singer_channels)
+            d_chs         = set(self._dimmer_channels)
+            patched       = set(self._patched_channels)
+            bo_mode       = self._blackout_mode
+            bo_blend      = self._blackout_blend
+            ov_dmx        = dict(self._overlay_dmx)
+            ov_blend      = self._overlay_blend
+            ov_keep_singer = self._overlay_keep_singer
+            effect_scene = self._current_effect_scene
+            effect_start = self._effect_start_time
+            effect_blend = self._effect_blend
+
+        # Render the current effect outside the lock — the scene dict is
+        # replaced atomically by play/stop, never mutated in place, so this
+        # is safe. Cell strips are immutable after build.
+        if effect_scene is not None and effect_blend > 0.001:
+            if effect_scene.get("tempo_sync") and self._tempo_active:
+                # Musical time: beats since anchor, scaled by the per-effect beat
+                # window so the effect's "speed" reads as cycles per <division>
+                # beats (1 = cycles/beat, 2 = cycles per 2 beats, 0.5 = per ½ beat).
+                division = float(effect_scene.get("beat_division", 1.0)) or 1.0
+                t_eff = self.beat_time() / division
+            else:
+                t_eff = time.time() - effect_start  # default: wall-clock seconds
+            effect_frame = self._render_effect_frame(effect_scene, t_eff)
+        else:
+            effect_frame = {}
+        # Cache for tools/inspection; harmless under read races.
+        self._effect_dmx = effect_frame
+
+        # 1. Initialize every patched channel to 0
+        normal = {ch: 0.0 for ch in patched}
+
+        # 2. Lay main scene values on top
+        for ch, val in scene.items():
+            normal[ch] = float(val)
+
+        # 2b. Lay mover Look values (dimmer, color, gobo, etc. of movers)
+        for ch, val in look.items():
+            normal[ch] = float(val)
+
+        # 2c. Lay mover Motion values (pan/tilt of movers) — these overlay look
+        for ch, val in motion.items():
+            normal[ch] = float(val)
+
+        # 3. Scale non-singer color channels by Color Dimmer
+        for ch in list(normal.keys()):
+            if ch in s_chs or ch in d_chs:
+                continue
+            normal[ch] *= master
+
+        # 3b. Effect layer (Phase 2C). The effect owns every cell of the
+        #     fixtures it lists in fixtures_enabled, so its values
+        #     replace whatever the main scene + master dimmer produced
+        #     on those channels. The effect is NOT scaled by master.
+        #     Singer pods are included here so the effect value is written
+        #     into normal[ch] — step 4 then crossfades that toward the
+        #     singer color. When singer is OFF (sb=0), the effect shows
+        #     through fully. When singer is ON (sb=1), singer wins.
+        if effect_blend > 0.001 and effect_frame:
+            for ch, ev in effect_frame.items():
+                if ch not in normal:
+                    normal[ch] = 0.0
+                cur = normal[ch]
+                normal[ch] = cur + (float(ev) - cur) * effect_blend
+
+        # 4. Singer pod channels: crossfade (main_scene+effect)↔singer-color.
+        #    The "below" value now includes the effect contribution so that
+        #    turning the singer off reveals the effect (or main scene if no
+        #    effect is running) rather than leaving those pods dark.
+        for ch in s_chs:
+            main_val   = scene.get(ch, 0) * master
+            # Use whatever step 3b wrote (effect-blended or pure main).
+            # Re-derive cleanly so master scaling is always correct.
+            if effect_blend > 0.001 and ch in effect_frame:
+                below = main_val + (float(effect_frame[ch]) - main_val) * effect_blend
+            else:
+                below = main_val
+            singer_val = singer.get(ch, 0) * s_level
+            normal[ch] = below + (singer_val - below) * sb
+
+        # 5. Overlay blend (e.g. strobe layer). Where overlay defines a channel,
+        #    blend toward overlay value by ov_blend. Overlay runs at full
+        #    intensity (no Color Dimmer scaling).
+        #    If overlay_keep_singer is True, the overlay is NOT applied to
+        #    singer pod channels — they continue to follow the normal singer
+        #    behavior so the vocalist stays lit during strobes.
+        if ov_blend > 0.001:
+            for ch, ov_val in ov_dmx.items():
+                if ov_keep_singer and ch in s_chs:
+                    continue
+                if ch not in normal:
+                    normal[ch] = 0.0
+                cur = normal[ch]
+                normal[ch] = cur + (float(ov_val) - cur) * ov_blend
+
+        # 6. Fixture dimmers always at max
+        for ch in d_chs:
+            normal[ch] = 255.0
+
+        # 7. Build blackout target frame (what output looks like at blend=1)
+        if bo_mode == 'full':
+            target = {ch: 0.0 for ch in normal}
+        elif bo_mode == 'color':
+            target = dict(normal)
+            for ch in list(target.keys()):
+                if ch in s_chs or ch in d_chs:
+                    continue
+                target[ch] = 0.0
+        else:
+            target = normal  # no blackout active
+
+        # 8. Blend normal → target by bo_blend
+        if bo_blend <= 0.001 or bo_mode is None:
+            frame = normal
+        elif bo_blend >= 0.999:
+            frame = target
+        else:
+            frame = {}
+            for ch in normal:
+                n = normal[ch]
+                t = target.get(ch, n)
+                frame[ch] = n + (t - n) * bo_blend
+
+        # 9. Send (rounded, clipped). Group by universe so the driver can
+        #    route each universe to the right Art-Net packet (or ignore
+        #    non-zero universes if it's a single-universe driver like Enttec).
+        output = {}
+        for key, v in frame.items():
+            uni, ch = key
+            output.setdefault(uni, {})[ch] = max(0, min(255, int(round(v))))
+        self._dmx.set_channels(output)
+
+    # ── Scene playback ────────────────────────────────────────────────────
+
+    # ── Multi-scene playback ──────────────────────────────────────────────
+    #
+    # Each call to play_scene() appends a new active scene to _active_scenes.
+    # Scenes layer with "latest wins per channel" — when two scenes both write
+    # to the same (uni, ch), the one added later takes effect. Each scene runs
+    # its own playback thread that walks through its steps and produces a live
+    # dict of values in scene_state['dmx'].
+    #
+    # Starting a scene fades in (start_blend ramps 0→1) over the scene's
+    # launch_fade. Stopping fades out (stop_blend ramps 1→0). When stop_blend
+    # reaches 0 the scene is removed from _active_scenes.
+
+    def _new_scene_state(self, scene, scene_id, fade_ms):
+        self._scene_seq += 1
+        return {
+            "id":           scene_id,
+            "name":         scene.get("name"),
+            "fade":         fade_ms,
+            "launch_id":    self._scene_seq,
+            "scene":        scene,
+            "dmx":          {},
+            "thread":       None,
+            "stop_event":   threading.Event(),
+            "start_blend":  0.0,   # ramps 0→1 while fading in
+            "stop_blend":   1.0,   # ramps 1→0 while fading out (then removed)
+            "stopping":     False, # True once stop_scene() has been called
+            "start_time":   time.time(),
+        }
+
+    def play_scene(self, scene, launch_fade_ms=None, scene_id=None, force=False):
+        """Add a new active scene to the layered playback stack.
+        If a scene with the same scene_id is already active, it is stopped
+        and replaced (so re-tapping the same scene cleanly restarts it).
+        When freeze is active and 'main_scenes' is in freeze_includes, the
+        action is queued instead of taking effect immediately."""
+        # Resolve the fade
+        fade = scene.get("launch_fade")
+        if fade is None:
+            fade = launch_fade_ms if launch_fade_ms is not None \
+                   else self._show.get("default_launch_fade", 500)
+        fade = max(0, int(fade))
+
+        # Freeze gate: if scene-category changes are queued, route to pending
+        if self._is_frozen_for("main_scenes") and not force:
+            with self._lock:
+                if scene_id is not None:
+                    # Tap-to-toggle while frozen: if it was already in pending,
+                    # remove it; otherwise add to end (top of layer stack).
+                    if scene_id in self._pending_main_ids:
+                        self._pending_main_ids.remove(scene_id)
+                        # Don't drop the scene data — they might tap it again
+                    else:
+                        self._pending_main_ids.append(scene_id)
+                        self._pending_main_scenes[scene_id] = scene
+                        self._pending_main_fades[scene_id]  = fade
+            return
+
+        # Stop any existing instance of this scene_id
+        if scene_id is not None:
+            self._stop_scene_by_id(scene_id, immediate=True)
+
+        st = self._new_scene_state(scene, scene_id, fade)
+        with self._lock:
+            self._active_scenes.append(st)
+            # Release any active blackout — fade back to normal as scene takes over
+            self._blackout_target = 0.0
+
+        st["thread"] = threading.Thread(
+            target=self._scene_loop,
+            args=(st,),
+            daemon=True,
+            name=f"scene-player-{st['launch_id']}",
+        )
+        st["thread"].start()
+
+    def stop_scene(self, scene_id=None):
+        """Stop a scene (or all scenes when scene_id is None). Stopping is a
+        graceful fade-out — the scene stays in the layered stack until its
+        stop_blend reaches 0, then is removed.
+        When freeze is active and 'main_scenes' is in freeze_includes, the
+        action is queued instead of taking effect immediately."""
+        # Freeze gate
+        if self._is_frozen_for("main_scenes"):
+            with self._lock:
+                if scene_id is None:
+                    # "Stop all" while frozen clears the pending list entirely
+                    self._pending_main_ids = []
+                else:
+                    if scene_id in self._pending_main_ids:
+                        self._pending_main_ids.remove(scene_id)
+            return
+
+        if scene_id is None:
+            with self._lock:
+                ids = [s["id"] for s in self._active_scenes if s["id"] is not None]
+            for sid in ids:
+                self._stop_scene_by_id(sid, immediate=False)
+        else:
+            self._stop_scene_by_id(scene_id, immediate=False)
+
+    def stop_all_scenes(self):
+        """Convenience: hard-stop all main scenes immediately."""
+        with self._lock:
+            scenes = list(self._active_scenes)
+            self._active_scenes = []
+        for st in scenes:
+            st["stop_event"].set()
+            if st["thread"] and st["thread"].is_alive():
+                st["thread"].join(timeout=0.5)
+
+    def _stop_scene_by_id(self, scene_id, immediate=False):
+        """Mark a scene as stopping. If immediate=True, removes it from the
+        stack right away (no fade-out)."""
+        with self._lock:
+            target = None
+            for st in self._active_scenes:
+                if st["id"] == scene_id:
+                    target = st
+                    break
+            if target is None:
+                return
+            if immediate:
+                target["stop_event"].set()
+                self._active_scenes.remove(target)
+            else:
+                if not target["stopping"]:
+                    target["stopping"] = True
+                    target["stop_event"].set()    # halt the playback thread
+        if immediate and target["thread"] and target["thread"].is_alive():
+            target["thread"].join(timeout=0.5)
+
+    def _scene_loop(self, state):
+        """Drive one scene's step sequence into state['dmx'] until stop_event.
+        When the scene is tempo-synced AND a tempo is live, steps advance on the
+        beat grid instead of their authored ms hold; otherwise unchanged."""
+        scene = state["scene"]
+        steps = scene.get("steps", [])
+        if not steps:
+            return
+        first = True
+        while not state["stop_event"].is_set():
+            synced   = bool(scene.get("tempo_sync"))
+            division = float(scene.get("beat_division", 1.0))
+            for step in steps:
+                if state["stop_event"].is_set():
+                    return
+                target = self.resolve_step(step.get("fixtures", {}), scene_type="main")
+                # First step uses launch_fade; later steps use their own fade
+                fade = state["fade"] if first else step.get("fade", 0)
+                hold = step.get("hold", 500)
+                first = False
+                if synced and self._tempo_active:
+                    self._execute_step_synced(state, target, fade, division, hold)
+                else:
+                    self._execute_step_for(state, target, fade, hold)
+                if state["stop_event"].is_set():
+                    return
+
+    def _fade_dmx(self, state, target_dmx, duration_s):
+        """Interpolate state['dmx'] -> target_dmx over duration_s seconds,
+        updating under the lock so the output thread sees consistent frames.
+        duration_s <= 0 snaps immediately. Wakes early on stop_event."""
+        start_dmx = dict(state["dmx"])
+        for ch in target_dmx:
+            if ch not in start_dmx:
+                start_dmx[ch] = 0
+        if duration_s <= 0:
+            with self._lock:
+                state["dmx"] = dict(target_dmx)
+            return
+        t0 = time.time()
+        while not state["stop_event"].is_set():
+            t = min((time.time() - t0) / duration_s, 1.0)
+            frame = {ch: int(start_dmx.get(ch, 0) + (tgt - start_dmx.get(ch, 0)) * t)
+                     for ch, tgt in target_dmx.items()}
+            with self._lock:
+                state["dmx"] = frame
+            if t >= 1.0:
+                break
+            time.sleep(0.02)
+
+    def _execute_step_for(self, state, target_dmx, fade_ms, hold_ms):
+        """Default ms-timed step: fade over fade_ms, then hold for hold_ms."""
+        self._fade_dmx(state, target_dmx, fade_ms / 1000.0 if fade_ms > 0 else 0.0)
+        if not state["stop_event"].is_set():
+            state["stop_event"].wait(timeout=hold_ms / 1000.0)
+
+    def _execute_step_synced(self, state, target_dmx, fade_ms, division, hold_ms):
+        """Tempo-synced step: fade to target (capped to the beat slot), then hold
+        until the next beat-grid boundary so steps land on the beat. If tempo
+        drops out mid-step, reverts to the authored ms fade+hold."""
+        now = time.time()
+        boundary = self.next_beat_boundary(now, division)
+        if boundary is not None and (boundary - now) < 0.05:
+            # Avoid a degenerate ultra-short slot (first step landing just before
+            # a beat) — take the following boundary instead.
+            boundary = self.next_beat_boundary(boundary, division)
+        if boundary is None:
+            # Tempo vanished between the loop's check and here — revert to ms.
+            self._execute_step_for(state, target_dmx, fade_ms, hold_ms)
+            return
+        slot   = max(0.0, boundary - now)
+        fade_s = min(fade_ms / 1000.0, slot) if fade_ms > 0 else 0.0
+        self._fade_dmx(state, target_dmx, fade_s)
+        remaining = boundary - time.time()
+        if remaining > 0 and not state["stop_event"].is_set():
+            state["stop_event"].wait(timeout=remaining)
+
+    def _tick_active_scenes(self):
+        """Advance each active scene's start_blend / stop_blend toward its
+        target. Remove scenes whose stop_blend has reached 0. Called once
+        per output tick."""
+        interval = 1.0 / self.OUTPUT_HZ
+        to_remove = []
+        with self._lock:
+            for st in self._active_scenes:
+                fade = max(st["fade"], 1)   # avoid div-by-zero
+                step = interval / (fade / 1000.0)
+                if st["stopping"]:
+                    st["stop_blend"] = max(0.0, st["stop_blend"] - step)
+                    if st["stop_blend"] <= 0.0:
+                        to_remove.append(st)
+                else:
+                    if st["start_blend"] < 1.0:
+                        st["start_blend"] = min(1.0, st["start_blend"] + step)
+            for st in to_remove:
+                self._active_scenes.remove(st)
+        # Join the threads of removed scenes (outside lock to avoid deadlock)
+        for st in to_remove:
+            if st["thread"] and st["thread"].is_alive():
+                st["thread"].join(timeout=0.1)
+
+    def _composite_scene_dmx(self):
+        """Build the combined main-scene DMX dict by stacking all active
+        scenes in start-order (oldest first). Each scene's values are scaled
+        by its effective blend = start_blend * stop_blend so fade in/out is
+        smooth. Where two scenes both write a channel, the later one's blend
+        weights it on top of the earlier composite — giving 'latest wins' for
+        steady-state but smooth crossfades during transitions."""
+        composite = {}
+        with self._lock:
+            snapshot = []
+            for st in self._active_scenes:
+                blend = st["start_blend"] * st["stop_blend"]
+                if blend <= 0.0:
+                    continue
+                # Copy dmx under lock to ensure a consistent snapshot
+                snapshot.append((blend, dict(st["dmx"])))
+        # Lay each scene's values on top of the running composite, weighted
+        # by blend. For full-blend scenes (blend=1.0) this is a straight
+        # overwrite; for partial blends it's an interpolated crossfade.
+        for blend, sd in snapshot:
+            for ch, v in sd.items():
+                if ch in composite:
+                    cur = composite[ch]
+                    composite[ch] = cur + (v - cur) * blend
+                else:
+                    # No previous value → fade from 0 to v
+                    composite[ch] = v * blend
+        # Return as ints (DMX values)
+        return {ch: int(round(v)) for ch, v in composite.items()}
+
+    # ── Phase 2F: sample colour from running main scene ───────────────────
+
+    def _update_scene_color_sample(self, composite_dmx):
+        """Refresh _sampled_scene_color from the current main-scene
+        composite. Averages the colour of every non-singer cell across
+        every non-mover fixture, excluding the cells the active effect
+        is rendering on (so the effect doesn't sample its own output).
+
+        Called once per output tick from _push_to_dmx. Cheap — touches
+        roughly one cell strip per fixture and a handful of dict lookups
+        per cell.
+        """
+        if not composite_dmx:
+            self._sampled_scene_color = None
+            return
+
+        exclude = set()
+        if self._current_effect_scene:
+            exclude = set(self._current_effect_scene.get("fixtures_enabled") or [])
+
+        accum = {}
+        count = 0
+        for fx in self._show.get("fixtures", []):
+            if fx["id"] in exclude:
+                continue
+            if self._is_mover(fx):
+                continue
+            # MODE_CONTINUOUS_STRIP gives one strip per fixture: one cell
+            # per pod (pod fixtures) or one per pixel (pixel_strip).
+            strips = self._cell_strips.get(fx["id"], {}).get(
+                cell_strip.MODE_CONTINUOUS_STRIP, []
+            )
+            singer_pods = set(fx.get("singer_pods") or [])
+            is_pixel    = self._is_pixel_strip(fx)
+            for strip in strips:
+                for cell_idx, cell_writes in enumerate(strip["writes"]):
+                    # Pod fixtures: skip cells that ARE singer pods (1-indexed)
+                    if not is_pixel and (cell_idx + 1) in singer_pods:
+                        continue
+                    # Read this cell's colour back from the composite.
+                    cell_color = {}
+                    for ch_tuple, key in cell_writes:
+                        cell_color[key] = composite_dmx.get(ch_tuple, 0)
+                    if not cell_color:
+                        continue
+                    # Skip cells that are entirely dark — they're probably
+                    # not being controlled by any scene and would just drag
+                    # the average toward black.
+                    if all(v == 0 for v in cell_color.values()):
+                        continue
+                    for k, v in cell_color.items():
+                        accum[k] = accum.get(k, 0) + v
+                    count += 1
+
+        if count == 0:
+            self._sampled_scene_color = None
+        else:
+            self._sampled_scene_color = {k: int(v / count) for k, v in accum.items()}
+
+    def get_active_scenes(self):
+        """Return a list of currently-active main scenes (oldest first).
+        Each entry: {id, name, stopping}.
+        Used by the UI to render highlighted active scenes on the home page."""
+        with self._lock:
+            return [
+                {"id": s["id"], "name": s["name"], "stopping": s["stopping"]}
+                for s in self._active_scenes
+            ]
+
+    # ── Freeze (pending change queue) ──────────────────────────────────────
+
+    DEFAULT_FREEZE_INCLUDES = {
+        "main_scenes":  True,
+        "motion":       True,
+        "look":         True,
+        "effects":      True,
+        "overlay":      False,
+        "blackout":     False,
+        "color_dimmer": False,
+        "singer_mode":  False,
+    }
+
+    def _load_freeze_includes(self, show_config):
+        """Merge per-show freeze_includes settings with defaults."""
+        cfg = show_config.get("freeze_includes") or {}
+        merged = dict(self.DEFAULT_FREEZE_INCLUDES)
+        for k, v in cfg.items():
+            if k in merged:
+                merged[k] = bool(v)
+        return merged
+
+    def _is_frozen_for(self, category):
+        """True if freeze is active AND this category should queue."""
+        return self._freeze_active and self._freeze_includes.get(category, False)
+
+    def set_freeze(self, enable):
+        """Toggle freeze on/off. On enabling, seed pending lists from live
+        state so 'no changes' is the default. On disabling, diff pending vs
+        live and apply: stop removed scenes, start added scenes, apply pending
+        motion/look transitions."""
+        enable = bool(enable)
+        if enable:
+            self._enter_freeze()
+        else:
+            self._exit_freeze()
+
+    def _enter_freeze(self):
+        if self._freeze_active:
+            return  # idempotent
+        with self._lock:
+            # Seed pending list with current live scenes (in order)
+            self._pending_main_ids = [
+                s["id"] for s in self._active_scenes
+                if s["id"] is not None and not s["stopping"]
+            ]
+            # No motion/look/effect pending changes yet
+            self._pending_motion = None
+            self._pending_look   = None
+            self._pending_effect = None
+            self._freeze_active = True
+        log.info("Freeze ENABLED; pending list seeded with %d scenes", len(self._pending_main_ids))
+
+    def _exit_freeze(self):
+        if not self._freeze_active:
+            return
+        # Snapshot pending state, then clear flag so play/stop calls go live
+        with self._lock:
+            pending_main_ids = list(self._pending_main_ids)
+            pending_main_scenes = dict(self._pending_main_scenes)
+            pending_main_fades  = dict(self._pending_main_fades)
+            pending_motion = self._pending_motion
+            pending_look   = self._pending_look
+            pending_effect = self._pending_effect
+            live_ids = [
+                s["id"] for s in self._active_scenes
+                if s["id"] is not None and not s["stopping"]
+            ]
+            self._freeze_active = False
+            self._pending_main_ids    = []
+            self._pending_main_scenes = {}
+            self._pending_main_fades  = {}
+            self._pending_motion = None
+            self._pending_look   = None
+            self._pending_effect = None
+            # Releasing freeze cancels any active blackout - the new look
+            # should be visible
+            self._blackout_target = 0.0
+
+        # Apply diff for main scenes
+        live_set    = set(live_ids)
+        pending_set = set(pending_main_ids)
+        to_stop  = [sid for sid in live_ids if sid not in pending_set]
+        to_start = [sid for sid in pending_main_ids if sid not in live_set]
+        for sid in to_stop:
+            self.stop_scene(scene_id=sid)
+        for sid in to_start:
+            scene = pending_main_scenes.get(sid)
+            fade  = pending_main_fades.get(sid)
+            if scene is not None:
+                self.play_scene(scene, launch_fade_ms=fade, scene_id=sid)
+
+        # Apply motion change
+        if pending_motion is not None:
+            if pending_motion.get("action") == "play":
+                self.play_motion_scene(pending_motion["scene"], scene_id=pending_motion.get("id"))
+            elif pending_motion.get("action") == "stop":
+                self.stop_motion_scene()
+
+        # Apply look change
+        if pending_look is not None:
+            if pending_look.get("action") == "play":
+                self.play_look_scene(pending_look["scene"], scene_id=pending_look.get("id"))
+            elif pending_look.get("action") == "stop":
+                self.stop_look_scene()
+
+        # Apply effect change
+        if pending_effect is not None:
+            if pending_effect.get("action") == "play":
+                self.play_effect_scene(pending_effect["scene"], scene_id=pending_effect.get("id"))
+            elif pending_effect.get("action") == "stop":
+                self.stop_effect_scene()
+
+        log.info("Freeze DISABLED; applied %d stops, %d starts", len(to_stop), len(to_start))
+
+    def get_freeze_state(self):
+        """Return current freeze state including pending changes for UI display."""
+        def _compact(p):
+            if p is None:
+                return None
+            return {"action": p.get("action"), "id": p.get("id")}
+        with self._lock:
+            return {
+                "active": self._freeze_active,
+                "includes": dict(self._freeze_includes),
+                "pending_main_ids": list(self._pending_main_ids),
+                "pending_motion": _compact(self._pending_motion),
+                "pending_look":   _compact(self._pending_look),
+                "pending_effect": _compact(self._pending_effect),
+            }
+
+    # ── Controls ──────────────────────────────────────────────────────────
+
+    def set_master(self, level):
+        with self._lock:
+            self._master_level = max(0.0, min(1.0, float(level)))
+
+    def set_singer_level(self, level):
+        with self._lock:
+            self._singer_level = max(0.0, min(1.0, float(level)))
+
+    def set_singer_mode(self, enabled):
+        """Start a smooth crossfade to/from singer override."""
+        with self._lock:
+            self._singer_mode   = bool(enabled)
+            self._singer_target = 1.0 if enabled else 0.0
+
+    def blackout(self, mode='full'):
+        """
+        Toggle blackout mode. Scene playback is NOT stopped — the blackout is
+        applied as a faded filter on top of the running scene so disabling it
+        instantly restores whatever was playing.
+
+        - Calling with the currently-active mode: toggles it off (fade out)
+        - Calling with a different mode while a blackout is active: switch modes
+        - Calling with any mode while normal: activate that blackout (fade in)
+        """
+        if mode not in ('color', 'full'):
+            mode = 'full'
+        with self._lock:
+            if self._blackout_mode == mode and self._blackout_target == 1.0:
+                # Toggle off — fade back to scene
+                self._blackout_target = 0.0
+            else:
+                # Activate (or switch to) this mode
+                self._blackout_mode   = mode
+                self._blackout_target = 1.0
+
+    # ── Overlay scene (e.g. strobe layer) ──────────────────────────────────
+
+    def start_overlay(self, scene):
+        """Start playing an overlay scene on top of the main scene.
+        Smoothly fades the overlay in. The overlay scene loops continuously
+        until stop_overlay() is called. Idempotent — calling again while
+        active just keeps it on (does not restart the loop)."""
+        with self._lock:
+            already_on = (self._overlay_target == 1.0
+                          and self._overlay_thread is not None
+                          and self._overlay_thread.is_alive())
+        if already_on:
+            return
+        self._stop_overlay_thread()
+        self._overlay_stop_event.clear()
+        with self._lock:
+            self._current_overlay_name = scene.get("name")
+            self._overlay_target       = 1.0
+        self._overlay_thread = threading.Thread(
+            target=self._overlay_loop,
+            args=(scene,),
+            daemon=True,
+            name="overlay-player",
+        )
+        self._overlay_thread.start()
+
+    def stop_overlay(self):
+        """Fade the overlay out. The output-loop tick will stop the thread
+        and clear state once the blend reaches zero."""
+        with self._lock:
+            self._overlay_target = 0.0
+
+    def toggle_overlay(self, scene):
+        """If overlay is on, fade it out. Otherwise start it with the given scene."""
+        with self._lock:
+            currently_on = (self._overlay_target == 1.0)
+        if currently_on:
+            self.stop_overlay()
+        else:
+            self.start_overlay(scene)
+
+    def _stop_overlay_thread(self):
+        self._overlay_stop_event.set()
+        if self._overlay_thread and self._overlay_thread.is_alive():
+            self._overlay_thread.join(timeout=1.0)
+        self._overlay_thread = None
+
+    def _overlay_loop(self, scene):
+        """Loops the overlay scene continuously, writing to _overlay_dmx."""
+        steps = scene.get("steps", [])
+        if not steps:
+            return
+        while not self._overlay_stop_event.is_set():
+            for step in steps:
+                if self._overlay_stop_event.is_set():
+                    return
+                target  = self.resolve_step(step.get("fixtures", {}))
+                fade_ms = max(0, int(step.get("fade", 0)))
+                hold_ms = max(0, int(step.get("hold", 50)))
+                self._execute_overlay_step(target, fade_ms, hold_ms)
+
+    def _execute_overlay_step(self, target_dmx, fade_ms, hold_ms):
+        """Same shape as _execute_step but writes to _overlay_dmx and
+        watches _overlay_stop_event instead of _scene_stop_event."""
+        with self._lock:
+            start_dmx = dict(self._overlay_dmx)
+
+        for ch in target_dmx:
+            if ch not in start_dmx:
+                start_dmx[ch] = 0
+
+        if fade_ms > 0:
+            t0       = time.time()
+            duration = fade_ms / 1000.0
+            while not self._overlay_stop_event.is_set():
+                elapsed = time.time() - t0
+                t       = min(elapsed / duration, 1.0)
+                frame   = {}
+                for ch, tgt in target_dmx.items():
+                    frame[ch] = int(start_dmx.get(ch, 0) + (tgt - start_dmx.get(ch, 0)) * t)
+                with self._lock:
+                    self._overlay_dmx = frame
+                if t >= 1.0:
+                    break
+                time.sleep(0.02)
+        else:
+            with self._lock:
+                self._overlay_dmx = dict(target_dmx)
+
+        if hold_ms > 0:
+            self._overlay_stop_event.wait(timeout=hold_ms / 1000.0)
+
+    # ── Mover layer playback (Motion + Look) ───────────────────────────────
+
+    def play_motion_scene(self, scene, scene_id=None):
+        """Start playing a mover_motion scene (pan/tilt only).
+        Queued under freeze if 'motion' is in freeze_includes."""
+        if self._is_frozen_for("motion"):
+            with self._lock:
+                # Toggle behavior: if pending says "play this same scene", clear
+                if self._pending_motion and self._pending_motion.get("id") == scene_id:
+                    self._pending_motion = None
+                else:
+                    self._pending_motion = {
+                        "action": "play", "id": scene_id, "scene": scene
+                    }
+            return
+        self._stop_motion_thread()
+        self._motion_stop_event.clear()
+        with self._lock:
+            self._current_motion_name = scene.get("name")
+            self._current_motion_id   = scene_id
+        self._motion_thread = threading.Thread(
+            target=self._mover_loop,
+            args=(scene, "motion"),
+            daemon=True,
+            name="motion-player",
+        )
+        self._motion_thread.start()
+
+    def stop_motion_scene(self):
+        """Stop the playing mover_motion scene.
+        Queued under freeze if 'motion' is in freeze_includes."""
+        if self._is_frozen_for("motion"):
+            with self._lock:
+                # If a play was pending, cancel it; otherwise queue a stop
+                if self._pending_motion and self._pending_motion.get("action") == "play":
+                    self._pending_motion = None
+                else:
+                    self._pending_motion = {"action": "stop"}
+            return
+        self._stop_motion_thread()
+        with self._lock:
+            self._motion_dmx          = {}
+            self._current_motion_name = None
+            self._current_motion_id   = None
+
+    def play_look_scene(self, scene, scene_id=None):
+        """Start playing a mover_look scene (dimmer/color/gobo/etc.).
+        Queued under freeze if 'look' is in freeze_includes."""
+        if self._is_frozen_for("look"):
+            with self._lock:
+                if self._pending_look and self._pending_look.get("id") == scene_id:
+                    self._pending_look = None
+                else:
+                    self._pending_look = {
+                        "action": "play", "id": scene_id, "scene": scene
+                    }
+            return
+        self._stop_look_thread()
+        self._look_stop_event.clear()
+        with self._lock:
+            self._current_look_name = scene.get("name")
+            self._current_look_id   = scene_id
+        self._look_thread = threading.Thread(
+            target=self._mover_loop,
+            args=(scene, "look"),
+            daemon=True,
+            name="look-player",
+        )
+        self._look_thread.start()
+
+    def stop_look_scene(self):
+        """Stop the playing mover_look scene.
+        Queued under freeze if 'look' is in freeze_includes."""
+        if self._is_frozen_for("look"):
+            with self._lock:
+                if self._pending_look and self._pending_look.get("action") == "play":
+                    self._pending_look = None
+                else:
+                    self._pending_look = {"action": "stop"}
+            return
+        self._stop_look_thread()
+        with self._lock:
+            self._look_dmx          = {}
+            self._current_look_name = None
+            self._current_look_id   = None
+
+    def _stop_motion_thread(self):
+        self._motion_stop_event.set()
+        if self._motion_thread and self._motion_thread.is_alive():
+            self._motion_thread.join(timeout=1.0)
+        self._motion_thread = None
+
+    def _stop_look_thread(self):
+        self._look_stop_event.set()
+        if self._look_thread and self._look_thread.is_alive():
+            self._look_thread.join(timeout=1.0)
+        self._look_thread = None
+
+    def _mover_loop(self, scene, kind):
+        """kind: 'motion' or 'look'. Loops the scene continuously, writing to
+        the appropriate DMX dict."""
+        scene_type = "mover_motion" if kind == "motion" else "mover_look"
+        stop_event = self._motion_stop_event if kind == "motion" else self._look_stop_event
+        steps = scene.get("steps", [])
+        if not steps:
+            return
+        while not stop_event.is_set():
+            for step in steps:
+                if stop_event.is_set():
+                    return
+                target  = self.resolve_step(step.get("fixtures", {}), scene_type=scene_type)
+                fade_ms = max(0, int(step.get("fade", 0)))
+                hold_ms = max(0, int(step.get("hold", 500)))
+                self._execute_mover_step(kind, target, fade_ms, hold_ms)
+
+    def _execute_mover_step(self, kind, target_dmx, fade_ms, hold_ms):
+        """Fade-and-hold for a mover scene step. Writes to _motion_dmx or _look_dmx."""
+        stop_event = self._motion_stop_event if kind == "motion" else self._look_stop_event
+        with self._lock:
+            start_dmx = dict(self._motion_dmx if kind == "motion" else self._look_dmx)
+        for ch in target_dmx:
+            if ch not in start_dmx:
+                start_dmx[ch] = 0
+
+        if fade_ms > 0:
+            t0       = time.time()
+            duration = fade_ms / 1000.0
+            while not stop_event.is_set():
+                elapsed = time.time() - t0
+                t       = min(elapsed / duration, 1.0)
+                frame   = {}
+                for ch, tgt in target_dmx.items():
+                    frame[ch] = int(start_dmx.get(ch, 0) + (tgt - start_dmx.get(ch, 0)) * t)
+                with self._lock:
+                    if kind == "motion":
+                        self._motion_dmx = frame
+                    else:
+                        self._look_dmx = frame
+                if t >= 1.0:
+                    break
+                time.sleep(0.02)
+        else:
+            with self._lock:
+                if kind == "motion":
+                    self._motion_dmx = dict(target_dmx)
+                else:
+                    self._look_dmx = dict(target_dmx)
+
+        stop_event.wait(timeout=hold_ms / 1000.0)
+
+    # ── Tempo / tap-tempo clock ────────────────────────────────────────────
+    # One global beat grid that scene step-sync, the effect renderer, and the
+    # beat cycler all read. Pure math from (_bpm, _beat_anchor); no thread.
+    # Taps accumulate in a buffer and only commit to the live clock once tapping
+    # settles, so the show never retimes mid-burst. _tempo_active is the master
+    # gate: when False, every synced consumer uses its own default.
+
+    def _estimate_bpm_locked(self):
+        """Median-filtered BPM from the tap buffer. Call under lock. 0.0 if <2 taps."""
+        ts = self._tap_times
+        if len(ts) < 2:
+            return 0.0
+        intervals = [b - a for a, b in zip(ts, ts[1:])]
+        s = sorted(intervals)
+        mid = s[len(s) // 2]
+        good = [iv for iv in intervals if 0.5 * mid <= iv <= 2.0 * mid] or intervals
+        avg = sum(good) / len(good)
+        if avg <= 0:
+            return 0.0
+        return max(self._bpm_min, min(self._bpm_max, 60.0 / avg))
+
+    def tap(self):
+        """Register one tap. Updates only the buffer + live preview estimate;
+        the live clock is untouched until the burst settles. Returns status."""
+        now = time.time()
+        with self._lock:
+            if self._tap_times and (now - self._tap_times[-1]) > self._tap_reset_s:
+                self._tap_times = []          # gap too long -> new series
+            self._tap_times.append(now)
+            if len(self._tap_times) > 8:
+                self._tap_times = self._tap_times[-8:]
+            self._tap_pending     = True
+            self._tap_preview_bpm = self._estimate_bpm_locked()
+        return self.tempo_status()
+
+    def _tick_tempo_commit(self):
+        """Commit a settled tap burst into the live clock. Runs every output
+        tick. The "have you stopped tapping?" window scales with how fast you
+        are tapping -- it waits ~1.5x your current inter-tap interval (floored
+        by _tap_settle_s, capped by _tap_reset_s) before deciding the burst is
+        over. A fixed window can't serve both fast and slow tapping: at slow
+        tempos a short fixed settle ends the burst between taps, dropping the
+        live preview and never reaching _tap_min."""
+        with self._lock:
+            if not self._tap_pending or not self._tap_times:
+                return
+            idle = time.time() - self._tap_times[-1]
+            # Adaptive settle: longer when tapping slowly, so the burst (and the
+            # "tapping…" preview) survives the gap between taps.
+            settle = self._tap_settle_s
+            if self._tap_preview_bpm > 0:
+                interval = 60.0 / self._tap_preview_bpm
+                settle = max(self._tap_settle_s,
+                             min(self._tap_reset_s, interval * 1.5))
+            if idle < settle:
+                return                        # still mid-burst; wait for more taps
+            if len(self._tap_times) >= self._tap_min:
+                bpm = self._estimate_bpm_locked()
+                if bpm > 0:
+                    self._bpm          = bpm
+                    self._beat_anchor  = self._tap_times[-1]   # downbeat on last tap
+                    self._tempo_active = True
+                self._tap_times       = []
+                self._tap_pending     = False
+                self._tap_preview_bpm = 0.0
+            elif idle > self._tap_reset_s:
+                # Too few taps and the user has clearly stopped -> abandon buffer.
+                self._tap_times       = []
+                self._tap_pending     = False
+                self._tap_preview_bpm = 0.0
+            # else: 1-2 taps but still within the reset window -> keep collecting.
+
+    def tempo_cancel(self):
+        """Zero out tap tempo. _tempo_active=False makes every synced scene/
+        effect revert to its own default (ms hold/fade, Hz speed) on its next
+        boundary; the cycler stops too. Also clears any in-progress buffer."""
+        with self._lock:
+            self._tempo_active    = False
+            self._bpm             = 0.0
+            self._beat_anchor     = 0.0
+            self._tap_times       = []
+            self._tap_pending     = False
+            self._tap_preview_bpm = 0.0
+        self._stop_cycler_thread()   # cancel stops the cycler as well
+        return self.tempo_status()
+
+    def tempo_nudge(self, delta_bpm):
+        """Trim committed BPM by delta (+-1 etc.) without re-tapping, preserving
+        the current beat phase so the grid doesn't jump. No-op if inactive."""
+        with self._lock:
+            if not self._tempo_active or self._bpm <= 0:
+                return self.tempo_status()
+            now    = time.time()
+            period = 60.0 / self._bpm
+            n      = int((now - self._beat_anchor) / period)   # floor (>=0)
+            last_beat = self._beat_anchor + n * period
+            self._bpm         = max(self._bpm_min,
+                                    min(self._bpm_max, self._bpm + delta_bpm))
+            self._beat_anchor = last_beat
+        return self.tempo_status()
+
+    def tempo_resync(self):
+        """Drop a downbeat NOW without changing BPM -- re-phases the grid onto
+        the music once the tempo's already right."""
+        with self._lock:
+            if self._tempo_active:
+                self._beat_anchor = time.time()
+        return self.tempo_status()
+
+    # Lock-free reads: only touch a few floats and never re-acquire the lock,
+    # so they're safe from inside an already-locked section (get_state) AND from
+    # the unlocked effect-render path in _push_to_dmx.
+
+    def beat_time(self, now=None):
+        """The 'musical t': beats elapsed since the anchor. The effect renderer
+        feeds this in place of wall-clock seconds when a scene is tempo-synced,
+        so speed=1.0 means one cycle per beat. 0.0 when tempo is inactive."""
+        if not self._tempo_active or self._bpm <= 0:
+            return 0.0
+        if now is None:
+            now = time.time()
+        return (now - self._beat_anchor) * (self._bpm / 60.0)
+
+    def beat_phase(self, now=None):
+        """Position within the current beat, 0.0..1.0 -- for a pulsing UI dot."""
+        if not self._tempo_active or self._bpm <= 0:
+            return 0.0
+        if now is None:
+            now = time.time()
+        period = 60.0 / self._bpm
+        return ((now - self._beat_anchor) % period) / period
+
+    def next_beat_boundary(self, after, division=1.0):
+        """Wall-clock time of the next grid boundary strictly after `after`.
+        `division` = beats per step (0.5 = half-beat, 2 = every two beats).
+        Returns None when tempo is inactive so the scene loop falls back to ms."""
+        if not self._tempo_active or self._bpm <= 0:
+            return None
+        step = (60.0 / self._bpm) * max(0.01, float(division))
+        k = int((after - self._beat_anchor) / step) + 1
+        return self._beat_anchor + k * step
+
+    def tempo_status(self):
+        """Snapshot for routes + UI. Safe to call without holding the lock."""
+        now = time.time()
+        with self._lock:
+            active = self._tempo_active
+            bpm    = self._bpm
+            pend   = self._tap_pending
+            prev   = self._tap_preview_bpm
+            ntaps  = len(self._tap_times)
+        return {
+            "active":      active,
+            "bpm":         round(bpm, 1) if bpm else 0.0,
+            "beat_phase":  round(self.beat_phase(now), 3),
+            "tapping":     pend,
+            "preview_bpm": round(prev, 1) if prev else 0.0,
+            "tap_count":   ntaps,
+        }
+
+    # ── Beat cycler ────────────────────────────────────────────────────────
+    # Chases a chosen set of existing scenes (looks), advancing one per
+    # beat-division off the same clock. Plays looks on two reserved decks
+    # through the normal scene stack so crossfade/singer/master all apply.
+
+    CYCLER_DECK_A = "__cycler_a__"
+    CYCLER_DECK_B = "__cycler_b__"
+
+    def start_cycler(self, scenes, division=1.0, crossfade_ms=None):
+        """Arm the cycler with a list of scene dicts; advance one look per
+        `division` beats. If no tempo is live yet it waits (armed) until one is
+        committed. Re-calling replaces the look set / division live."""
+        scenes = [s for s in (scenes or []) if s]
+        if not scenes:
+            return self.cycler_status()
+        with self._lock:
+            self._cycler_scenes   = scenes
+            self._cycler_division = max(0.01, float(division))
+            if crossfade_ms is not None:
+                self._cycler_xfade_ms = max(0, int(crossfade_ms))
+            if self._cyc_index >= len(scenes):
+                self._cyc_index = 0
+            self._cycler_active = True
+        if self._cycler_thread is None or not self._cycler_thread.is_alive():
+            self._cycler_stop_event = threading.Event()
+            self._cyc_started = False
+            self._cycler_thread = threading.Thread(
+                target=self._cycler_loop, daemon=True, name="beat-cycler")
+            self._cycler_thread.start()
+        return self.cycler_status()
+
+    def stop_cycler(self):
+        """Stop the cycler and fade out its decks."""
+        self._stop_cycler_thread()
+        return self.cycler_status()
+
+    def _stop_cycler_thread(self):
+        with self._lock:
+            self._cycler_active = False
+        if self._cycler_thread is not None:
+            self._cycler_stop_event.set()
+            if self._cycler_thread.is_alive():
+                self._cycler_thread.join(timeout=0.5)
+            self._cycler_thread = None
+        # Fade both decks out (low-level path bypasses the freeze gate)
+        self._stop_scene_by_id(self.CYCLER_DECK_A, immediate=False)
+        self._stop_scene_by_id(self.CYCLER_DECK_B, immediate=False)
+        with self._lock:
+            self._cyc_deck    = None
+            self._cyc_started = False
+
+    def _cycler_advance(self, slot_s):
+        """Crossfade the next look in on the free deck and fade the current deck
+        out. Crossfade is capped so it can't overrun the beat slot."""
+        with self._lock:
+            scenes = list(self._cycler_scenes)
+            idx    = self._cyc_index
+            deck   = self._cyc_deck
+            xfade  = self._cycler_xfade_ms
+        if not scenes:
+            return
+        nxt_idx  = 0 if deck is None else (idx + 1) % len(scenes)
+        nxt_deck = self.CYCLER_DECK_B if deck == self.CYCLER_DECK_A else self.CYCLER_DECK_A
+        xfade_ms = int(min(xfade, max(0.0, slot_s * 0.9) * 1000))
+        self.play_scene(scenes[nxt_idx], launch_fade_ms=xfade_ms,
+                        scene_id=nxt_deck, force=True)
+        if deck is not None:
+            self._stop_scene_by_id(deck, immediate=False)   # graceful fade out
+        with self._lock:
+            self._cyc_index = nxt_idx
+            self._cyc_deck  = nxt_deck
+
+    def _cycler_loop(self):
+        """~20Hz driver. Edge-detects beat-grid crossings so it retimes cleanly
+        on a re-tap and holds (armed) when no tempo is live."""
+        ev = self._cycler_stop_event
+        while not ev.is_set():
+            now = time.time()
+            with self._lock:
+                active   = self._cycler_active
+                division = self._cycler_division
+                started  = self._cyc_started
+                last_idx = self._cyc_last_idx
+                last_clk = self._cyc_last_clock
+            if not active:
+                break
+            if not (self._tempo_active and self._bpm > 0):
+                if started:                       # tempo went away -- re-arm
+                    with self._lock:
+                        self._cyc_started = False
+                ev.wait(0.05)
+                continue
+            bpm    = self._bpm
+            anchor = self._beat_anchor
+            slot_s = (60.0 / bpm) * division
+            idx    = int((now - anchor) / slot_s) if slot_s > 0 else 0
+            clk    = (bpm, anchor)
+            if not started:
+                self._cycler_advance(slot_s)            # first look immediately
+                with self._lock:
+                    self._cyc_started    = True
+                    self._cyc_last_idx   = idx
+                    self._cyc_last_clock = clk
+            elif clk != last_clk:
+                with self._lock:                        # re-tap -> silent re-base
+                    self._cyc_last_idx   = idx
+                    self._cyc_last_clock = clk
+            elif idx > last_idx:
+                self._cycler_advance(slot_s)            # crossed into a new slot
+                with self._lock:
+                    self._cyc_last_idx = idx
+            ev.wait(0.02)
+
+    def cycler_status(self):
+        """Snapshot for routes + UI. Safe without holding the lock."""
+        with self._lock:
+            active = self._cycler_active
+            n      = len(self._cycler_scenes)
+            idx    = self._cyc_index
+            div    = self._cycler_division
+            name   = (self._cycler_scenes[idx].get("name")
+                      if active and n and idx < n else None)
+        return {"active": active, "count": n,
+                "index": idx if active and n else None,
+                "name": name, "division": div}
+
+    def get_state(self):
+        with self._lock:
+            actives = [
+                {"id": s["id"], "name": s["name"], "stopping": s["stopping"]}
+                for s in self._active_scenes
+                if not (s["id"] or "").startswith("__cycler")
+            ]
+            freeze = {
+                "active": self._freeze_active,
+                "pending_main_ids": list(self._pending_main_ids),
+                "pending_motion_id":
+                    self._pending_motion.get("id") if self._pending_motion else None,
+                "pending_motion_action":
+                    self._pending_motion.get("action") if self._pending_motion else None,
+                "pending_look_id":
+                    self._pending_look.get("id") if self._pending_look else None,
+                "pending_look_action":
+                    self._pending_look.get("action") if self._pending_look else None,
+                "pending_effect_id":
+                    self._pending_effect.get("id") if self._pending_effect else None,
+                "pending_effect_action":
+                    self._pending_effect.get("action") if self._pending_effect else None,
+            }
+            return {
+                # Multi-scene state: list of currently active main scenes
+                "scenes":            actives,
+                # Backward-compat single-scene fields (uses most recent active)
+                "current_scene":     actives[-1]["name"] if actives else None,
+                "current_scene_id":  actives[-1]["id"]   if actives else None,
+                "master_level":      self._master_level,
+                "singer_mode":       self._singer_mode,
+                "singer_level":      self._singer_level,
+                "singer_blend":      round(self._singer_blend, 3),
+                "blackout_mode":     self._blackout_mode,
+                "blackout_blend":    round(self._blackout_blend, 3),
+                "overlay_active":    self._overlay_target == 1.0,
+                "overlay_blend":     round(self._overlay_blend, 3),
+                "overlay_name":      self._current_overlay_name,
+                "current_motion":    self._current_motion_name,
+                "current_motion_id": self._current_motion_id,
+                "current_look":      self._current_look_name,
+                "current_look_id":   self._current_look_id,
+                "current_effect":    self._current_effect_name,
+                "current_effect_id": self._current_effect_id,
+                "effect_blend":      round(self._effect_blend, 3),
+                "dmx_connected":     self._dmx.connected,
+                "freeze":            freeze,
+                "tempo": {
+                    "active":      self._tempo_active,
+                    "bpm":         round(self._bpm, 1) if self._bpm else 0.0,
+                    "beat_phase":  round(self.beat_phase(), 3),
+                    "tapping":     self._tap_pending,
+                    "preview_bpm": round(self._tap_preview_bpm, 1)
+                                   if self._tap_preview_bpm else 0.0,
+                    "tap_count":   len(self._tap_times),
+                },
+                "cycler": {
+                    "active":   self._cycler_active,
+                    "count":    len(self._cycler_scenes),
+                    "index":    self._cyc_index
+                                if (self._cycler_active and self._cycler_scenes) else None,
+                    "name":     (self._cycler_scenes[self._cyc_index].get("name")
+                                 if self._cycler_active and self._cycler_scenes
+                                 and self._cyc_index < len(self._cycler_scenes) else None),
+                    "division": self._cycler_division,
+                },
+            }
+
+    def shutdown(self):
+        self._output_running = False
+        self.stop_all_scenes()
+        self._stop_overlay_thread()
+        self._stop_motion_thread()
+        self._stop_look_thread()
+        self._stop_cycler_thread()
+        # Effect layer has no thread of its own — just clear state.
+        with self._lock:
+            self._current_effect_scene = None
+            self._current_effect_id    = None
+            self._effect_target        = 0.0
+            self._effect_blend         = 0.0
+            self._effect_dmx           = {}
+
+    def set_dmx(self, new_dmx):
+        """Hot-swap the DMX output driver. Returns the previous driver so the
+        caller can disconnect it. The output loop keeps running uninterrupted."""
+        with self._lock:
+            old = self._dmx
+            self._dmx = new_dmx
+        return old
+
+    # ── Live preview from editor ───────────────────────────────────────────
+
+    PREVIEW_TAG = "__preview__"
+
+    def preview_set(self, scene_type, step_fixtures):
+        """Write a live preview frame to the appropriate DMX slot for the
+        scene type being edited. For main scenes, the preview takes over the
+        composite output entirely (active scenes keep running but their values
+        are hidden until preview clears). For motion/look, the preview replaces
+        that layer's playing scene.
+
+        scene_type: 'main' | 'mover_motion' | 'mover_look'
+        """
+        target = self.resolve_step(step_fixtures or {}, scene_type=scene_type)
+
+        # For motion previews, auto-include dimmer=255 for every mover that
+        # has any pan/tilt data, so the user actually sees the lights move
+        # without needing a Look scene running. The motion_dmx layer overrides
+        # the look layer, so this wins.
+        if scene_type == "mover_motion":
+            for fx in self._show.get("fixtures", []):
+                if not self._is_mover(fx):
+                    continue
+                if fx["id"] not in (step_fixtures or {}):
+                    continue
+                ch = self._mover_channel_for_role(fx, "dimmer")
+                if ch is not None:
+                    target[(self._fx_universe(fx), ch)] = 255
+
+        if scene_type == "main":
+            with self._lock:
+                self._preview_dmx    = target
+                self._preview_active = True
+        elif scene_type == "mover_motion":
+            self._stop_motion_thread()
+            with self._lock:
+                self._motion_dmx          = target
+                self._current_motion_name = "🟢 Live Preview"
+                self._current_motion_id   = self.PREVIEW_TAG
+        elif scene_type == "mover_look":
+            self._stop_look_thread()
+            with self._lock:
+                self._look_dmx          = target
+                self._current_look_name = "🟢 Live Preview"
+                self._current_look_id   = self.PREVIEW_TAG
+
+    def preview_clear(self, scene_type):
+        """Clear the preview in the given slot, returning that slot to empty
+        so playback can resume normally on the next scene start."""
+        if scene_type == "main":
+            with self._lock:
+                self._preview_active = False
+                self._preview_dmx    = {}
+        elif scene_type == "mover_motion":
+            with self._lock:
+                if self._current_motion_id == self.PREVIEW_TAG:
+                    self._motion_dmx          = {}
+                    self._current_motion_name = None
+                    self._current_motion_id   = None
+        elif scene_type == "mover_look":
+            with self._lock:
+                if self._current_look_id == self.PREVIEW_TAG:
+                    self._look_dmx          = {}
+                    self._current_look_name = None
+                    self._current_look_id   = None
+
+    def load_show(self, show_config):
+        """Hot-swap to a new show config — recomputes channel maps."""
+        with self._lock:
+            self._show = show_config
+            self._singer_fade_ms   = show_config.get("singer_fade_ms", 1500)
+            self._blackout_fade_ms = show_config.get("blackout_fade_ms", 600)
+            self._overlay_fade_ms  = show_config.get("overlay_fade_ms", 200)
+            self._effect_fade_ms   = show_config.get("effect_fade_ms", 500)
+            self._overlay_keep_singer = show_config.get("overlay_keep_singer", True)
+            # Reload per-show freeze includes
+            self._freeze_includes = self._load_freeze_includes(show_config)
+        self.stop_all_scenes()
+        self._stop_overlay_thread()
+        self._stop_motion_thread()
+        self._stop_look_thread()
+        self._stop_cycler_thread()
+        with self._lock:
+            self._scene_dmx            = {}
+            self._preview_dmx          = {}
+            self._preview_active       = False
+            # Reset freeze state when changing shows
+            self._freeze_active        = False
+            self._pending_main_ids     = []
+            self._pending_main_scenes  = {}
+            self._pending_main_fades   = {}
+            self._pending_motion       = None
+            self._pending_look         = None
+            self._pending_effect       = None
+            # Reset tempo / cycler state when changing shows
+            self._tempo_active         = False
+            self._bpm                  = 0.0
+            self._beat_anchor          = 0.0
+            self._tap_times            = []
+            self._tap_pending          = False
+            self._tap_preview_bpm      = 0.0
+            self._cycler_active        = False
+            self._cycler_scenes        = []
+            self._cyc_index            = 0
+            self._blackout_mode        = None
+            self._blackout_blend       = 0.0
+            self._blackout_target      = 0.0
+            self._overlay_dmx          = {}
+            self._overlay_blend        = 0.0
+            self._overlay_target       = 0.0
+            self._current_overlay_name = None
+            self._motion_dmx           = {}
+            self._current_motion_name  = None
+            self._current_motion_id    = None
+            self._look_dmx             = {}
+            self._current_look_name    = None
+            self._current_look_id      = None
+            # Effect layer reset (no thread to stop)
+            self._effect_dmx           = {}
+            self._effect_blend         = 0.0
+            self._effect_target        = 0.0
+            self._current_effect_scene = None
+            self._current_effect_id    = None
+            self._current_effect_name  = None
+            self._dimmer_channels     = self._get_dimmer_channels()
+            self._singer_channels     = self._get_singer_channels()
+            self._singer_dmx_full     = self._build_singer_dmx()
+            self._patched_channels    = self._get_all_patched_channels()
+            self._cell_strips         = self._build_cell_strips_cache()
+        # Clear any leftover DMX output from previous show
+        self._dmx.blackout()

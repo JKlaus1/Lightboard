@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Settings — LightBoard</title>
+<style>
+:root{--bg:#0d0d0d;--surface:#1a1a1a;--surface2:#242424;--border:#333;--accent:#00b4d8;--accent2:#0077b6;--singer:#ffb347;--danger:#e63946;--success:#4caf50;--text:#e0e0e0;--sub:#888;--radius:10px;}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
+header{display:flex;align-items:center;gap:8px;padding:0 12px;height:52px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20;}
+header h1{font-size:1rem;font-weight:700;color:var(--accent);flex:1;}
+.hbtn{background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:7px 12px;font-size:0.8rem;cursor:pointer;white-space:nowrap;}
+.hbtn.save{background:var(--accent2);border-color:var(--accent2);color:#fff;font-weight:700;}
+main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+.card-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface2);}
+.card-head h2{font-size:0.78rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--sub);flex:1;}
+.card-body{padding:12px;display:flex;flex-direction:column;gap:10px;}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.row label{font-size:0.75rem;color:var(--sub);min-width:90px;}
+.row input,.row select{flex:1;min-width:0;background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:7px 10px;font-size:0.85rem;outline:none;}
+.row input[type=number]{width:80px;flex:none;}
+.hint{font-size:0.7rem;color:var(--sub);}
+.show-item{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);}
+.show-item:last-child{border-bottom:none;}
+.show-badge{font-size:0.68rem;background:var(--accent2);color:#fff;border-radius:4px;padding:2px 6px;font-weight:700;}
+.show-name{flex:1;font-size:0.88rem;}
+.show-actions{display:flex;gap:6px;}
+.smbtn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 10px;font-size:0.75rem;cursor:pointer;white-space:nowrap;}
+.smbtn.danger{border-color:var(--danger);color:var(--danger);}
+.smbtn.accent{border-color:var(--accent);color:var(--accent);}
+.fixture-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;overflow:hidden;}
+.fx-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);}
+.fx-num{font-size:0.68rem;font-weight:700;color:var(--sub);background:var(--border);border-radius:4px;padding:2px 6px;}
+.fx-name-input{flex:1;background:transparent;border:none;color:var(--text);font-size:0.88rem;font-weight:600;outline:none;min-width:0;border-bottom:1px solid transparent;}
+.fx-name-input:focus{border-bottom-color:var(--accent);}
+.fx-del{background:none;border:none;color:var(--danger);font-size:1.1rem;cursor:pointer;padding:2px 6px;border-radius:5px;}
+.fx-body{padding:10px 12px;display:flex;flex-direction:column;gap:8px;}
+.fx-meta{font-size:0.72rem;color:var(--sub);padding:2px 0 4px;}
+.fx-meta .accent-tag{color:var(--accent);}
+.dmx-end{font-size:0.72rem;color:var(--accent);margin-left:4px;}
+.singer-sect{border-top:1px solid var(--border);padding-top:8px;}
+.singer-title{font-size:0.72rem;font-weight:700;color:var(--singer);margin-bottom:6px;}
+.pod-row{display:flex;flex-wrap:wrap;gap:5px;}
+.pod-tog{width:38px;height:38px;border-radius:7px;border:2px solid var(--border);background:var(--surface);color:var(--sub);font-size:0.75rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;transition:all .12s;}
+.pod-tog.on{border-color:var(--singer);background:rgba(255,179,71,.15);color:var(--singer);}
+.lib-item{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);}
+.lib-item:last-child{border-bottom:none;}
+.lib-name{flex:1;font-size:0.85rem;}
+.lib-tag{font-size:0.65rem;color:var(--sub);background:var(--border);border-radius:4px;padding:2px 6px;}
+.lib-ch{font-size:0.72rem;color:var(--accent);min-width:40px;text-align:right;}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:100;align-items:flex-end;justify-content:center;}
+.modal-bg.open{display:flex;}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px 14px 0 0;width:100%;max-width:540px;max-height:90vh;overflow-y:auto;padding:20px;}
+.modal h2{font-size:1rem;color:var(--accent);margin-bottom:14px;}
+.modal-btns{display:flex;gap:8px;margin-top:16px;}
+.modal-btns button{flex:1;padding:11px;border-radius:var(--radius);border:none;font-size:0.85rem;font-weight:700;cursor:pointer;}
+.btn-cancel2{background:var(--surface2);color:var(--text);border:1px solid var(--border) !important;}
+.btn-ok{background:var(--accent2);color:#fff;}
+.mrow{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}
+.mrow label{font-size:0.75rem;color:var(--sub);}
+.mrow input,.mrow select{background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:9px 12px;font-size:0.88rem;outline:none;width:100%;}
+.mrow .sub-hint{font-size:0.7rem;color:var(--sub);margin-top:-2px;}
+.col6{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;}
+.col6 label{font-size:0.7rem;font-weight:700;text-align:center;}
+.col6 label.r{color:#f44336;}.col6 label.g{color:#4caf50;}.col6 label.b{color:#2196f3;}
+.col6 label.a{color:#ff9800;}.col6 label.w{color:#e0e0e0;}.col6 label.uv{color:#9c27b0;}.col6 label.l{color:#a3e635;}
+.col6 input{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 3px;font-size:0.8rem;outline:none;text-align:center;width:100%;}
+.singer-dot{width:32px;height:32px;border-radius:50%;border:2px solid var(--border);margin:0 auto;}
+.add-fx-btn{width:100%;padding:11px;border-radius:var(--radius);border:2px dashed var(--border);background:none;color:var(--sub);font-size:0.85rem;cursor:pointer;margin-top:4px;transition:border-color .15s,color .15s;}
+.add-fx-btn:hover{border-color:var(--accent);color:var(--accent);}
+/* Channel mapper */
+.ch-mapper{background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px;margin:6px 0;}
+.ch-mapper-row{display:flex;align-items:center;gap:6px;margin-bottom:5px;}
+.ch-mapper-row label{font-size:0.75rem;color:var(--sub);min-width:120px;}
+.ch-mapper-row input[type=number]{width:60px;background:var(--surface);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 6px;font-size:0.8rem;outline:none;text-align:center;}
+.color-checks{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
+.color-check{display:flex;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:0.75rem;cursor:pointer;user-select:none;}
+.color-check input[type=checkbox]{margin:0;}
+.color-check.on{border-color:var(--accent);background:rgba(0,180,216,.1);}
+.color-check input[type=number]{width:40px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:2px 4px;font-size:0.7rem;outline:none;text-align:center;margin-left:3px;}
+/* Channel map rows */
+.cmap-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;}
+.cmap-pos{font-size:0.72rem;color:var(--sub);min-width:90px;font-weight:600;}
+.cmap-row select{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:0.82rem;outline:none;}
+.cmap-row.r{border-left:3px solid #f44336;}
+.cmap-row.g{border-left:3px solid #4caf50;}
+.cmap-row.b{border-left:3px solid #2196f3;}
+.cmap-row.a{border-left:3px solid #ff9800;}
+.cmap-row.w{border-left:3px solid #e0e0e0;}
+.cmap-row.uv{border-left:3px solid #9c27b0;}
+.cmap-row.l{border-left:3px solid #a3e635;}   /* Lime */
+
+/* Segment editor (pixel_strip fixtures) */
+.seg-row{display:flex;align-items:center;gap:6px;margin-bottom:4px;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;}
+.seg-row input[type=text]{flex:1;min-width:60px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 8px;font-size:0.8rem;outline:none;}
+.seg-row .seg-num{width:55px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 6px;font-size:0.8rem;outline:none;text-align:center;flex-shrink:0;}
+.seg-row .seg-num-label{font-size:0.7rem;color:var(--sub);flex-shrink:0;}
+.seg-row .seg-rev-label{font-size:0.7rem;color:var(--sub);display:flex;align-items:center;gap:3px;flex-shrink:0;}
+.seg-row .seg-del{background:transparent;border:none;color:#e63946;cursor:pointer;font-size:1rem;padding:0 4px;flex-shrink:0;line-height:1;}
+.seg-row .seg-del:hover{color:#ff5562;}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:7px 16px;font-size:0.8rem;pointer-events:none;opacity:0;transition:opacity .2s,transform .2s;z-index:300;}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+#toast.ok{border-color:var(--success);color:var(--success);}
+#toast.err{border-color:var(--danger);color:var(--danger);}
+.collision-list{display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;margin-bottom:12px;}
+.collision-item{background:var(--surface2);padding:10px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;font-size:0.82rem;gap:8px;}
+.collision-item button{padding:6px 12px;border-radius:6px;border:none;cursor:pointer;font-size:0.75rem;font-weight:600;}
+.btn-over{background:var(--danger);color:#fff;}
+.btn-skip{background:var(--surface2);color:var(--sub);border:1px solid var(--border)!important;}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚙️ Settings</h1>
+  <button class="hbtn" onclick="location.href='/'">← Back</button>
+  <button class="hbtn" onclick="location.href='/touch-config'">🎛 Touch</button>
+  <button class="hbtn" onclick="restartLightboard()" style="background:#3a2010;border:1px solid #6a3a20;color:#ffaa66;">⟲ Restart</button>
+  <button class="hbtn save" id="save-btn" onclick="saveShowConfig()">Save Show</button>
+</header>
+<main>
+
+  <div class="card">
+    <div class="card-head"><h2>Shows</h2><button class="smbtn accent" onclick="openNewShow()">+ New Show</button></div>
+    <div id="shows-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>DMX Output</h2><span id="dmx-status-label" style="font-size:0.75rem;color:var(--sub);"></span></div>
+    <div class="card-body">
+      <div class="row"><label>Driver</label>
+        <select id="dmx-driver-sel" onchange="updateDmxDriverFields()">
+          <option value="enttec">Enttec Open DMX USB</option>
+          <option value="artnet">Art-Net (PKNight EN-3P, etc.)</option>
+          <option value="sacn">sACN / E1.31 (WLED, modern nodes)</option>
+        </select>
+      </div>
+      <div id="dmx-enttec-fields">
+        <div class="row"><label>USB port</label>
+          <input type="text" id="dmx-port-input" placeholder="/dev/ttyUSB0" style="flex:1;max-width:200px;">
+          <span class="hint">e.g. /dev/ttyUSB0</span>
+        </div>
+      </div>
+      <div id="dmx-artnet-fields">
+        <div class="row"><label>Target IP(s)</label>
+          <input type="text" id="artnet-target-input" placeholder="192.168.1.182" style="flex:1;max-width:320px;">
+          <span class="hint">Comma-separated. Add ":N" to route only universe N to that target (e.g. <code>192.168.1.182:0, 192.168.1.183:1</code>)</span>
+        </div>
+        <div class="row"><label>Default universe</label>
+          <input type="number" id="artnet-universe-input" value="0" min="0" max="32767" style="width:90px;">
+          <span class="hint">For targets without an explicit ":N"</span>
+        </div>
+      </div>
+      <div id="dmx-sacn-fields" style="display:none;">
+        <div class="row"><label>Mode</label>
+          <select id="sacn-multicast-sel" onchange="updateSacnMode()">
+            <option value="true">Multicast (recommended for WLED)</option>
+            <option value="false">Unicast (specific IPs)</option>
+          </select>
+        </div>
+        <div class="row" id="sacn-target-row" style="display:none;"><label>Target IP(s)</label>
+          <input type="text" id="sacn-target-input" placeholder="192.168.1.50" style="flex:1;max-width:320px;">
+          <span class="hint">Comma-separated. Add ":N" to route only universe N (e.g. <code>192.168.1.50:1, 192.168.1.51:2</code>)</span>
+        </div>
+        <div class="row"><label>Default universe</label>
+          <input type="number" id="sacn-universe-input" value="1" min="1" max="63999" style="width:90px;">
+          <span class="hint">sACN universes start at 1 (per E1.31 spec)</span>
+        </div>
+        <div class="row"><label>Priority</label>
+          <input type="number" id="sacn-priority-input" value="100" min="0" max="200" style="width:90px;">
+          <span class="hint">0-200, default 100. Higher wins when multiple senders are present.</span>
+        </div>
+        <div class="row">
+          <span class="hint" style="font-size:0.7rem;">Multicast sends to 239.255.UH.UL per universe — devices configured for that universe receive automatically. Make sure your switch/router doesn't block multicast (IGMP snooping is fine; most home routers handle this transparently).</span>
+        </div>
+      </div>
+      <div class="row">
+        <button class="smbtn accent" onclick="saveDmxConfig()">Save & Apply</button>
+        <span class="hint">Applied immediately (no service restart needed)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Show Config: <span id="show-name-label">{{ show.name }}</span></h2></div>
+    <div class="card-body">
+      <div class="row"><label>Name</label><input type="text" id="show-name" value="{{ show.name }}"></div>
+      <div class="row"><label>Startup scene</label>
+        <select id="startup-scene">
+          <option value="">— None —</option>
+          {% for s in scenes %}
+          <option value="{{ s.id }}" {% if s.id == show.startup_scene %}selected{% endif %}>{{ s.name }}{% if s.folder %} · {{ s.folder }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="row"><label>Singer fade</label>
+        <input type="number" id="singer-fade" value="{{ show.singer_fade_ms or 1500 }}" min="0" max="10000" step="100" style="width:90px">
+        <span class="hint">ms</span>
+      </div>
+      <div class="row"><label>Blackout fade</label>
+        <input type="number" id="blackout-fade" value="{{ show.blackout_fade_ms or 600 }}" min="0" max="10000" step="100" style="width:90px">
+        <span class="hint">ms fade in/out for blackouts</span>
+      </div>
+      <div class="row"><label>Overlay scene</label>
+        <select id="overlay-scene" style="flex:1;max-width:300px">
+          <option value="">— None —</option>
+          {% for s in scenes %}
+          <option value="{{ s.id }}" {% if s.id == show.overlay_scene %}selected{% endif %}>{{ s.name }}{% if s.folder %} · {{ s.folder }}{% endif %}</option>
+          {% endfor %}
+        </select>
+        <span class="hint">Pick a scene to use as a strobe/effect overlay</span>
+      </div>
+      <div class="row"><label>Overlay label</label>
+        <input type="text" id="overlay-label" value="{{ show.overlay_label or 'STROBE' }}" maxlength="20" style="width:120px">
+        <span class="hint">Button text on main page</span>
+      </div>
+      <div class="row"><label>Overlay fade</label>
+        <input type="number" id="overlay-fade" value="{{ show.overlay_fade_ms or 200 }}" min="0" max="5000" step="50" style="width:90px">
+        <span class="hint">ms fade in/out for overlay (short for strobes)</span>
+      </div>
+      <div class="row"><label>Keep singer lights</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;cursor:pointer;">
+          <input type="checkbox" id="overlay-keep-singer" {% if show.overlay_keep_singer is not defined or show.overlay_keep_singer %}checked{% endif %} style="width:18px;height:18px;cursor:pointer;">
+          <span>Singer pods stay lit during the overlay (excluded from strobe)</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Singer Warm White Color</h2></div>
+    <div class="card-body">
+      <div class="col6" style="grid-template-columns:repeat(7,1fr);">
+        <label class="r">R</label><label class="g">G</label><label class="b">B</label>
+        <label class="l">L</label><label class="a">A</label><label class="w">W</label><label class="uv">UV</label>
+        <input type="number" id="sc-r"  min="0" max="255" value="{{ show.singer_color.r }}"  oninput="updateDot()">
+        <input type="number" id="sc-g"  min="0" max="255" value="{{ show.singer_color.g }}"  oninput="updateDot()">
+        <input type="number" id="sc-b"  min="0" max="255" value="{{ show.singer_color.b }}"  oninput="updateDot()">
+        <input type="number" id="sc-l"  min="0" max="255" value="{{ show.singer_color.l or 0 }}" oninput="updateDot()">
+        <input type="number" id="sc-a"  min="0" max="255" value="{{ show.singer_color.a }}"  oninput="updateDot()">
+        <input type="number" id="sc-w"  min="0" max="255" value="{{ show.singer_color.w }}"  oninput="updateDot()">
+        <input type="number" id="sc-uv" min="0" max="255" value="{{ show.singer_color.uv }}" oninput="updateDot()">
+      </div>
+      <div class="singer-dot" id="singer-dot"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Fixtures in Show</h2><button class="smbtn accent" onclick="openLibraryPicker()">+ Add</button></div>
+    <div class="card-body" style="padding-top:6px;">
+      <div id="overlap-warn" style="display:none;font-size:0.75rem;color:var(--danger);padding:2px 0;">⚠ DMX address overlap detected</div>
+      <div id="fixtures-list"></div>
+      <button class="add-fx-btn" onclick="openLibraryPicker()">+ Add fixture from library</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Freeze Settings</h2></div>
+    <div style="font-size:0.78rem;color:var(--sub);margin-bottom:10px;">
+      When freeze is enabled on the home page, the categories checked below
+      queue up changes for batch release. Unchecked categories bypass freeze
+      and always take effect immediately. Blackout is always immediate by
+      design.
+    </div>
+    <div id="freeze-includes-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Fixture Library</h2><button class="smbtn accent" onclick="openBuilder(null)">+ Build New</button></div>
+    <div id="library-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Scene Library &amp; Files</h2><button class="smbtn accent" onclick="location.href='/library'">📚 Open Library</button></div>
+    <div class="card-body">
+      <div style="font-size:0.78rem;color:var(--sub);">Browse and manage every scene and effect in the library, or import / export show files.</div>
+      <div style="display:flex;gap:8px;">
+        <button class="smbtn" style="flex:1;padding:10px;" onclick="document.getElementById('import-file').click()">⬆ Import</button>
+        <button class="smbtn" style="flex:1;padding:10px;" onclick="exportAll()">⬇ Export All</button>
+      </div>
+      <input type="file" id="import-file" accept=".json,.zip" multiple style="display:none;" onchange="importFiles(this.files)">
+    </div>
+  </div>
+
+</main>
+
+<!-- new show modal -->
+<div class="modal-bg" id="new-show-modal">
+  <div class="modal">
+    <h2>New Show</h2>
+    <div class="mrow"><label>Show name</label><input type="text" id="ns-name" placeholder="e.g. Bar Gig"></div>
+    <div class="mrow"><label>Start from</label><select id="ns-source"><option value="">Blank show</option></select></div>
+    <div class="modal-btns">
+      <button class="btn-cancel2" onclick="closeModal('new-show-modal')">Cancel</button>
+      <button class="btn-ok" onclick="createShow()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- library picker modal -->
+<div class="modal-bg" id="lib-picker-modal">
+  <div class="modal">
+    <h2>Add Fixture to Show</h2>
+    <div class="mrow"><label>Fixture</label><select id="lp-fixture" onchange="lpUpdateRange()"></select></div>
+    <div class="mrow"><label>Quantity</label>
+      <input type="number" id="lp-quantity" min="1" max="32" value="1" oninput="lpUpdateRange()" style="width:80px;">
+      <span class="sub-hint" style="margin-left:8px;font-size:0.72rem;color:var(--sub);">Adds multiple back-to-back; addresses auto-increment</span>
+    </div>
+    <div class="mrow"><label>Universe</label><input type="number" id="lp-universe" min="0" max="32767" value="0" oninput="lpUpdateRange()"></div>
+    <div class="mrow"><label>DMX Start Address</label><input type="number" id="lp-address" min="1" max="512" value="1" oninput="lpUpdateRange()"></div>
+    <div style="font-size:0.75rem;color:var(--accent);margin-top:-6px;margin-bottom:6px;" id="lp-range"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel2" onclick="closeModal('lib-picker-modal')">Cancel</button>
+      <button class="btn-ok" onclick="addFromLibrary()">Add to Show</button>
+    </div>
+  </div>
+</div>
+
+<!-- fixture builder modal -->
+<div class="modal-bg" id="builder-modal">
+  <div class="modal">
+    <h2 id="builder-title">Build Fixture</h2>
+    <div class="mrow"><label>Fixture name</label><input type="text" id="fb-name" placeholder="e.g. My LED Bar 48ch"></div>
+    <div class="mrow"><label>Fixture type</label>
+      <select id="fb-type" onchange="updateBuilderMode()">
+        <option value="pod">Pod-based (par / bar)</option>
+        <option value="pixel_strip">Pixel strip (WLED / holiday)</option>
+        <option value="mover">Moving Head</option>
+      </select>
+    </div>
+    <div class="mrow"><label>Total DMX channels</label><input type="number" id="fb-channels" min="1" max="32768" value="7" oninput="fbValidate()"></div>
+
+    <!-- Pod-based fields -->
+    <div id="fb-pod-fields">
+      <div class="mrow"><label>Number of pods</label><input type="number" id="fb-pods" min="1" max="64" value="1" oninput="fbValidate()">
+        <div class="sub-hint">1 for single-color pars, more for multi-pod bars</div>
+      </div>
+      <div class="ch-mapper">
+        <div class="ch-mapper-row">
+          <label>Dimmer channel</label>
+          <input type="number" id="fb-dimmer-ch" min="0" max="512" value="1" oninput="fbValidate()">
+          <span class="hint">(0 = no dimmer)</span>
+        </div>
+        <div class="ch-mapper-row">
+          <label>First pod channel</label>
+          <input type="number" id="fb-first-pod" min="1" max="512" value="2" oninput="fbValidate()">
+        </div>
+        <div class="ch-mapper-row">
+          <label>Channels per pod</label>
+          <input type="number" id="fb-ch-per-pod" min="1" max="20" value="6" oninput="rebuildChannelMap();fbValidate()">
+        </div>
+        <div style="font-size:0.72rem;color:var(--sub);margin-top:10px;margin-bottom:6px;">
+          Set what each channel within a pod controls (in DMX order):
+        </div>
+        <div id="fb-channel-map"></div>
+      </div>
+    </div>
+
+    <!-- Pixel-strip fields -->
+    <div id="fb-pixel-fields" style="display:none;">
+      <div class="mrow"><label>Pixel count</label>
+        <input type="number" id="fb-pixel-count" min="1" max="2048" value="60"
+               oninput="recomputePixelTotalChannels();fbValidate()">
+        <div class="sub-hint">Total LED pixels in the strip</div>
+      </div>
+      <div class="ch-mapper">
+        <div class="ch-mapper-row">
+          <label>Dimmer channel</label>
+          <input type="number" id="fb-pixel-dimmer-ch" min="0" max="512" value="0"
+                 oninput="recomputePixelTotalChannels();fbValidate()">
+          <span class="hint">(0 = no dimmer, typical for WLED)</span>
+        </div>
+        <div class="ch-mapper-row">
+          <label>First pixel channel</label>
+          <input type="number" id="fb-pixel-first-ch" min="1" max="512" value="1"
+                 oninput="recomputePixelTotalChannels();fbValidate()">
+        </div>
+        <div class="ch-mapper-row">
+          <label>Channels per pixel</label>
+          <input type="number" id="fb-pixel-ch-per" min="1" max="6" value="4"
+                 oninput="rebuildChannelMap();recomputePixelTotalChannels();fbValidate()">
+          <span class="hint">3=RGB · 4=RGBW · 5=RGBAW · 6=RGBAWUV</span>
+        </div>
+        <div style="font-size:0.72rem;color:var(--sub);margin-top:10px;margin-bottom:6px;">
+          Set what each channel within a pixel controls (in DMX order):
+        </div>
+        <div id="fb-pixel-channel-map"></div>
+      </div>
+      <div style="margin-top:14px;">
+        <div style="display:flex;align-items:center;gap:8px;font-size:0.78rem;font-weight:600;margin-bottom:6px;">
+          <span style="flex:1;">Segments</span>
+          <button type="button" onclick="addSegment()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:0.78rem;cursor:pointer;">+ Add segment</button>
+        </div>
+        <div style="font-size:0.7rem;color:var(--sub);margin-bottom:8px;line-height:1.4;">
+          Divide the strip into named sections. Leave empty for a single continuous run.
+        </div>
+        <div id="fb-segments"></div>
+      </div>
+    </div>
+
+    <!-- Mover fields -->
+    <div id="fb-mover-fields" style="display:none;">
+      <div style="font-size:0.72rem;color:var(--sub);margin-top:6px;margin-bottom:8px;">
+        Map each function to its channel number on the fixture (1-based offset from start address). Leave blank if not applicable.
+      </div>
+      <div id="fb-role-rows" style="display:flex;flex-direction:column;gap:4px;"></div>
+      <div style="font-size:0.7rem;color:var(--sub);margin-top:8px;">
+        <strong>Tip:</strong> "pan" and "tilt" are the motion channels. Everything else (dimmer, gobo, prism, color, strobe, etc.) becomes part of "Look" scenes.
+      </div>
+    </div>
+
+    <div id="fb-validate" style="font-size:0.72rem;margin-top:8px;"></div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel2" onclick="closeModal('builder-modal')">Cancel</button>
+      <button class="btn-ok" onclick="saveToLibrary()">Save to Library</button>
+    </div>
+  </div>
+</div>
+
+<!-- import collision modal -->
+<div class="modal-bg" id="collision-modal">
+  <div class="modal">
+    <h2>File Conflicts</h2>
+    <div style="font-size:0.78rem;color:var(--sub);margin-bottom:10px;">These scenes already exist — choose what to do with each.</div>
+    <div id="collision-list" class="collision-list"></div>
+    <div class="modal-btns">
+      <button class="btn-ok" onclick="closeCollision()">Done</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script>
+let fixtures = {{ show.fixtures | tojson }};
+let library  = [];
+let allShows = {{ shows | tojson }};
+const ACTIVE = {{ active_show | tojson }};
+let editFxId = null;
+
+// Per-show freeze configuration — which categories queue when freeze is on.
+const FREEZE_CATEGORIES = [
+  { key: 'main_scenes',  label: 'Main scenes',  hint: 'Tapping scenes queues until release',                    defaultOn: true  },
+  { key: 'motion',       label: 'Motion',       hint: 'Mover Motion scene changes queue',                       defaultOn: true  },
+  { key: 'look',         label: 'Look',         hint: 'Mover Look scene changes queue',                         defaultOn: true  },
+  { key: 'effects',      label: 'Effects',      hint: 'Pixel/effect scenes (when added) queue',                 defaultOn: true  },
+  { key: 'overlay',      label: 'Overlay',      hint: 'Strobe/overlay layer changes queue',                     defaultOn: false },
+  { key: 'blackout',     label: 'Blackout',     hint: 'Blackout buttons (default: immediate, bypass freeze)',   defaultOn: false },
+  { key: 'color_dimmer', label: 'Color dimmer', hint: 'Master dimmer slider drags queue',                       defaultOn: false },
+  { key: 'singer_mode',  label: 'Singer mode',  hint: 'Singer Mode toggle queues',                              defaultOn: false },
+];
+
+let freezeIncludes = {};
+
+function renderFreezeIncludes() {
+  const initial = ({{ show.freeze_includes | tojson if show.freeze_includes else '{}' }}) || {};
+  const grid = document.getElementById('freeze-includes-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  FREEZE_CATEGORIES.forEach(cat => {
+    const checked = (cat.key in initial) ? !!initial[cat.key] : cat.defaultOn;
+    freezeIncludes[cat.key] = checked;
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:7px;cursor:pointer;';
+    row.innerHTML = `
+      <input type="checkbox" ${checked ? 'checked' : ''}
+             data-key="${cat.key}"
+             onchange="freezeIncludes['${cat.key}']=this.checked;"
+             style="margin-top:2px;flex-shrink:0;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.82rem;font-weight:600;">${cat.label}</div>
+        <div style="font-size:0.66rem;color:var(--sub);line-height:1.3;">${cat.hint}</div>
+      </div>`;
+    grid.appendChild(row);
+  });
+}
+
+(async()=>{
+  try { library = await fetch('/api/fixtures').then(r=>r.json()); }
+  catch(e){ library = []; }
+  renderShows(); renderLibrary(); renderFixtures(); renderFreezeIncludes(); updateDot();
+  const sel=document.getElementById('ns-source');
+  allShows.forEach(s=>sel.innerHTML+=`<option value="${s.id}">Copy of "${s.name}"</option>`);
+  loadDmxConfig();
+})();
+
+// ── DMX Output ─────────────────────────────
+async function loadDmxConfig(){
+  try {
+    const c = await fetch('/api/dmx/config').then(r=>r.json());
+    document.getElementById('dmx-driver-sel').value = c.driver || 'enttec';
+    document.getElementById('dmx-port-input').value = c.dmx_port || '/dev/ttyUSB0';
+    document.getElementById('artnet-target-input').value = c.artnet_target || '';
+    document.getElementById('artnet-universe-input').value = c.artnet_universe ?? 0;
+    document.getElementById('sacn-target-input').value = c.sacn_target || '';
+    document.getElementById('sacn-universe-input').value = c.sacn_universe ?? 1;
+    document.getElementById('sacn-priority-input').value = c.sacn_priority ?? 100;
+    document.getElementById('sacn-multicast-sel').value = (c.sacn_multicast === false) ? 'false' : 'true';
+    document.getElementById('dmx-status-label').textContent = c.connected ? '● connected' : '○ not connected';
+    document.getElementById('dmx-status-label').style.color = c.connected ? 'var(--success)' : 'var(--sub)';
+    updateDmxDriverFields();
+    updateSacnMode();
+  } catch(e){ /* ignore */ }
+}
+function updateDmxDriverFields(){
+  const driver = document.getElementById('dmx-driver-sel').value;
+  document.getElementById('dmx-enttec-fields').style.display = driver === 'enttec' ? '' : 'none';
+  document.getElementById('dmx-artnet-fields').style.display = driver === 'artnet' ? '' : 'none';
+  document.getElementById('dmx-sacn-fields').style.display   = driver === 'sacn'   ? '' : 'none';
+}
+function updateSacnMode(){
+  const isMulticast = document.getElementById('sacn-multicast-sel').value === 'true';
+  document.getElementById('sacn-target-row').style.display = isMulticast ? 'none' : '';
+}
+async function saveDmxConfig(){
+  const driver = document.getElementById('dmx-driver-sel').value;
+  const payload = {
+    driver,
+    dmx_port:        document.getElementById('dmx-port-input').value.trim(),
+    artnet_target:   document.getElementById('artnet-target-input').value.trim(),
+    artnet_universe: parseInt(document.getElementById('artnet-universe-input').value)||0,
+    sacn_target:     document.getElementById('sacn-target-input').value.trim(),
+    sacn_universe:   parseInt(document.getElementById('sacn-universe-input').value)||1,
+    sacn_priority:   parseInt(document.getElementById('sacn-priority-input').value)||100,
+    sacn_multicast:  document.getElementById('sacn-multicast-sel').value === 'true',
+  };
+  if (driver === 'artnet' && !payload.artnet_target) {
+    toast('Art-Net needs a target IP','err'); return;
+  }
+  if (driver === 'sacn' && !payload.sacn_multicast && !payload.sacn_target) {
+    toast('sACN unicast needs target IP(s)','err'); return;
+  }
+  const r = await fetch('/api/dmx/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const d = await r.json();
+  if (d.ok) { toast('DMX driver swapped ✓','ok'); loadDmxConfig(); }
+  else { toast('Error: '+d.error,'err'); }
+}
+
+// ── Shows ──────────────────────────────────
+function renderShows(){
+  const el=document.getElementById('shows-list'); el.innerHTML='';
+  allShows.forEach(s=>{
+    const isActive=s.id===ACTIVE;
+    const row=document.createElement('div'); row.className='show-item';
+    row.innerHTML=`<span class="show-name">${s.name}</span>${isActive?'<span class="show-badge">ACTIVE</span>':''}
+      <div class="show-actions">
+        ${!isActive?`<button class="smbtn" onclick="switchShow('${s.id}')">Switch</button>`:''}
+        <button class="smbtn" onclick="dupShow('${s.id}','${s.name.replace(/'/g,"\\'")}')">Duplicate</button>
+        ${!isActive?`<button class="smbtn danger" onclick="delShow('${s.id}','${s.name.replace(/'/g,"\\'")}')">Delete</button>`:''}
+      </div>`;
+    el.appendChild(row);
+  });
+}
+function openNewShow(){ document.getElementById('ns-name').value=''; openModal('new-show-modal'); }
+async function createShow(){
+  const name=document.getElementById('ns-name').value.trim();
+  const src=document.getElementById('ns-source').value;
+  if(!name){toast('Enter a name','err');return;}
+  const r=await fetch('/api/shows/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,duplicate_from:src||null})});
+  const d=await r.json();
+  if(d.ok){toast('Created ✓','ok');closeModal('new-show-modal');allShows.push({id:d.id,name:d.name});renderShows();}
+  else toast('Error: '+d.error,'err');
+}
+async function switchShow(id){
+  const r=await fetch('/api/shows/switch/'+id,{method:'POST'});
+  const d=await r.json();
+  if(d.ok) location.href='/settings'; else toast('Error: '+d.error,'err');
+}
+function dupShow(id,name){document.getElementById('ns-name').value=name+' (copy)';document.getElementById('ns-source').value=id;openModal('new-show-modal');}
+async function delShow(id,name){
+  if(!confirm(`Delete "${name}"? Cannot be undone.`))return;
+  const r=await fetch('/api/shows/delete/'+id,{method:'DELETE'});
+  const d=await r.json();
+  if(d.ok){allShows=allShows.filter(s=>s.id!==id);renderShows();toast('Deleted','ok');}
+  else toast(d.error,'err');
+}
+
+// ── Fixtures in show ──────────────────────
+function renderFixtures(){
+  const list=document.getElementById('fixtures-list'); list.innerHTML='';
+  fixtures.forEach((fx,i)=>list.appendChild(buildFxCard(fx,i)));
+  checkOverlap();
+}
+
+function buildFxCard(fx,idx){
+  const card=document.createElement('div'); card.className='fixture-card';
+  const endLabel = fmtEndChannel(fx);
+  const singers=fx.singer_pods||[];
+  const isMover      = fx.type === 'mover';
+  const isPixelStrip = fx.type === 'pixel_strip';
+
+  const colorList=Object.entries(fx.pod_color_offsets||{})
+    .sort((a,b)=>a[1]-b[1])
+    .map(([c])=>c.toUpperCase()).join('+') || '?';
+  const podCount = fx.pods || 1;
+
+  const pxColors = Object.entries(fx.pixel_color_offsets||{})
+    .sort((a,b)=>a[1]-b[1])
+    .map(([c])=>c.toUpperCase()).join('+') || '?';
+  const pxCount  = fx.pixel_count || (fx.segments||[]).reduce((s,x)=>s+(x.length||0),0);
+  const segCount = (fx.segments||[]).length;
+
+  const head=document.createElement('div'); head.className='fx-head';
+  head.innerHTML=`<span class="fx-num">#${idx+1}</span>
+    <input class="fx-name-input" value="${fx.name}" oninput="fixtures[${idx}].name=this.value">
+    <button class="fx-del" onclick="removeFx(${idx})">✕</button>`;
+
+  const body=document.createElement('div'); body.className='fx-body';
+
+  let metaHtml;
+  if (isMover) {
+    metaHtml = `<div class="fx-meta"><span class="accent-tag" style="background:#5b2a8a;">🎯 Mover</span> · ${Object.keys(fx.channel_roles||{}).length} roles · ${fx.channels}ch</div>`;
+  } else if (isPixelStrip) {
+    metaHtml = `<div class="fx-meta"><span class="accent-tag" style="background:#3a205a;">✨ ${pxCount}px</span> · ${pxColors}${segCount > 1 ? ' · '+segCount+' seg' : ''} · ${fx.channels}ch</div>`;
+  } else {
+    metaHtml = `<div class="fx-meta"><span class="accent-tag">${podCount} pod${podCount!==1?'s':''}</span> · ${colorList} · ${fx.channels}ch</div>`;
+  }
+
+  body.innerHTML=metaHtml + `
+  <div class="row"><label>Universe</label>
+    <input type="number" min="0" max="32767" value="${fx.universe||0}"
+      oninput="fixtures[${idx}].universe=parseInt(this.value)||0;updateEnd(${idx})"
+      style="width:90px;">
+    <span class="hint">0 = first universe</span>
+  </div>
+  <div class="row"><label>DMX Address</label>
+    <input type="number" min="1" max="512" value="${fx.start_address||1}"
+      oninput="fixtures[${idx}].start_address=parseInt(this.value)||1;updateEnd(${idx})">
+    <span class="hint">→ end:</span>
+    <span class="dmx-end" id="fxend-${idx}">${endLabel}</span>
+  </div>`;
+
+  // Movers and pixel_strips don't have singer pods
+  if (isMover || isPixelStrip) {
+    card.appendChild(head); card.appendChild(body); return card;
+  }
+
+  const ss=document.createElement('div'); ss.className='singer-sect';
+  if(podCount > 1){
+    ss.innerHTML=`<div class="singer-title">🎤 Singer Pods <span style="font-weight:400;color:var(--sub);font-size:.7rem;">(tap to toggle)</span></div>`;
+    const row=document.createElement('div'); row.className='pod-row';
+    for(let p=1;p<=podCount;p++){
+      const btn=document.createElement('button'); btn.className='pod-tog'+(singers.includes(p)?' on':'');
+      btn.textContent=p;
+      btn.onclick=()=>{
+        const arr=fixtures[idx].singer_pods||[];
+        const pos=arr.indexOf(p);
+        if(pos>=0)arr.splice(pos,1);else{arr.push(p);arr.sort((a,b)=>a-b);}
+        fixtures[idx].singer_pods=arr; btn.className='pod-tog'+(arr.includes(p)?' on':'');
+      };
+      row.appendChild(btn);
+    }
+    ss.appendChild(row);
+  } else {
+    const isSinger=singers.length>0;
+    ss.innerHTML=`<div class="singer-title">🎤 Singer Fixture</div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" ${isSinger?'checked':''}
+          onchange="fixtures[${idx}].singer_pods=this.checked?[1]:[];">
+        <span style="font-size:0.82rem;color:var(--sub);">Lock to warm white when Singer Mode is ON</span>
+      </label>`;
+  }
+  body.appendChild(ss); card.appendChild(head); card.appendChild(body); return card;
+}
+
+function fmtEndChannel(fx) {
+  // Show the end channel; if the fixture spans multiple universes,
+  // show "U<n> ch <ch>" with the destination universe.
+  const start = fx.start_address || 1;
+  const len   = fx.channels || 1;
+  const uni   = fx.universe || 0;
+  const absEnd = start + len - 1;
+  if (absEnd <= 512) return String(absEnd);
+  const endUni = uni + Math.floor((absEnd - 1) / 512);
+  const endCh  = ((absEnd - 1) % 512) + 1;
+  return 'U'+endUni+' ch '+endCh;
+}
+
+function updateEnd(idx){
+  const el=document.getElementById('fxend-'+idx);
+  if(el) el.textContent = fmtEndChannel(fixtures[idx]);
+  checkOverlap();
+}
+function checkOverlap(){
+  // Compute the set of (universe, channel) pairs each fixture occupies,
+  // accounting for universe overflow when channels > 512. Then check pairwise
+  // for any overlap of these channel sets across fixtures.
+  function chSet(fx) {
+    const uni   = fx.universe || 0;
+    const start = fx.start_address || 1;
+    const len   = fx.channels || 1;
+    const s = new Set();
+    for (let off = 0; off < len; off++) {
+      const abs = start + off;
+      const u = uni + Math.floor((abs - 1) / 512);
+      const c = ((abs - 1) % 512) + 1;
+      s.add(u + ':' + c);
+    }
+    return s;
+  }
+  let bad = false;
+  const sets = fixtures.map(chSet);
+  outer: for (let i = 0; i < sets.length; i++) {
+    for (let j = i + 1; j < sets.length; j++) {
+      for (const k of sets[i]) {
+        if (sets[j].has(k)) { bad = true; break outer; }
+      }
+    }
+  }
+  document.getElementById('overlap-warn').style.display = bad ? '' : 'none';
+  const btn = document.getElementById('save-btn');
+  btn.textContent  = bad ? '⚠ Overlap!' : 'Save Show';
+  btn.style.background = bad ? '#c0392b' : '';
+}
+function removeFx(idx){if(!confirm('Remove "'+fixtures[idx].name+'"?'))return;fixtures.splice(idx,1);renderFixtures();}
+
+// ── Library picker ──────────────────────
+function openLibraryPicker(){
+  if(!library.length){toast('Library empty — build a fixture first','err');return;}
+  const sel=document.getElementById('lp-fixture');
+  sel.innerHTML=library.map(f=>`<option value="${f.id}" data-ch="${f.channels||1}">${f.name}</option>`).join('');
+  // Default to universe 0 and the next channel after all existing fixtures in that universe
+  const targetUni = 0;
+  document.getElementById('lp-universe').value = targetUni;
+  document.getElementById('lp-quantity').value = 1;
+  let nextAddr = 1;
+  fixtures.forEach(fx => {
+    if ((fx.universe||0) !== targetUni) return;
+    const end = (fx.start_address||1) + (fx.channels||1);
+    if (end > nextAddr) nextAddr = end;
+  });
+  if (nextAddr > 512) nextAddr = 1;
+  document.getElementById('lp-address').value = nextAddr;
+  lpUpdateRange(); openModal('lib-picker-modal');
+}
+function lpUpdateRange(){
+  const sel=document.getElementById('lp-fixture'); const opt=sel.selectedOptions[0];
+  if(!opt)return;
+  const ch=parseInt(opt.dataset.ch)||1;
+  const addr=parseInt(document.getElementById('lp-address').value)||1;
+  const uni=parseInt(document.getElementById('lp-universe').value)||0;
+  const qty=Math.max(1, parseInt(document.getElementById('lp-quantity').value)||1);
+  const el = document.getElementById('lp-range');
+
+  // Compute the span and figure out how many universes it crosses.
+  // A fixture starting at U:addr with C channels ends at absolute channel
+  // (addr + C - 1). If that exceeds 512, it spills into U+1, U+2, etc.
+  function describeSpan(startUni, startAddr, channelCount) {
+    const absEnd = startAddr + channelCount - 1;
+    if (absEnd <= 512) {
+      return 'U'+startUni+' ch '+startAddr+'–'+absEnd;
+    }
+    const endUni = startUni + Math.floor((absEnd - 1) / 512);
+    const endCh  = ((absEnd - 1) % 512) + 1;
+    return 'U'+startUni+' ch '+startAddr+' → U'+endUni+' ch '+endCh+' (spans '+(endUni - startUni + 1)+' universes)';
+  }
+
+  if (qty === 1) {
+    el.textContent = describeSpan(uni, addr, ch);
+    el.style.color = '';
+  } else {
+    // Multi-add: each fixture is placed back-to-back. Show total span.
+    const totalChannels = qty * ch;
+    el.innerHTML = qty+' × '+ch+'ch · '+describeSpan(uni, addr, totalChannels);
+    el.style.color = '';
+  }
+}
+function addFromLibrary(){
+  const id=document.getElementById('lp-fixture').value;
+  const addr=parseInt(document.getElementById('lp-address').value)||1;
+  const uni=parseInt(document.getElementById('lp-universe').value)||0;
+  const qty=Math.max(1, parseInt(document.getElementById('lp-quantity').value)||1);
+  const def=library.find(f=>f.id===id); if(!def)return;
+  const ch = def.channels || 1;
+  // No 512-channel limit anymore — multi-universe fixtures are valid.
+  // Only sanity-check the start address itself.
+  if (addr < 1 || addr > 512) {
+    toast('Start address must be 1–512','err');
+    return;
+  }
+  for (let i = 0; i < qty; i++) {
+    const inst = {
+      id: def.id+'_'+Date.now()+'_'+i,
+      name: qty > 1 ? def.name + ' #' + (i+1) : def.name,
+      universe: uni,
+      start_address: addr + i * ch,
+      channels: ch,
+    };
+    if (def.type === 'mover') {
+      inst.type = 'mover';
+      inst.channel_roles = def.channel_roles || {};
+    } else if (def.type === 'pixel_strip') {
+      inst.type                = 'pixel_strip';
+      inst.pixel_count         = def.pixel_count;
+      inst.dimmer_channel      = def.dimmer_channel ?? 0;
+      inst.first_pixel_channel = def.first_pixel_channel ?? 1;
+      inst.channels_per_pixel  = def.channels_per_pixel;
+      inst.pixel_color_offsets = def.pixel_color_offsets;
+      inst.segments            = JSON.parse(JSON.stringify(def.segments || []));
+    } else {
+      inst.pods = def.pods;
+      inst.dimmer_channel = def.dimmer_channel;
+      inst.first_pod_channel = def.first_pod_channel;
+      inst.channels_per_pod = def.channels_per_pod;
+      inst.pod_color_offsets = def.pod_color_offsets;
+      if (def.pod_pixel_count !== undefined) {
+        inst.pod_pixel_count = def.pod_pixel_count;
+      }
+      inst.singer_pods = [];
+    }
+    fixtures.push(inst);
+  }
+  closeModal('lib-picker-modal'); renderFixtures();
+  toast(qty === 1 ? def.name+' added' : qty+' × '+def.name+' added', 'ok');
+}
+
+// ── Fixture builder ──────────────────────
+function openBuilder(existing){
+  editFxId = existing ? existing.id : null;
+  document.getElementById('builder-title').textContent = existing ? 'Edit Fixture' : 'Build New Fixture';
+  document.getElementById('fb-name').value = existing?.name || '';
+  const type = existing?.type === 'mover'       ? 'mover'
+             : existing?.type === 'pixel_strip' ? 'pixel_strip'
+             : 'pod';
+  document.getElementById('fb-type').value = type;
+  document.getElementById('fb-channels').value = existing?.channels || 7;
+  document.getElementById('fb-pods').value         = existing?.pods               || 1;
+  document.getElementById('fb-dimmer-ch').value    = existing?.dimmer_channel    ?? 1;
+  document.getElementById('fb-first-pod').value    = existing?.first_pod_channel ?? 2;
+  document.getElementById('fb-ch-per-pod').value   = existing?.channels_per_pod   || 6;
+  document.getElementById('fb-pixel-count').value     = existing?.pixel_count         ?? 60;
+  document.getElementById('fb-pixel-dimmer-ch').value = existing?.dimmer_channel      ?? 0;
+  document.getElementById('fb-pixel-first-ch').value  = existing?.first_pixel_channel ?? 1;
+  document.getElementById('fb-pixel-ch-per').value    = existing?.channels_per_pixel  ?? 4;
+  if (type === 'pixel_strip') {
+    window._fbInitialOffsets = existing?.pixel_color_offsets || {r:0,g:1,b:2,w:3};
+  } else if (type === 'mover') {
+    window._fbInitialOffsets = {};
+  } else {
+    window._fbInitialOffsets = existing?.pod_color_offsets || {r:0,g:1,b:2,a:3,w:4,uv:5};
+  }
+  window._fbInitialRoles = existing?.channel_roles || {};
+  rebuildChannelMap();
+  rebuildRoleRows();
+  renderSegments(existing?.segments || []);
+  updateBuilderMode();
+  fbValidate();
+  openModal('builder-modal');
+}
+
+function updateBuilderMode(){
+  const type   = document.getElementById('fb-type').value;
+  const isMover      = type === 'mover';
+  const isPixelStrip = type === 'pixel_strip';
+  const isPod        = type === 'pod';
+  document.getElementById('fb-pod-fields').style.display    = isPod        ? '' : 'none';
+  document.getElementById('fb-pixel-fields').style.display  = isPixelStrip ? '' : 'none';
+  document.getElementById('fb-mover-fields').style.display  = isMover      ? '' : 'none';
+  const fbCh = document.getElementById('fb-channels');
+  fbCh.readOnly = isPixelStrip;
+  fbCh.style.opacity = isPixelStrip ? 0.7 : 1.0;
+  const ch = parseInt(fbCh.value) || 0;
+  if (isMover && ch === 7) fbCh.value = 12;
+  if (isPixelStrip) { recomputePixelTotalChannels(); rebuildChannelMap(); }
+  if (isPod) rebuildChannelMap();
+  fbValidate();
+}
+
+function recomputePixelTotalChannels(){
+  const dim   = parseInt(document.getElementById('fb-pixel-dimmer-ch').value) || 0;
+  const first = parseInt(document.getElementById('fb-pixel-first-ch').value) || 1;
+  const px    = parseInt(document.getElementById('fb-pixel-count').value)    || 0;
+  const cpp   = parseInt(document.getElementById('fb-pixel-ch-per').value)   || 1;
+  const lastPixelCh = first + px * cpp - 1;
+  document.getElementById('fb-channels').value = Math.max(dim, lastPixelCh, 1);
+}
+
+function renderSegments(segs){
+  const container = document.getElementById('fb-segments');
+  container.innerHTML = '';
+  (segs || []).forEach((seg, i) => container.appendChild(buildSegmentRow(seg, i)));
+}
+
+function buildSegmentRow(seg, idx){
+  const row = document.createElement('div');
+  row.className = 'seg-row';
+  const name   = seg?.name   ?? `Segment ${idx + 1}`;
+  const start  = seg?.start  ?? 0;
+  const length = seg?.length ?? 0;
+  const rev    = !!(seg?.reversed);
+  row.innerHTML = `
+    <input type="text" class="seg-name" value="${escapeHtml(name)}" placeholder="Name" oninput="fbValidate()">
+    <span class="seg-num-label">start</span>
+    <input type="number" class="seg-num seg-start" min="0" max="2047" value="${start}" oninput="fbValidate()">
+    <span class="seg-num-label">length</span>
+    <input type="number" class="seg-num seg-length" min="1" max="2048" value="${length}" oninput="fbValidate()">
+    <label class="seg-rev-label">
+      <input type="checkbox" class="seg-rev" ${rev?'checked':''} oninput="fbValidate()">rev
+    </label>
+    <button type="button" class="seg-del" onclick="this.closest('.seg-row').remove();fbValidate();">✕</button>`;
+  return row;
+}
+
+function addSegment(){
+  const container = document.getElementById('fb-segments');
+  const existing = container.querySelectorAll('.seg-row').length;
+  const pixelCount = parseInt(document.getElementById('fb-pixel-count').value) || 0;
+  let start = 0;
+  container.querySelectorAll('.seg-row').forEach(r => {
+    const s = parseInt(r.querySelector('.seg-start').value)  || 0;
+    const l = parseInt(r.querySelector('.seg-length').value) || 0;
+    if (s + l > start) start = s + l;
+  });
+  const remaining = Math.max(1, pixelCount - start);
+  container.appendChild(buildSegmentRow({
+    name: `Segment ${existing + 1}`,
+    start: Math.min(start, Math.max(0, pixelCount - 1)),
+    length: Math.min(remaining, 60), reversed: false,
+  }, existing));
+  fbValidate();
+}
+
+function fbCurrentSegments(){
+  const out = [];
+  document.querySelectorAll('#fb-segments .seg-row').forEach(row => {
+    const name   = row.querySelector('.seg-name').value.trim();
+    const start  = parseInt(row.querySelector('.seg-start').value)  || 0;
+    const length = parseInt(row.querySelector('.seg-length').value) || 0;
+    const rev    = row.querySelector('.seg-rev').checked;
+    if (length > 0) out.push({name: name || `Segment ${out.length+1}`, start, length, reversed: rev});
+  });
+  return out;
+}
+
+function escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g,
+    c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function rebuildRoleRows(){
+  const wrap = document.getElementById('fb-role-rows');
+  if (!wrap) return;
+  const roles = [
+    // Motion (movers)
+    'pan','pan_fine','tilt','tilt_fine',
+    // Master / shutter
+    'dimmer','shutter','strobe',
+    // Primary color
+    'r','g','b','w',
+    // Secondary / tertiary colors (WLED Effect mode uses these)
+    'r2','g2','b2','r3','g3','b3',
+    // Mover wheels
+    'color_wheel','gobo','gobo_rot','prism','prism_rot',
+    // Optics
+    'focus','zoom','iris',
+    // Common parameters
+    'speed',
+    // WLED effect parameters
+    'effect','intensity','palette','effect_option',
+  ];
+  const cur = window._fbInitialRoles || {};
+  wrap.innerHTML = '';
+  roles.forEach(role => {
+    const val = cur[role] !== undefined ? cur[role] : '';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    row.innerHTML = `
+      <label style="flex:1;font-size:0.78rem;color:var(--text);">${role.replace('_',' ')}</label>
+      <input type="number" min="1" max="512" value="${val}" placeholder="—"
+             oninput="fbValidate()" data-role="${role}"
+             style="width:75px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 8px;">`;
+    wrap.appendChild(row);
+  });
+}
+
+function rebuildChannelMap(){
+  // Mode-aware: pod fixtures use #fb-ch-per-pod / #fb-channel-map;
+  // pixel_strip fixtures use #fb-pixel-ch-per / #fb-pixel-channel-map.
+  const type = document.getElementById('fb-type').value;
+  const isPixel = type === 'pixel_strip';
+  const sourceId    = isPixel ? 'fb-pixel-ch-per'      : 'fb-ch-per-pod';
+  const containerId = isPixel ? 'fb-pixel-channel-map' : 'fb-channel-map';
+  const unitLabel   = isPixel ? 'Pixel' : 'Pod';
+  const chPP = parseInt(document.getElementById(sourceId).value) || 1;
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const previous = {};
+  container.querySelectorAll('select').forEach(sel => {
+    previous[sel.dataset.pos] = sel.value;
+  });
+  const initial = window._fbInitialOffsets || {};
+  const initialByPos = {};
+  Object.entries(initial).forEach(([color, off]) => { initialByPos[off] = color; });
+
+  container.innerHTML = '';
+  for (let pos = 0; pos < chPP; pos++) {
+    const prevVal = previous[pos] !== undefined ? previous[pos] : (initialByPos[pos] || '');
+    const row = document.createElement('div');
+    row.className = 'cmap-row' + (prevVal ? ' ' + prevVal : '');
+    row.innerHTML = `
+      <span class="cmap-pos">${unitLabel} ch ${pos + 1}</span>
+      <select data-pos="${pos}" onchange="onChannelMapChange(this)">
+        <option value="">— unused —</option>
+        <option value="r"  ${prevVal==='r'?'selected':''}>Red</option>
+        <option value="g"  ${prevVal==='g'?'selected':''}>Green</option>
+        <option value="b"  ${prevVal==='b'?'selected':''}>Blue</option>
+        <option value="l"  ${prevVal==='l'?'selected':''}>Lime</option>
+        <option value="a"  ${prevVal==='a'?'selected':''}>Amber</option>
+        <option value="w"  ${prevVal==='w'?'selected':''}>White</option>
+        <option value="uv" ${prevVal==='uv'?'selected':''}>UV</option>
+      </select>`;
+    container.appendChild(row);
+  }
+  window._fbInitialOffsets = null;
+}
+
+function onChannelMapChange(sel){
+  // Update the row's color stripe
+  const row = sel.closest('.cmap-row');
+  row.className = 'cmap-row' + (sel.value ? ' ' + sel.value : '');
+  fbValidate();
+}
+
+function fbCurrentOffsets(){
+  const type = document.getElementById('fb-type').value;
+  const containerId = type === 'pixel_strip' ? 'fb-pixel-channel-map' : 'fb-channel-map';
+  const offsets = {};
+  document.querySelectorAll('#' + containerId + ' select').forEach(sel => {
+    if (sel.value) offsets[sel.value] = parseInt(sel.dataset.pos);
+  });
+  return offsets;
+}
+
+function fbValidate(){
+  const v = document.getElementById('fb-validate');
+  const channels = parseInt(document.getElementById('fb-channels').value)||0;
+  const type = document.getElementById('fb-type').value;
+  const issues = [];
+
+  if (type === 'mover') {
+    const roleInputs = document.querySelectorAll('#fb-role-rows input[data-role]');
+    const seen = {};
+    let count = 0;
+    roleInputs.forEach(inp => {
+      const num = parseInt(inp.value);
+      if (!num) return;
+      count++;
+      if (num < 1 || num > channels) issues.push(`⚠ ${inp.dataset.role} channel ${num} out of range (1–${channels})`);
+      if (seen[num]) issues.push(`⚠ Channel ${num} assigned to multiple roles (${seen[num]} and ${inp.dataset.role})`);
+      seen[num] = inp.dataset.role;
+    });
+    if (count === 0) issues.push('⚠ Map at least one role to a channel');
+    v.innerHTML = issues.length
+      ? '<div style="color:var(--danger)">'+issues.join('<br>')+'</div>'
+      : '<div style="color:var(--success)">✓ Valid</div>';
+    return;
+  }
+
+  if (type === 'pixel_strip') {
+    const pxCount = parseInt(document.getElementById('fb-pixel-count').value) || 0;
+    const cpp     = parseInt(document.getElementById('fb-pixel-ch-per').value)   || 1;
+    const offsets = fbCurrentOffsets();
+    if (pxCount < 1) issues.push('⚠ Pixel count must be at least 1');
+    if (cpp < 1)     issues.push('⚠ Channels per pixel must be at least 1');
+    if (Object.keys(offsets).length === 0) issues.push('⚠ Assign at least one color channel');
+    const seenColors = {};
+    document.querySelectorAll('#fb-pixel-channel-map select').forEach(sel => {
+      if (sel.value) {
+        if (seenColors[sel.value]) issues.push(`⚠ ${sel.value.toUpperCase()} assigned to multiple positions`);
+        seenColors[sel.value] = true;
+      }
+    });
+    const segs = fbCurrentSegments();
+    segs.forEach(s => {
+      if (s.start < 0) issues.push(`⚠ Segment "${s.name}": start cannot be negative`);
+      if (s.start + s.length > pxCount) issues.push(`⚠ Segment "${s.name}": runs past pixel count`);
+    });
+    v.innerHTML = issues.length
+      ? '<div style="color:var(--danger)">'+issues.join('<br>')+'</div>'
+      : '<div style="color:var(--success)">✓ Valid' + (segs.length ? ` · ${segs.length} segment${segs.length!==1?'s':''}` : ' · (continuous strip)') + '</div>';
+    return;
+  }
+
+  const pods     = parseInt(document.getElementById('fb-pods').value)||0;
+  const dimCh    = parseInt(document.getElementById('fb-dimmer-ch').value);
+  const firstPC  = parseInt(document.getElementById('fb-first-pod').value)||1;
+  const chPP     = parseInt(document.getElementById('fb-ch-per-pod').value)||1;
+  const offsets  = fbCurrentOffsets();
+  const lastPodEnd = firstPC + pods * chPP - 1;
+  if (lastPodEnd > channels) issues.push(`⚠ Pod channels extend to ${lastPodEnd}, exceeds total of ${channels}`);
+  if (dimCh > 0 && dimCh > channels) issues.push(`⚠ Dimmer channel ${dimCh} exceeds total of ${channels}`);
+  if (firstPC > channels) issues.push(`⚠ First pod channel ${firstPC} exceeds total of ${channels}`);
+  const seen = {};
+  document.querySelectorAll('#fb-channel-map select').forEach(sel => {
+    if (sel.value) {
+      if (seen[sel.value]) issues.push(`⚠ ${sel.value.toUpperCase()} is assigned to multiple positions`);
+      seen[sel.value] = true;
+    }
+  });
+  if (Object.keys(offsets).length === 0) issues.push('⚠ Assign at least one color channel');
+  v.innerHTML = issues.length
+    ? '<div style="color:var(--danger)">'+issues.join('<br>')+'</div>'
+    : '<div style="color:var(--success)">✓ Valid</div>';
+}
+
+async function saveToLibrary(){
+  const name=document.getElementById('fb-name').value.trim();
+  if(!name){toast('Enter a name','err');return;}
+  const type = document.getElementById('fb-type').value;
+  const channels = parseInt(document.getElementById('fb-channels').value)||1;
+  const id = editFxId || name.toLowerCase().replace(/[^a-z0-9]+/g,'_');
+  let def;
+
+  if (type === 'mover') {
+    const roles = {};
+    document.querySelectorAll('#fb-role-rows input[data-role]').forEach(inp => {
+      const v = parseInt(inp.value);
+      if (v >= 1 && v <= channels) roles[inp.dataset.role] = v;
+    });
+    if (Object.keys(roles).length === 0) { toast('Map at least one channel role','err'); return; }
+    def = { id, name, type:'mover', channels, channel_roles: roles };
+  } else if (type === 'pixel_strip') {
+    const pxCount = parseInt(document.getElementById('fb-pixel-count').value)    || 1;
+    const dim     = parseInt(document.getElementById('fb-pixel-dimmer-ch').value) || 0;
+    const first   = parseInt(document.getElementById('fb-pixel-first-ch').value) || 1;
+    const cpp     = parseInt(document.getElementById('fb-pixel-ch-per').value)   || 1;
+    const offsets = fbCurrentOffsets();
+    const segs    = fbCurrentSegments();
+    if (Object.keys(offsets).length === 0) { toast('Assign at least one color','err'); return; }
+    def = { id, name, type:'pixel_strip', channels, pixel_count:pxCount,
+            dimmer_channel:dim, first_pixel_channel:first, channels_per_pixel:cpp,
+            pixel_color_offsets:offsets, segments:segs };
+  } else {
+    const pods    = parseInt(document.getElementById('fb-pods').value)||1;
+    const dimCh   = parseInt(document.getElementById('fb-dimmer-ch').value);
+    const firstPC = parseInt(document.getElementById('fb-first-pod').value)||1;
+    const chPP    = parseInt(document.getElementById('fb-ch-per-pod').value)||1;
+    const offsets = fbCurrentOffsets();
+    if (Object.keys(offsets).length === 0) { toast('Assign at least one color','err'); return; }
+    def = { id, name, channels, pods, dimmer_channel:dimCh,
+            first_pod_channel:firstPC, channels_per_pod:chPP, pod_color_offsets:offsets };
+  }
+
+  const r=await fetch('/api/fixtures',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(def)});
+  const d=await r.json();
+  if(d.ok){
+    const i=library.findIndex(f=>f.id===id);
+    if(i>=0)library[i]=def;else library.push(def);
+    renderLibrary(); closeModal('builder-modal'); toast('Saved to library ✓','ok');
+  }else toast('Error: '+(d.error||'save failed'),'err');
+}
+
+async function delFromLibrary(id){
+  const def=library.find(f=>f.id===id);
+  if(!confirm('Remove "'+def?.name+'" from library?'))return;
+  const r=await fetch('/api/fixtures/'+id,{method:'DELETE'});
+  const d=await r.json();
+  if(d.ok){library=library.filter(f=>f.id!==id);renderLibrary();toast('Removed','ok');}
+  else toast(d.error,'err');
+}
+
+function renderLibrary(){
+  const el=document.getElementById('library-list');
+  if(!library.length){el.innerHTML='<div style="padding:14px;color:var(--sub);font-size:.85rem;">No fixtures yet — tap Build New to add one.</div>';return;}
+  el.innerHTML='';
+  library.forEach(f=>{
+    let tag;
+    if (f.type === 'mover') {
+      const n = Object.keys(f.channel_roles||{}).length;
+      tag = `🎯 mover · ${n} role${n!==1?'s':''}`;
+    } else if (f.type === 'pixel_strip') {
+      const colors = Object.entries(f.pixel_color_offsets||{})
+        .sort((a,b)=>a[1]-b[1])
+        .map(([c])=>c.toUpperCase()).join('') || '?';
+      const segs = (f.segments||[]).length;
+      const px   = f.pixel_count || (f.segments||[]).reduce((s,x)=>s+(x.length||0),0);
+      tag = `✨ ${px}px ${colors}${segs > 1 ? ' · '+segs+' seg' : ''}`;
+    } else {
+      const colors = Object.entries(f.pod_color_offsets||{})
+        .sort((a,b)=>a[1]-b[1])
+        .map(([c])=>c.toUpperCase()).join('') || '?';
+      tag = (f.pods||1) > 1 ? `${f.pods}-pod ${colors}` : colors;
+    }
+    const row=document.createElement('div'); row.className='lib-item';
+    row.innerHTML=`<span class="lib-name">${f.name}</span><span class="lib-tag">${tag}</span>
+      <span class="lib-ch">${f.channels}ch</span>
+      <button class="smbtn" onclick='openBuilder(${JSON.stringify(f).replace(/'/g,"&apos;")})'>Edit</button>
+      <button class="smbtn danger" onclick="delFromLibrary('${f.id}')">✕</button>`;
+    el.appendChild(row);
+  });
+}
+
+function updateDot(){
+  const r=+document.getElementById('sc-r').value,g=+document.getElementById('sc-g').value,
+    b=+document.getElementById('sc-b').value,l=+document.getElementById('sc-l').value,
+    a=+document.getElementById('sc-a').value,w=+document.getElementById('sc-w').value,
+    uv=+document.getElementById('sc-uv').value;
+  // Lime contributes mostly to green channel visually (~520nm)
+  const pr=Math.min(255,r+Math.round(a*.8)+Math.round(w*.6)),
+    pg=Math.min(255,g+Math.round(l*.9)+Math.round(a*.4)+Math.round(w*.6)),
+    pb=Math.min(255,b+Math.round(uv*.3)+Math.round(w*.6));
+  document.getElementById('singer-dot').style.background=(pr||pg||pb)?`rgb(${pr},${pg},${pb})`:'#222';
+}
+
+async function restartLightboard(){
+  if (!confirm('Restart the lightboard service?\n\nLights will go dark for a few seconds while the program reloads. Any playing scene will be stopped.')) return;
+  const btn = event && event.target ? event.target : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  try {
+    await fetch('/api/restart', { method: 'POST' });
+  } catch (e) { /* connection will drop during restart - that's expected */ }
+  toast('Restarting… reconnecting in a few seconds', 'ok');
+  // Poll until the server comes back online, then reload the page
+  let attempts = 0;
+  const pollAlive = setInterval(async () => {
+    attempts++;
+    try {
+      const r = await fetch('/api/state', { cache: 'no-store' });
+      if (r.ok) {
+        clearInterval(pollAlive);
+        location.reload();
+      }
+    } catch { /* still down */ }
+    if (attempts > 30) {  // ~30 sec timeout
+      clearInterval(pollAlive);
+      if (btn) { btn.disabled = false; btn.textContent = '⟲ Restart'; }
+      toast('Service didn\'t come back up — check the Pi','err');
+    }
+  }, 1000);
+}
+
+async function saveShowConfig(){
+  const cfg={name:document.getElementById('show-name').value.trim(),
+    startup_scene:document.getElementById('startup-scene').value,
+    singer_fade_ms:parseInt(document.getElementById('singer-fade').value)||1500,
+    blackout_fade_ms:parseInt(document.getElementById('blackout-fade').value)||600,
+    overlay_scene:document.getElementById('overlay-scene').value,
+    overlay_label:document.getElementById('overlay-label').value.trim()||'STROBE',
+    overlay_fade_ms:parseInt(document.getElementById('overlay-fade').value)||200,
+    overlay_keep_singer:document.getElementById('overlay-keep-singer').checked,
+    singer_color:{r:+document.getElementById('sc-r').value,g:+document.getElementById('sc-g').value,
+      b:+document.getElementById('sc-b').value,l:+document.getElementById('sc-l').value,
+      a:+document.getElementById('sc-a').value,
+      w:+document.getElementById('sc-w').value,uv:+document.getElementById('sc-uv').value},
+    freeze_includes: Object.assign({}, freezeIncludes),
+    fixtures};
+  const r=await fetch('/api/show/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+  const d=await r.json();
+  if(d.ok){document.getElementById('show-name-label').textContent=cfg.name;toast('Saved ✓','ok');}
+  else toast('Error: '+d.error,'err');
+}
+
+// ── Import / Export (scene/show files) ──
+let pendingCollisions = [];
+let pendingCollisionFiles = {};
+function importFiles(files){
+  if(!files.length) return;
+  const fd=new FormData();
+  for(const f of files) fd.append('files',f);
+  fd.append('overwrite','ask');
+  fetch('/api/library/import',{method:'POST',body:fd})
+    .then(r=>r.json()).then(d=>{
+      if(d.collisions && d.collisions.length) showCollisionModal(d.collisions,files);
+      if(d.imported && d.imported.length)
+        toast('Imported '+d.imported.length+' scene'+(d.imported.length>1?'s':''));
+    }).catch(e=>toast('Import failed: '+e,'err'));
+  document.getElementById('import-file').value='';
+}
+function showCollisionModal(collisions,files){
+  pendingCollisions=collisions;
+  pendingCollisionFiles={};
+  for(const f of files) pendingCollisionFiles[f.name]=f;
+  const list=document.getElementById('collision-list');
+  list.innerHTML='';
+  for(const id of collisions){
+    const div=document.createElement('div');
+    div.className='collision-item';
+    div.innerHTML=`<span>${id}</span><div style="display:flex;gap:6px;"><button class="btn-over" onclick="resolveCollision('${id}','overwrite')">Replace</button><button class="btn-skip" onclick="resolveCollision('${id}','skip')">Skip</button></div>`;
+    list.appendChild(div);
+  }
+  openModal('collision-modal');
+}
+function resolveCollision(id,action){
+  const fd=new FormData();
+  for(const [name,file] of Object.entries(pendingCollisionFiles)){ if(name.includes(id)) fd.append('files',file); }
+  fd.append('overwrite',action);
+  fetch('/api/library/import',{method:'POST',body:fd})
+    .then(r=>r.json()).then(d=>{
+      if(d.imported && d.imported.length) toast('Scene '+id+' '+(action==='overwrite'?'replaced':'skipped'));
+      document.querySelectorAll('#collision-list .collision-item').forEach(e=>{ if(e.textContent.includes(id)) e.remove(); });
+      if(!document.getElementById('collision-list').children.length) closeCollision();
+    });
+}
+function closeCollision(){ closeModal('collision-modal'); }
+function exportAll(){ window.location='/api/library/export_all'; }
+
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.modal-bg').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
+
+let toastT;
+function toast(msg,type=''){const el=document.getElementById('toast');el.textContent=msg;el.className='show'+(type?' '+type:'');clearTimeout(toastT);toastT=setTimeout(()=>el.className='',2500);}
+</script>
+</body>
+</html>

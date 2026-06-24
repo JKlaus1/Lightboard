@@ -1,0 +1,10 @@
+{
+  "id": "chauvet_h18x_13ch",
+  "name": "Chauvet COLORdash Par H18X (13ch)",
+  "channels": 13,
+  "pods": 1,
+  "dimmer_channel": 1,
+  "first_pod_channel": 2,
+  "channels_per_pod": 6,
+  "pod_color_offsets": {"r": 0, "g": 1, "b": 2, "a": 3, "w": 4, "uv": 5}
+}

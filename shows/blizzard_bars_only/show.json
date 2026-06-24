@@ -1,0 +1,309 @@
+{
+  "name": "Blizzard bars only",
+  "startup_scene": "",
+  "singer_fade_ms": 1500,
+  "singer_color": {
+    "r": 20,
+    "g": 0,
+    "b": 0,
+    "l": 0,
+    "a": 255,
+    "w": 200,
+    "uv": 0
+  },
+  "fixtures": [
+    {
+      "channels": 7,
+      "channels_per_pod": 7,
+      "dimmer_channel": 0,
+      "first_pod_channel": 1,
+      "id": "betopper_lpc1818_rgblauv_1781382204782_0",
+      "name": "Betopper LPC1818 RGBLAUV #1",
+      "pod_color_offsets": {
+        "a": 4,
+        "b": 2,
+        "g": 1,
+        "l": 3,
+        "r": 0,
+        "uv": 5
+      },
+      "pods": 1,
+      "singer_pods": [],
+      "start_address": 150,
+      "universe": 0
+    },
+    {
+      "channels": 54,
+      "channels_per_pod": 6,
+      "dimmer_channel": 1,
+      "first_pod_channel": 2,
+      "id": "blizzard_exa_54ch_1779867499106_0",
+      "name": "Blizzard Weather System EXA (54ch) #1",
+      "pod_color_offsets": {
+        "a": 3,
+        "b": 2,
+        "g": 1,
+        "r": 0,
+        "uv": 5,
+        "w": 4
+      },
+      "pods": 8,
+      "reverse": false,
+      "singer_pods": [
+        1,
+        2
+      ],
+      "start_address": 1,
+      "universe": 0
+    },
+    {
+      "channels": 7,
+      "channels_per_pod": 7,
+      "dimmer_channel": 0,
+      "first_pod_channel": 1,
+      "id": "betopper_lpc1818_rgblauv_1781382204782_1",
+      "name": "Betopper LPC1818 RGBLAUV #2",
+      "pod_color_offsets": {
+        "a": 4,
+        "b": 2,
+        "g": 1,
+        "l": 3,
+        "r": 0,
+        "uv": 5
+      },
+      "pods": 1,
+      "singer_pods": [],
+      "start_address": 157,
+      "universe": 0
+    },
+    {
+      "channels": 7,
+      "channels_per_pod": 7,
+      "dimmer_channel": 0,
+      "first_pod_channel": 1,
+      "id": "betopper_lpc1818_rgblauv_1781382204782_3",
+      "name": "Betopper LPC1818 RGBLAUV #4",
+      "pod_color_offsets": {
+        "a": 4,
+        "b": 2,
+        "g": 1,
+        "l": 3,
+        "r": 0,
+        "uv": 5
+      },
+      "pods": 1,
+      "singer_pods": [],
+      "start_address": 171,
+      "universe": 0
+    },
+    {
+      "channels": 54,
+      "channels_per_pod": 6,
+      "dimmer_channel": 1,
+      "first_pod_channel": 2,
+      "id": "blizzard_exa_54ch_1779867499106_1",
+      "name": "Blizzard Weather System EXA (54ch) #2",
+      "pod_color_offsets": {
+        "a": 3,
+        "b": 2,
+        "g": 1,
+        "r": 0,
+        "uv": 5,
+        "w": 4
+      },
+      "pods": 8,
+      "reverse": true,
+      "singer_pods": [
+        1,
+        2
+      ],
+      "start_address": 55,
+      "universe": 0
+    },
+    {
+      "channels": 7,
+      "channels_per_pod": 7,
+      "dimmer_channel": 0,
+      "first_pod_channel": 1,
+      "id": "betopper_lpc1818_rgblauv_1781382204782_2",
+      "name": "Betopper LPC1818 RGBLAUV #3",
+      "pod_color_offsets": {
+        "a": 4,
+        "b": 2,
+        "g": 1,
+        "l": 3,
+        "r": 0,
+        "uv": 5
+      },
+      "pods": 1,
+      "singer_pods": [],
+      "start_address": 164,
+      "universe": 0
+    },
+    {
+      "id": "120w_led_spot_1782311993415_0",
+      "name": "120w led spot",
+      "universe": 0,
+      "start_address": 300,
+      "channels": 16,
+      "type": "mover",
+      "channel_roles": {
+        "color_wheel": 8,
+        "dimmer": 6,
+        "focus": 12,
+        "gobo": 9,
+        "gobo2": 10,
+        "gobo2_rot": 11,
+        "pan": 1,
+        "pan_fine": 2,
+        "prism": 13,
+        "speed": 5,
+        "strobe": 7,
+        "tilt": 3,
+        "tilt_fine": 4
+      },
+      "channel_slots": {
+        "color_wheel": [
+          {
+            "_v": 1782292781976,
+            "hi": 9,
+            "img": null,
+            "label": "White",
+            "lo": 0,
+            "uid": "smqrv3s0mj1"
+          },
+          {
+            "_v": 1782311893992,
+            "hi": 20,
+            "img": null,
+            "label": "Red/White ",
+            "lo": 10,
+            "uid": "smqs6hey0hv"
+          }
+        ]
+      },
+      "def_id": "120w_led_spot"
+    }
+  ],
+  "blackout_fade_ms": 600,
+  "overlay_scene": "6o2252li",
+  "overlay_label": "STROBE",
+  "overlay_fade_ms": 200,
+  "overlay_keep_singer": true,
+  "freeze_includes": {
+    "main_scenes": true,
+    "motion": true,
+    "look": true,
+    "effects": true,
+    "overlay": true,
+    "blackout": true,
+    "color_dimmer": true,
+    "singer_mode": true,
+    "singer_dimmer": true
+  },
+  "enabled_scenes": [
+    "eef9r0Dg",
+    "6XQehmr1",
+    "bomN3v3k",
+    "unEv14T",
+    "rsSiZwC7",
+    "J2MAFJ8h",
+    "6ldWZMad",
+    "oCemq26",
+    "n4p4qYwZ",
+    "qcBXZys4",
+    "6o2252li",
+    "dzx0x5rn",
+    "78z5g4Nj",
+    "Mxn7eTqz",
+    "s4wLAonk",
+    "yOXRbnQl",
+    "w5Dkh9Te",
+    "ARDhyq36",
+    "6o1HcWu",
+    "ALEDDqJR",
+    "VQ8FDtj",
+    "ah7XwAl2",
+    "UjUIi61S"
+  ],
+  "groups": [
+    {
+      "id": "ge1jy1p",
+      "members": [
+        "blizzard_exa_54ch_1779867499106_0",
+        "betopper_lpc1818_rgblauv_1781382204782_1",
+        "betopper_lpc1818_rgblauv_1781382204782_0"
+      ],
+      "name": "Tower SL"
+    },
+    {
+      "id": "gr61bi2",
+      "members": [
+        "betopper_lpc1818_rgblauv_1781382204782_3",
+        "betopper_lpc1818_rgblauv_1781382204782_2",
+        "blizzard_exa_54ch_1779867499106_1"
+      ],
+      "name": "Tower SR"
+    }
+  ],
+  "stage": {
+    "fixtures": {
+      "betopper_lpc1818_rgblauv_1781382204782_0": {
+        "flipH": false,
+        "flipV": false,
+        "placed": true,
+        "rot": 0,
+        "scale": 4,
+        "x": 0.1323529411764706,
+        "y": 0.17164887307236068
+      },
+      "betopper_lpc1818_rgblauv_1781382204782_1": {
+        "flipH": false,
+        "flipV": false,
+        "placed": false,
+        "rot": 0,
+        "scale": 4,
+        "x": 0.1936185366311375,
+        "y": 0.13670313418119748
+      },
+      "betopper_lpc1818_rgblauv_1781382204782_2": {
+        "flipH": false,
+        "flipV": false,
+        "placed": true,
+        "rot": 0,
+        "scale": 4,
+        "x": 0.33123249299719887,
+        "y": 0.6674970344009491
+      },
+      "betopper_lpc1818_rgblauv_1781382204782_3": {
+        "flipH": false,
+        "flipV": false,
+        "placed": false,
+        "rot": 0,
+        "scale": 4,
+        "x": 0.8430464169325014,
+        "y": 0.590102215021102
+      },
+      "blizzard_exa_54ch_1779867499106_0": {
+        "flipH": false,
+        "flipV": false,
+        "placed": true,
+        "rot": 0,
+        "scale": 3.06,
+        "x": 0.4251749993239601,
+        "y": 0.2926353999529064
+      },
+      "blizzard_exa_54ch_1779867499106_1": {
+        "flipH": false,
+        "flipV": false,
+        "placed": true,
+        "rot": 0,
+        "scale": 2.86,
+        "x": 0.6187861912048799,
+        "y": 0.7740846722020737
+      }
+    },
+    "showIds": true,
+    "grid": false
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "Sample \u00b7 Breathe Warm",
+  "scene_type": "effect",
+  "effect": "breathe",
+  "primary": {
+    "r": 255,
+    "g": 0,
+    "b": 0,
+    "a": 220,
+    "w": 0,
+    "uv": 0
+  },
+  "secondary": {
+    "b": 0,
+    "g": 0,
+    "r": 0,
+    "w": 0
+  },
+  "accent": null,
+  "params": {
+    "floor": 0.35,
+    "speed": 0.4
+  },
+  "fixtures_enabled": [
+    "wled_tube_3side_rgbw_1779061039240_0",
+    "blizzard_exa_54ch_1779067549923_0",
+    "blizzard_exa_54ch_1779067549923_1"
+  ],
+  "rendering_mode": "continuous_strip",
+  "launch_fade": 500,
+  "folder": "Sample Effects"
+}

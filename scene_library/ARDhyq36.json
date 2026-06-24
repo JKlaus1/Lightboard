@@ -1,0 +1,50 @@
+{
+  "name": "Purple green gradient",
+  "scene_type": "effect",
+  "effect": "gradient",
+  "primary": {
+    "r": 60,
+    "g": 200,
+    "b": 0,
+    "l": 255,
+    "a": 20,
+    "uv": 0
+  },
+  "secondary": {
+    "r": 0,
+    "g": 255,
+    "b": 255,
+    "l": 0,
+    "a": 0,
+    "uv": 0
+  },
+  "accent": {
+    "r": 255,
+    "g": 0,
+    "b": 0,
+    "l": 0,
+    "a": 0,
+    "uv": 0
+  },
+  "primary_sample": false,
+  "secondary_sample": false,
+  "accent_sample": false,
+  "params": {
+    "speed": 0.5
+  },
+  "fixtures_enabled": [
+    "blizzard_exa_54ch_1779867499106_0",
+    "blizzard_exa_54ch_1779867499106_1",
+    "betopper_lpc1818_rgblauv_1781382204782_0",
+    "betopper_lpc1818_rgblauv_1781382204782_1",
+    "betopper_lpc1818_rgblauv_1781382204782_2",
+    "betopper_lpc1818_rgblauv_1781382204782_3"
+  ],
+  "rendering_mode": "continuous_strip",
+  "target_groups": [],
+  "target_group": null,
+  "launch_fade": 500,
+  "folder": "Bars",
+  "tempo_sync": true,
+  "beat_division": 4
+}

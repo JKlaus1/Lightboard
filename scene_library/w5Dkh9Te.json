@@ -1,0 +1,47 @@
+{
+  "name": "Green on blue chase",
+  "scene_type": "effect",
+  "effect": "chase",
+  "primary": {
+    "a": 0,
+    "b": 180,
+    "g": 0,
+    "l": 0,
+    "r": 0,
+    "uv": 255
+  },
+  "secondary": {
+    "a": 0,
+    "b": 160,
+    "g": 200,
+    "l": 30,
+    "r": 0,
+    "uv": 0
+  },
+  "accent": null,
+  "primary_sample": false,
+  "secondary_sample": false,
+  "accent_sample": false,
+  "params": {
+    "size": 2,
+    "speed": 0.2
+  },
+  "fixtures_enabled": [
+    "blizzard_exa_54ch_1779867499106_0",
+    "blizzard_exa_54ch_1779867499106_1",
+    "betopper_lpc1818_rgblauv_1781382204782_0",
+    "betopper_lpc1818_rgblauv_1781382204782_1",
+    "betopper_lpc1818_rgblauv_1781382204782_2",
+    "betopper_lpc1818_rgblauv_1781382204782_3"
+  ],
+  "rendering_mode": "continuous_strip",
+  "target_groups": [
+    "gr61bi2",
+    "ge1jy1p"
+  ],
+  "target_group": null,
+  "launch_fade": 500,
+  "folder": "Bars",
+  "tempo_sync": true,
+  "beat_division": 2
+}

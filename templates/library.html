@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Scene Library — LightBoard</title>
+<style>
+:root{--bg:#0d0d0d;--surface:#1a1a1a;--surface2:#242424;--border:#333;--accent:#00b4d8;--accent2:#0077b6;--singer:#ffb347;--danger:#e63946;--success:#4caf50;--text:#e0e0e0;--sub:#888;--radius:10px;}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
+header{display:flex;align-items:center;gap:8px;padding:0 12px;height:52px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20;}
+header h1{font-size:1rem;font-weight:700;color:var(--accent);flex:1;}
+.hbtn{background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:7px 12px;font-size:0.8rem;cursor:pointer;white-space:nowrap;}
+.hbtn.primary{background:var(--accent2);border-color:var(--accent2);font-weight:700;}
+main{padding:12px;display:flex;flex-direction:column;gap:10px;padding-bottom:50px;}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.search-box{flex:1;min-width:160px;background:var(--surface);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:8px 12px;font-size:0.85rem;outline:none;}
+.show-info{font-size:0.78rem;color:var(--sub);padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:7px;line-height:1.4;}
+.show-info b{color:var(--accent);}
+.folder-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:8px;}
+.folder-head{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--surface2);cursor:pointer;user-select:none;}
+.folder-head:hover{background:#2a2a2a;}
+.folder-icon{font-size:0.9rem;color:var(--accent);}
+.folder-name{flex:1;font-size:0.85rem;font-weight:600;color:var(--text);}
+.folder-name.untagged{color:var(--sub);font-style:italic;}
+.folder-count{font-size:0.7rem;color:var(--sub);background:var(--border);padding:2px 7px;border-radius:10px;}
+.folder-toggle{font-size:0.8rem;color:var(--sub);transition:transform 0.15s;}
+.folder-section.collapsed .folder-toggle{transform:rotate(-90deg);}
+.folder-section.collapsed .scene-list{display:none;}
+.scene-list{display:flex;flex-direction:column;}
+.scene-row{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--border);}
+.scene-toggle{position:relative;width:38px;height:22px;cursor:pointer;flex-shrink:0;}
+.scene-toggle input{opacity:0;width:0;height:0;}
+.scene-toggle-track{position:absolute;inset:0;background:var(--border);border-radius:11px;transition:background .15s;}
+.scene-toggle input:checked+.scene-toggle-track{background:var(--success);}
+.scene-toggle-thumb{position:absolute;top:2px;left:2px;width:18px;height:18px;background:#fff;border-radius:50%;transition:transform .15s;}
+.scene-toggle input:checked+.scene-toggle-track+.scene-toggle-thumb{transform:translateX(16px);}
+.scene-info{flex:1;min-width:0;}
+.scene-name{font-size:0.88rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.scene-meta{font-size:0.7rem;color:var(--sub);}
+.scene-actions{display:flex;gap:5px;flex-shrink:0;}
+.smbtn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 9px;font-size:0.72rem;cursor:pointer;white-space:nowrap;}
+.smbtn.danger{border-color:var(--danger);color:var(--danger);}
+.smbtn.accent{border-color:var(--accent);color:var(--accent);}
+.empty{padding:30px 14px;text-align:center;color:var(--sub);font-size:0.85rem;}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:7px 16px;font-size:0.8rem;pointer-events:none;opacity:0;transition:opacity .2s,transform .2s;z-index:300;}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+#toast.ok{border-color:var(--success);color:var(--success);}
+#toast.err{border-color:var(--danger);color:var(--danger);}
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 Scenes</h1>
+  <button class="hbtn" onclick="location.href='/'">← Back</button>
+  <button class="hbtn" onclick="location.href='/editor?type=effect'" style="background:#3a205a;border-color:#5a3380;color:#d4b6ff;">+ Effect</button>
+  <button class="hbtn primary" onclick="location.href='/editor'">+ New</button>
+</header>
+
+<main>
+  <div class="show-info">
+    Showing for: <b>{{ show.name }}</b><br>
+    <span>Toggle scenes on/off to control which ones appear on the main screen for this show. All scenes remain in the library and stay available for other shows.</span>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" class="search-box" id="search" placeholder="Search scenes…" oninput="render()">
+    <button class="smbtn" onclick="setAll(true)">Enable all</button>
+    <button class="smbtn" onclick="setAll(false)">Disable all</button>
+  </div>
+
+  <div id="folders-container"></div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+let library = [];
+let enabled = new Set();
+
+async function load() {
+  try {
+    const [lib, state] = await Promise.all([
+      fetch('/api/library/scenes').then(r => r.json()),
+      fetch('/api/state').then(r => r.json()),
+    ]);
+    library = lib;
+    enabled = new Set((state.enabled_scenes || state.scenes || []).map(s => s.id));
+    render();
+  } catch (e) {
+    toast('Failed to load library', 'err');
+  }
+}
+
+function render() {
+  const q = document.getElementById('search').value.toLowerCase().trim();
+  const container = document.getElementById('folders-container');
+  const byFolder = {};
+  library.forEach(s => {
+    if (q && !s.name.toLowerCase().includes(q) && !(s.folder||'').toLowerCase().includes(q)) return;
+    const f = s.folder || '';
+    if (!byFolder[f]) byFolder[f] = [];
+    byFolder[f].push(s);
+  });
+  const folders = Object.keys(byFolder).sort((a, b) => {
+    if (a === '' && b !== '') return 1;
+    if (b === '' && a !== '') return -1;
+    return a.localeCompare(b);
+  });
+  if (folders.length === 0) {
+    container.innerHTML = `<div class="empty">${library.length === 0 ? 'No scenes yet. Tap + New to create your first one.' : 'No scenes match that search.'}</div>`;
+    return;
+  }
+  container.innerHTML = '';
+  folders.forEach(folder => {
+    const scenes = byFolder[folder].sort((a, b) => a.name.localeCompare(b.name));
+    const section = document.createElement('div');
+    section.className = 'folder-section';
+    const onCount = scenes.filter(s => enabled.has(s.id)).length;
+    section.innerHTML = `<div class="folder-head" onclick="this.parentElement.classList.toggle('collapsed')">
+      <span class="folder-icon">📁</span>
+      <span class="folder-name ${folder ? '' : 'untagged'}">${folder || 'Uncategorized'}</span>
+      <span class="folder-count">${onCount} / ${scenes.length}</span>
+      <span class="folder-toggle">▾</span>
+    </div><div class="scene-list"></div>`;
+    const list = section.querySelector('.scene-list');
+    scenes.forEach(s => list.appendChild(buildRow(s)));
+    container.appendChild(section);
+  });
+}
+
+function buildRow(s) {
+  const row = document.createElement('div');
+  row.className = 'scene-row';
+  const isOn = enabled.has(s.id);
+  const metaText = s.scene_type === 'effect'
+    ? `🌀 ${(s.effect || 'effect').replace(/^./, c => c.toUpperCase())}`
+    : (s.scene_type === 'mover_motion' ? '🎯 Motion · ' : s.scene_type === 'mover_look' ? '💡 Look · ' : '') +
+      `${s.steps} step${s.steps !== 1 ? 's' : ''}`;
+  row.innerHTML = `<label class="scene-toggle">
+      <input type="checkbox" ${isOn ? 'checked' : ''} onchange="toggleScene('${s.id}', this.checked)">
+      <div class="scene-toggle-track"></div>
+      <div class="scene-toggle-thumb"></div>
+    </label>
+    <div class="scene-info">
+      <div class="scene-name">${s.name}</div>
+      <div class="scene-meta">${metaText}</div>
+    </div>
+    <div class="scene-actions">
+      <button class="smbtn accent" onclick="location.href='/editor/${s.id}'">Edit</button>
+      <button class="smbtn" onclick="duplicate('${s.id}')" title="Duplicate">⎘</button>
+      <button class="smbtn danger" onclick="del('${s.id}','${s.name.replace(/'/g,"\\'")}')">✕</button>
+    </div>`;
+  return row;
+}
+
+async function toggleScene(id, on) {
+  if (on) enabled.add(id); else enabled.delete(id);
+  await save();
+}
+
+async function setAll(on) {
+  const q = document.getElementById('search').value.toLowerCase().trim();
+  // Only affect scenes matching current search filter
+  const targets = library.filter(s => !q || s.name.toLowerCase().includes(q) || (s.folder||'').toLowerCase().includes(q));
+  if (on) targets.forEach(s => enabled.add(s.id));
+  else targets.forEach(s => enabled.delete(s.id));
+  await save();
+  render();
+}
+
+async function save() {
+  const r = await fetch('/api/show/enabled-scenes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scenes: Array.from(enabled) }),
+  });
+  const d = await r.json();
+  if (!d.ok) toast('Error: ' + (d.error || 'save failed'), 'err');
+  else { toast('Updated', 'ok'); render(); }
+}
+
+async function duplicate(id) {
+  const r = await fetch(`/api/library/scene/${id}/duplicate`, { method: 'POST' });
+  const d = await r.json();
+  if (d.ok) { toast('Duplicated', 'ok'); load(); }
+  else toast('Error: ' + d.error, 'err');
+}
+
+async function del(id, name) {
+  if (!confirm(`Delete "${name}" from the library? This cannot be undone.`)) return;
+  const r = await fetch(`/api/library/scene/${id}`, { method: 'DELETE' });
+  const d = await r.json();
+  if (d.ok) {
+    enabled.delete(id);
+    library = library.filter(s => s.id !== id);
+    render(); toast('Deleted', 'ok');
+  } else toast('Error: ' + d.error, 'err');
+}
+
+let toastT;
+function toast(msg,type=''){const el=document.getElementById('toast');el.textContent=msg;el.className='show'+(type?' '+type:'');clearTimeout(toastT);toastT=setTimeout(()=>el.className='',2200);}
+
+load();
+</script>
+</body>
+</html>

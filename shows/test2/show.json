@@ -1,0 +1,92 @@
+{
+  "name": "Test2",
+  "startup_scene": "",
+  "singer_fade_ms": 1500,
+  "singer_color": {
+    "r": 20,
+    "g": 0,
+    "b": 0,
+    "a": 200,
+    "w": 220,
+    "uv": 0
+  },
+  "fixtures": [
+    {
+      "channels": 756,
+      "channels_per_pixel": 4,
+      "dimmer_channel": 0,
+      "first_pixel_channel": 1,
+      "id": "wled_tube_3side_rgbw_pixels_1779081571609_0",
+      "name": "WLED Tube 3-Sided Pixels (189 RGBW)",
+      "pixel_color_offsets": {
+        "b": 2,
+        "g": 1,
+        "r": 0,
+        "w": 3
+      },
+      "pixel_count": 189,
+      "segments": [
+        {
+          "length": 63,
+          "name": "Side 1",
+          "reversed": false,
+          "start": 0
+        },
+        {
+          "length": 63,
+          "name": "Side 2",
+          "reversed": false,
+          "start": 63
+        },
+        {
+          "length": 63,
+          "name": "Side 3",
+          "reversed": false,
+          "start": 126
+        }
+      ],
+      "start_address": 1,
+      "type": "pixel_strip",
+      "universe": 2
+    },
+    {
+      "channels": 54,
+      "channels_per_pod": 6,
+      "dimmer_channel": 1,
+      "first_pod_channel": 2,
+      "id": "blizzard_exa_54ch_1779083754942_0",
+      "name": "Blizzard Weather System EXA (54ch)",
+      "pod_color_offsets": {
+        "a": 3,
+        "b": 2,
+        "g": 1,
+        "r": 0,
+        "uv": 5,
+        "w": 4
+      },
+      "pods": 8,
+      "singer_pods": [
+        3,
+        4
+      ],
+      "start_address": 1,
+      "universe": 0
+    }
+  ],
+  "blackout_fade_ms": 600,
+  "overlay_scene": "",
+  "overlay_label": "STROBE",
+  "overlay_fade_ms": 200,
+  "overlay_keep_singer": true,
+  "freeze_includes": {
+    "main_scenes": true,
+    "motion": true,
+    "look": true,
+    "effects": true,
+    "overlay": false,
+    "blackout": false,
+    "color_dimmer": false,
+    "singer_mode": false
+  },
+  "enabled_scenes": []
+}

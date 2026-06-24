@@ -1,0 +1,47 @@
+{
+  "name": "Pink on Cyan chase",
+  "scene_type": "effect",
+  "effect": "comet",
+  "primary": {
+    "a": 0,
+    "b": 255,
+    "g": 0,
+    "r": 255,
+    "uv": 255,
+    "w": 0
+  },
+  "secondary": {
+    "a": 0,
+    "b": 255,
+    "g": 180,
+    "l": 100,
+    "r": 0,
+    "uv": 0
+  },
+  "accent": null,
+  "primary_sample": false,
+  "secondary_sample": false,
+  "accent_sample": false,
+  "params": {
+    "speed": 1,
+    "tail": 5
+  },
+  "fixtures_enabled": [
+    "blizzard_exa_54ch_1779867499106_0",
+    "blizzard_exa_54ch_1779867499106_1",
+    "betopper_lpc1818_rgblauv_1781382204782_0",
+    "betopper_lpc1818_rgblauv_1781382204782_1",
+    "betopper_lpc1818_rgblauv_1781382204782_2",
+    "betopper_lpc1818_rgblauv_1781382204782_3"
+  ],
+  "rendering_mode": "continuous_strip",
+  "target_groups": [
+    "gr61bi2",
+    "ge1jy1p"
+  ],
+  "target_group": null,
+  "launch_fade": 500,
+  "folder": "Bars",
+  "tempo_sync": true,
+  "beat_division": 4
+}

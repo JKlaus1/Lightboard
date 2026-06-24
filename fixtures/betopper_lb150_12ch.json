@@ -1,0 +1,19 @@
+{
+  "id": "betopper_lb150_12ch",
+  "name": "Betopper LB150 (12ch)",
+  "type": "mover",
+  "channels": 12,
+  "channel_roles": {
+    "pan":         1,
+    "pan_fine":    2,
+    "tilt":        3,
+    "tilt_fine":   4,
+    "speed":       5,
+    "dimmer":      6,
+    "strobe":      7,
+    "color_wheel": 8,
+    "gobo":        9,
+    "prism":       10,
+    "reset":       12
+  }
+}

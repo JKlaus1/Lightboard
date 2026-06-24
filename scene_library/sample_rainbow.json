@@ -1,0 +1,31 @@
+{
+  "name": "Sample \u00b7 Rainbow",
+  "scene_type": "effect",
+  "effect": "rainbow",
+  "primary": {
+    "r": 255,
+    "g": 0,
+    "b": 0,
+    "w": 0
+  },
+  "secondary": {
+    "r": 0,
+    "g": 0,
+    "b": 0,
+    "w": 0
+  },
+  "params": {
+    "speed": 0.25,
+    "density": 1.0,
+    "saturation": 1.0,
+    "value": 1.0
+  },
+  "fixtures_enabled": [
+    "wled_tube_3side_rgbw_1779061039240_0",
+    "blizzard_exa_54ch_1779067549923_0",
+    "blizzard_exa_54ch_1779067549923_1"
+  ],
+  "rendering_mode": "continuous_strip",
+  "launch_fade": 500,
+  "folder": "Sample Effects"
+}

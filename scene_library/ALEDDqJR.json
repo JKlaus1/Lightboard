@@ -1,0 +1,48 @@
+{
+  "name": "marquee test",
+  "scene_type": "effect",
+  "effect": "marquee",
+  "primary": {
+    "a": 0,
+    "b": 0,
+    "g": 255,
+    "l": 0,
+    "r": 0,
+    "uv": 0
+  },
+  "secondary": {
+    "a": 0,
+    "b": 255,
+    "g": 0,
+    "l": 0,
+    "r": 130,
+    "uv": 150
+  },
+  "accent": null,
+  "primary_sample": false,
+  "secondary_sample": false,
+  "accent_sample": false,
+  "params": {
+    "spacing": 4,
+    "speed": 4,
+    "width": 2
+  },
+  "fixtures_enabled": [
+    "blizzard_exa_54ch_1779867499106_0",
+    "betopper_lpc1818_rgblauv_1781382204782_1",
+    "betopper_lpc1818_rgblauv_1781382204782_0",
+    "betopper_lpc1818_rgblauv_1781382204782_3",
+    "blizzard_exa_54ch_1779867499106_1",
+    "betopper_lpc1818_rgblauv_1781382204782_2"
+  ],
+  "rendering_mode": "continuous_strip",
+  "target_groups": [
+    "ge1jy1p",
+    "gr61bi2"
+  ],
+  "target_group": null,
+  "launch_fade": 500,
+  "folder": "Bars",
+  "tempo_sync": true,
+  "beat_division": 1
+}

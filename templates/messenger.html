@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Lightboard — Stage Messenger</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --green:  #00ff88;
+      --amber:  #ffaa00;
+      --red:    #ff4444;
+      --bg:     #0a0a14;
+      --panel:  #10101e;
+      --card:   #14142a;
+      --border: #2a2a4a;
+      --text:   #e0e0f0;
+      --muted:  #55557a;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    /* ── Top nav ── */
+    #topnav {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 0 0.5rem;
+      height: 46px;
+      flex-shrink: 0;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    #topnav::-webkit-scrollbar { display: none; }
+
+    .nav-link {
+      display: inline-flex;
+      align-items: center;
+      padding: 0 1rem;
+      height: 46px;
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-decoration: none;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .nav-link:hover        { color: var(--text); }
+    .nav-link.active       { color: var(--green); border-bottom-color: var(--green); }
+    .nav-link .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--red);
+      color: #fff;
+      font-size: 0.55rem;
+      font-weight: 900;
+      margin-left: 0.35rem;
+      animation: pulse-badge 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse-badge {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.25); }
+    }
+
+    /* ── Main layout ── */
+    #page {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    #content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Status bar ── */
+    #statusbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 1rem;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #status-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    #conn-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--red);
+      transition: background 0.3s, box-shadow 0.3s;
+      flex-shrink: 0;
+    }
+    #conn-dot.on  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+    #conn-label { color: var(--muted); }
+
+    #device-count {
+      font-size: 0.62rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    /* ── Body split ── */
+    #body {
+      flex: 1;
+      display: flex;
+      gap: 0;
+      overflow: hidden;
+    }
+
+    /* ── Left: send panel ── */
+    #send-panel {
+      width: 340px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 0.9rem;
+      gap: 0.75rem;
+    }
+
+    .section-label {
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+
+    /* Target chips */
+    #target-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+
+    .target-chip {
+      padding: 0.35rem 0.7rem;
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.12s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .target-chip:hover  { border-color: var(--green); color: var(--text); }
+    .target-chip.active { border-color: var(--green); color: var(--green); background: rgba(0,255,136,0.1); }
+
+    /* Message input */
+    #msg-wrap {
+      position: relative;
+    }
+
+    #msg-input {
+      width: 100%;
+      padding: 0.75rem 3.5rem 0.75rem 0.85rem;
+      background: var(--card);
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      outline: none;
+      caret-color: var(--green);
+    }
+    #msg-input::placeholder { color: #2a2a4a; font-weight: 400; text-transform: none; letter-spacing: 0; }
+    #msg-input:focus         { border-color: var(--green); }
+
+    #char-count {
+      position: absolute;
+      right: 0.65rem; top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.55rem; color: var(--muted); font-weight: 600;
+    }
+
+    /* Quick buttons */
+    #quick-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.35rem;
+    }
+
+    .quick-btn {
+      padding: 0.6rem 0.4rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.73rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .quick-btn:hover  { border-color: var(--border); background: #1a1a30; }
+    .quick-btn:active { background: #1e1e3a; transform: scale(0.97); }
+
+    /* Color row */
+    #color-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .cdot {
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      border: 3px solid transparent;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: transform 0.12s, border-color 0.12s;
+    }
+    .cdot.active { border-color: #fff; transform: scale(1.2); }
+
+    /* Duration row */
+    #dur-row {
+      display: flex;
+      gap: 0.35rem;
+    }
+
+    .dur-btn {
+      flex: 1;
+      padding: 0.4rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .dur-btn.active { border-color: var(--green); color: var(--green); background: rgba(0,255,136,0.07); }
+
+    /* Send / Clear buttons */
+    #send-btn {
+      width: 100%;
+      padding: 0.9rem;
+      background: var(--green);
+      color: #000;
+      border: none;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 900;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: opacity 0.12s, transform 0.1s, background 0.2s;
+    }
+    #send-btn:active      { opacity: 0.8; transform: scale(0.98); }
+    #send-btn.sent        { background: #00cc66; }
+    #send-btn:disabled    { background: #222; color: #444; cursor: not-allowed; }
+
+    #clear-btn {
+      width: 100%;
+      padding: 0.6rem;
+      background: transparent;
+      border: 1.5px solid #ff4444;
+      border-radius: 10px;
+      color: #ff4444;
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    #clear-btn:hover  { background: rgba(255,68,68,0.1); }
+    #clear-btn:active { transform: scale(0.97); }
+
+    /* ── Right: message log ── */
+    #log-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 0.9rem;
+      gap: 0.5rem;
+    }
+
+    #log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    #clear-log-btn {
+      font-size: 0.6rem;
+      color: var(--muted);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.2rem 0.5rem;
+      cursor: pointer;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      transition: color 0.12s;
+    }
+    #clear-log-btn:hover { color: var(--text); }
+
+    #log-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    #log-list::-webkit-scrollbar { width: 4px; }
+    #log-list::-webkit-scrollbar-track { background: transparent; }
+    #log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .log-entry {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--green);
+      border-radius: 8px;
+      padding: 0.55rem 0.75rem;
+      animation: slideIn 0.2s ease;
+    }
+    .log-entry.incoming { border-left-color: var(--amber); }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-8px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .log-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.25rem;
+    }
+
+    .log-from {
+      font-size: 0.6rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--green);
+    }
+    .log-entry.incoming .log-from { color: var(--amber); }
+
+    .log-targets {
+      font-size: 0.55rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .log-time {
+      font-size: 0.55rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .log-msg {
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    #log-empty {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-top: 2rem;
+    }
+
+    /* ── Connection error banner ── */
+    #conn-error {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      padding: 0.65rem 1rem;
+      background: rgba(255,68,68,0.12);
+      border-bottom: 1px solid rgba(255,68,68,0.3);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: #ff7777;
+    }
+    #conn-error.visible { display: flex; }
+
+    #retry-btn {
+      padding: 0.25rem 0.65rem;
+      background: transparent;
+      border: 1px solid #ff7777;
+      border-radius: 6px;
+      color: #ff7777;
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    #retry-btn:hover { background: rgba(255,100,100,0.15); }
+
+    /* ── Incoming message banner (large, brief) ── */
+    #incoming-banner {
+      position: fixed;
+      bottom: 1.2rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(120px);
+      z-index: 999;
+      background: var(--card);
+      border: 2px solid var(--amber);
+      border-radius: 12px;
+      padding: 0.75rem 1.25rem;
+      max-width: 420px;
+      width: calc(100vw - 2rem);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      pointer-events: none;
+    }
+    #incoming-banner.show {
+      transform: translateX(-50%) translateY(0);
+    }
+    #ib-from  { font-size: 0.6rem; font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; color: var(--amber); margin-bottom: 0.25rem; }
+    #ib-msg   { font-size: 1.1rem; font-weight: 900; letter-spacing: 0.04em; }
+  </style>
+</head>
+<body>
+<div id="page">
+
+  <!-- ── Top nav ── -->
+  <nav id="topnav">
+    <a class="nav-link" href="/">🎛 Scenes</a>
+    <a class="nav-link" href="/library">📚 Library</a>
+    <a class="nav-link" href="/editor">✏️ Editor</a>
+    <a class="nav-link active" href="/messenger">💬 Messenger</a>
+  </nav>
+
+  <!-- ── Connection error banner ── -->
+  <div id="conn-error">
+    ⚠️ Stage Messenger not reachable on port <span id="err-port">3000</span>
+    <button id="retry-btn" onclick="connectToMessenger()">Retry</button>
+  </div>
+
+  <!-- ── Status bar ── -->
+  <div id="statusbar">
+    <div id="status-left">
+      <div id="conn-dot"></div>
+      <span id="conn-label">Connecting…</span>
+    </div>
+    <div id="device-count"></div>
+  </div>
+
+  <!-- ── Body ── -->
+  <div id="body">
+
+    <!-- Send panel -->
+    <div id="send-panel">
+
+      <div>
+        <div class="section-label">Send To</div>
+        <div id="target-bar">
+          <button class="target-chip active" data-room="all">⬡ All Devices</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label">Quick Messages</div>
+        <div id="quick-grid">
+          <button class="quick-btn" data-msg="LOUDER">📢 LOUDER</button>
+          <button class="quick-btn" data-msg="SOFTER">🔉 SOFTER</button>
+          <button class="quick-btn" data-msg="LAST CHORUS">🎵 LAST CHORUS</button>
+          <button class="quick-btn" data-msg="ENDING">🏁 ENDING</button>
+          <button class="quick-btn" data-msg="VERSE">VERSE</button>
+          <button class="quick-btn" data-msg="CHORUS">CHORUS</button>
+          <button class="quick-btn" data-msg="SOLO">🎸 SOLO</button>
+          <button class="quick-btn" data-msg="GREAT SET!">⭐ GREAT SET!</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label">Custom Message</div>
+        <div id="msg-wrap">
+          <input id="msg-input" type="text" maxlength="160"
+                 placeholder="Type a message…"
+                 autocomplete="off" autocorrect="off"
+                 autocapitalize="characters" spellcheck="false">
+          <span id="char-count">0/160</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label">Color</div>
+        <div id="color-row">
+          <div class="cdot active" data-color="#cc0000" style="background:#cc0000"></div>
+          <div class="cdot" data-color="#dd7700" style="background:#dd7700"></div>
+          <div class="cdot" data-color="#ccaa00" style="background:#ccaa00"></div>
+          <div class="cdot" data-color="#0066cc" style="background:#0066cc"></div>
+          <div class="cdot" data-color="#006633" style="background:#006633"></div>
+          <div class="cdot" data-color="#440099" style="background:#440099"></div>
+          <div class="cdot" data-color="#111111" style="background:#555"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label">Duration</div>
+        <div id="dur-row">
+          <button class="dur-btn" data-ms="10000">10s</button>
+          <button class="dur-btn active" data-ms="30000">30s</button>
+          <button class="dur-btn" data-ms="60000">1m</button>
+          <button class="dur-btn" data-ms="120000">2m</button>
+          <button class="dur-btn" data-ms="0">Perm</button>
+        </div>
+      </div>
+
+      <button id="send-btn" disabled>SEND MESSAGE</button>
+      <button id="clear-btn">CLEAR ALL DISPLAYS</button>
+
+    </div><!-- /send-panel -->
+
+    <!-- Log panel -->
+    <div id="log-panel">
+      <div id="log-header">
+        <div class="section-label">Message Log</div>
+        <button id="clear-log-btn" onclick="clearLog()">Clear Log</button>
+      </div>
+      <div id="log-list">
+        <div id="log-empty">No messages yet</div>
+      </div>
+    </div>
+
+  </div><!-- /body -->
+
+</div><!-- /page -->
+
+<!-- Incoming message banner (visible even when looking at log) -->
+<div id="incoming-banner">
+  <div id="ib-from"></div>
+  <div id="ib-msg"></div>
+</div>
+
+<script>
+  // ── Config from server ─────────────────────────────────────────────────────
+  const MESSENGER_HOST = {{ messenger_host | tojson }};
+  const MESSENGER_PORT = {{ messenger_port }};
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let socket       = null;
+  let connected    = false;
+  let selectedColor   = '#cc0000';
+  let selectedDurMs   = 30000;
+  let selectedTargets = new Set(['all']);
+  let devices      = [];
+
+  const connDot     = document.getElementById('conn-dot');
+  const connLabel   = document.getElementById('conn-label');
+  const deviceCount = document.getElementById('device-count');
+  const sendBtn     = document.getElementById('send-btn');
+  const clearBtn    = document.getElementById('clear-btn');
+  const msgInput    = document.getElementById('msg-input');
+  const charCount   = document.getElementById('char-count');
+  const targetBar   = document.getElementById('target-bar');
+  const logList     = document.getElementById('log-list');
+  const logEmpty    = document.getElementById('log-empty');
+  const connError   = document.getElementById('conn-error');
+  const errPort     = document.getElementById('err-port');
+
+  // ── Socket.IO ─────────────────────────────────────────────────────────────
+  // We must load socket.io from the Stage Messenger server (different port)
+  function loadSocketIO(cb) {
+    const host = MESSENGER_HOST || window.location.hostname;
+    const url  = `http://${host}:${MESSENGER_PORT}`;
+    errPort.textContent = MESSENGER_PORT;
+
+    // Check if already loaded
+    if (window.io) { cb(url); return; }
+
+    const script = document.createElement('script');
+    script.src = `${url}/socket.io.min.js`;
+    script.onload  = () => cb(url);
+    script.onerror = () => {
+      setDisconnected('Stage Messenger not reachable');
+      connError.classList.add('visible');
+    };
+    document.head.appendChild(script);
+  }
+
+  function connectToMessenger() {
+    connError.classList.remove('visible');
+    setDisconnected('Connecting…');
+
+    loadSocketIO((url) => {
+      if (socket) { socket.disconnect(); socket = null; }
+
+      socket = io(url, {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionDelay: 2000,
+      });
+
+      socket.on('connect', () => {
+        socket.emit('register-control');
+        setConnected();
+        connError.classList.remove('visible');
+      });
+
+      socket.on('disconnect', () => {
+        setDisconnected('Disconnected');
+        sendBtn.disabled = true;
+      });
+
+      socket.on('connect_error', () => {
+        setDisconnected('Cannot reach Stage Messenger');
+        connError.classList.add('visible');
+      });
+
+      socket.on('devices-updated', (list) => {
+        devices = list;
+        updateDeviceChips(list);
+      });
+
+      socket.on('message', (data) => {
+        showIncomingBanner(data);
+      });
+
+      socket.on('log-history', (entries) => {
+        renderLogHistory(entries);
+      });
+
+      socket.on('log-entry', (entry) => {
+        addLogEntry(entry);
+      });
+
+      socket.on('log-cleared', () => {
+        clearLogView();
+      });
+    });
+  }
+
+  function setConnected() {
+    connected = true;
+    connDot.className = 'on';
+    connLabel.textContent = 'Connected to Stage Messenger';
+    sendBtn.disabled = false;
+  }
+
+  function setDisconnected(msg) {
+    connected = false;
+    connDot.className = '';
+    connLabel.textContent = msg || 'Disconnected';
+    deviceCount.textContent = '';
+    sendBtn.disabled = true;
+  }
+
+  // ── Device chips ──────────────────────────────────────────────────────────
+  function updateDeviceChips(list) {
+    const count = list.length;
+    deviceCount.textContent = count
+      ? `${count} device${count !== 1 ? 's' : ''} connected`
+      : 'No devices connected';
+
+    // Remove device chips (keep "all")
+    Array.from(targetBar.querySelectorAll('.target-chip[data-room]:not([data-room="all"])'))
+         .forEach(el => el.remove());
+
+    list.forEach(d => {
+      const chip = document.createElement('button');
+      chip.className = 'target-chip';
+      chip.dataset.room = d.room;
+      chip.textContent = (d.type === 'display' ? '🖥 ' : '📱 ') + d.name;
+      chip.addEventListener('click', () => toggleTarget(chip, d.room));
+      targetBar.appendChild(chip);
+    });
+
+    // Clean up selected targets that no longer exist
+    const rooms = new Set(['all', ...list.map(d => d.room)]);
+    selectedTargets.forEach(r => { if (!rooms.has(r)) selectedTargets.delete(r); });
+    refreshChipStates();
+  }
+
+  function toggleTarget(chip, room) {
+    if (room === 'all') {
+      selectedTargets.clear();
+      selectedTargets.add('all');
+    } else {
+      selectedTargets.delete('all');
+      if (selectedTargets.has(room)) {
+        selectedTargets.delete(room);
+        if (selectedTargets.size === 0) selectedTargets.add('all');
+      } else {
+        selectedTargets.add(room);
+      }
+    }
+    refreshChipStates();
+  }
+
+  function refreshChipStates() {
+    targetBar.querySelectorAll('.target-chip').forEach(chip => {
+      chip.classList.toggle('active', selectedTargets.has(chip.dataset.room));
+    });
+  }
+
+  // Click handler for all target chips (including "all")
+  targetBar.querySelector('[data-room="all"]').addEventListener('click', function() {
+    toggleTarget(this, 'all');
+  });
+
+  // ── Color selection ────────────────────────────────────────────────────────
+  document.querySelectorAll('.cdot').forEach(dot => {
+    dot.addEventListener('click', () => {
+      document.querySelectorAll('.cdot').forEach(d => d.classList.remove('active'));
+      dot.classList.add('active');
+      selectedColor = dot.dataset.color;
+    });
+  });
+
+  // ── Duration selection ─────────────────────────────────────────────────────
+  document.querySelectorAll('.dur-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.dur-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedDurMs = parseInt(btn.dataset.ms, 10);
+    });
+  });
+
+  // ── Quick buttons ──────────────────────────────────────────────────────────
+  document.querySelectorAll('.quick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sendMessage(btn.dataset.msg);
+    });
+  });
+
+  // ── Message input ──────────────────────────────────────────────────────────
+  msgInput.addEventListener('input', () => {
+    charCount.textContent = `${msgInput.value.length}/160`;
+  });
+
+  msgInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && msgInput.value.trim()) sendMessage(msgInput.value.trim());
+  });
+
+  // ── Send / Clear ───────────────────────────────────────────────────────────
+  sendBtn.addEventListener('click', () => {
+    const txt = msgInput.value.trim();
+    if (!txt && !sendBtn._lastMsg) return;
+    sendMessage(txt || sendBtn._lastMsg);
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (!socket || !connected) return;
+    socket.emit('clear', { targets: ['all'] });
+  });
+
+  function sendMessage(text) {
+    if (!socket || !connected || !text) return;
+    const targets = Array.from(selectedTargets);
+    const payload = {
+      targets,
+      message:  text,
+      color:    selectedColor,
+      duration: selectedDurMs || 9999999,
+    };
+    socket.emit('send-message', payload);
+    sendBtn._lastMsg = text;
+
+    // Clear input
+    msgInput.value = '';
+    charCount.textContent = '0/160';
+
+    // Flash send button
+    sendBtn.classList.add('sent');
+    sendBtn.textContent = '✓ SENT';
+    setTimeout(() => {
+      sendBtn.classList.remove('sent');
+      sendBtn.textContent = 'SEND MESSAGE';
+    }, 1000);
+  }
+
+  // ── Log ───────────────────────────────────────────────────────────────────
+  const seenLogIds = new Set();
+
+  function addLogEntry(data) {
+    if (data.id != null) {
+      if (seenLogIds.has(data.id)) return;
+      seenLogIds.add(data.id);
+    }
+    logEmpty.style.display = 'none';
+
+    const kind = data.kind || 'incoming';
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${kind === 'incoming' ? 'incoming' : ''}`;
+    entry.style.borderLeftColor = data.color ||
+      (kind === 'incoming' ? '#ffaa00' : kind === 'system' ? '#555' : '#00ff88');
+
+    const when = data.ts ? new Date(data.ts) : new Date();
+    const timeStr = when.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const arrow = kind === 'incoming' ? '← ' : kind === 'system' ? '• ' : '→ ';
+    const targets = data.targets
+      ? (data.targets.includes('all') ? 'All Devices' : data.targets.join(', '))
+      : '';
+
+    entry.innerHTML = `
+      <div class="log-meta">
+        <span class="log-from">${arrow}${escapeHtml(data.from || 'Operator')}</span>
+        ${targets ? `<span class="log-targets">${escapeHtml(targets)}</span>` : ''}
+        <span class="log-time">${timeStr}</span>
+      </div>
+      <div class="log-msg">${escapeHtml(data.message)}</div>
+    `;
+
+    logList.insertBefore(entry, logList.firstChild);
+    while (logList.children.length > 1001) logList.removeChild(logList.lastChild);
+  }
+
+  function renderLogHistory(entries) {
+    clearLogView();
+    (entries || []).forEach(addLogEntry);
+  }
+
+  function clearLogView() {
+    seenLogIds.clear();
+    logList.innerHTML = '';
+    logList.appendChild(logEmpty);
+    logEmpty.style.display = '';
+  }
+
+  function clearLog() {
+    if (!confirm('Clear the entire message log for the whole night? This cannot be undone.')) return;
+    if (socket && connected) socket.emit('clear-log');
+    clearLogView();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Incoming banner ───────────────────────────────────────────────────────
+  let bannerTimer = null;
+  const banner  = document.getElementById('incoming-banner');
+  const ibFrom  = document.getElementById('ib-from');
+  const ibMsg   = document.getElementById('ib-msg');
+
+  function showIncomingBanner(data) {
+    ibFrom.textContent = `📨 From: ${data.from || 'Stage Messenger'}`;
+    ibMsg.textContent  = data.message;
+    banner.style.borderColor = data.color || '#ffaa00';
+    banner.classList.add('show');
+    if (bannerTimer) clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => banner.classList.remove('show'), 4500);
+  }
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+  connectToMessenger();
+</script>
+</body>
+</html>

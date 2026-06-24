@@ -1,0 +1,10 @@
+{
+  "id": "generic_rgbw_par_5ch",
+  "name": "Generic RGBW Par (5ch, dim+R+G+B+W)",
+  "channels": 5,
+  "pods": 1,
+  "dimmer_channel": 1,
+  "first_pod_channel": 2,
+  "channels_per_pod": 4,
+  "pod_color_offsets": {"r": 0, "g": 1, "b": 2, "w": 3}
+}

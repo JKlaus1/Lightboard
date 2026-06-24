@@ -1,0 +1,110 @@
+{
+  "dmx_port": "/dev/ttyUSB0",
+  "shows_dir": "/home/pi/lightboard/shows",
+  "active_show": "blizzard_bars_only",
+  "web_host": "0.0.0.0",
+  "web_port": 5000,
+  "dmx_driver": "artnet",
+  "artnet_target": "192.168.0.185, 192.168.0.186, 192.168.1.178",
+  "artnet_universe": 0,
+  "sacn_target": "192.168.0.185:2, 192.168.0.186:2",
+  "sacn_universe": 1,
+  "sacn_priority": 100,
+  "sacn_multicast": false,
+  "messenger_host": "",
+  "messenger_port": 3000,
+  "touch_grid": {
+    "cols": 3,
+    "rows": 5,
+    "cells": [
+      {
+        "action": "blackout",
+        "label": "",
+        "name": "\u2b1b Blackout"
+      },
+      {
+        "label": "",
+        "name": "Purple blue 2",
+        "scene_id": "6ldWZMad",
+        "scene_type": "main"
+      },
+      {
+        "scene_id": "dzx0x5rn",
+        "name": "White",
+        "label": "",
+        "scene_type": "main"
+      },
+      {
+        "action": "singer-up",
+        "name": "\ud83c\udfa4 Singer + Level",
+        "label": ""
+      },
+      {
+        "scene_id": "rsSiZwC7",
+        "name": "Amber",
+        "label": "",
+        "scene_type": "main"
+      },
+      {
+        "scene_id": "bomN3v3k",
+        "name": "Rainbow",
+        "label": "",
+        "scene_type": "effect"
+      },
+      {
+        "action": "singer-down",
+        "name": "\ud83c\udfa4 Singer - Level",
+        "label": ""
+      },
+      {
+        "scene_id": "sample_comet",
+        "name": "Sample \u00b7 Comet White",
+        "label": "",
+        "scene_type": "effect"
+      },
+      {
+        "scene_id": "78z5g4Nj",
+        "name": "Test",
+        "label": "",
+        "scene_type": "main"
+      },
+      {
+        "scene_id": "n4p4qYwZ",
+        "name": "Full UV Pink",
+        "label": "",
+        "scene_type": "main"
+      },
+      {
+        "scene_id": "dzx0x5rn",
+        "name": "White",
+        "label": "",
+        "scene_type": "main"
+      },
+      {
+        "scene_id": "bomN3v3k",
+        "name": "Rainbow",
+        "label": "",
+        "scene_type": "effect"
+      },
+      {
+        "scene_id": "qcBXZys4",
+        "name": "Full UV",
+        "label": "",
+        "scene_type": "main"
+      },
+      {
+        "scene_id": "bomN3v3k",
+        "name": "Rainbow",
+        "label": "",
+        "scene_type": "effect"
+      },
+      {
+        "scene_id": "sample_rainbow",
+        "name": "Sample \u00b7 Rainbow",
+        "label": "",
+        "scene_type": "effect"
+      }
+    ]
+  },
+  "touch_reload_ts": 1780904856.0870805
+}

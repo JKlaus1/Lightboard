@@ -1,0 +1,32 @@
+{
+  "name": "Sample \u00b7 Comet White",
+  "scene_type": "effect",
+  "effect": "comet",
+  "primary": {
+    "b": 255,
+    "g": 255,
+    "r": 255,
+    "w": 0
+  },
+  "secondary": {
+    "r": 255,
+    "g": 0,
+    "b": 0,
+    "a": 220,
+    "w": 0,
+    "uv": 0
+  },
+  "accent": null,
+  "params": {
+    "speed": 1,
+    "tail": 8
+  },
+  "fixtures_enabled": [
+    "wled_tube_3side_rgbw_1779061039240_0",
+    "blizzard_exa_54ch_1779067549923_0",
+    "blizzard_exa_54ch_1779067549923_1"
+  ],
+  "rendering_mode": "lock_to_segments",
+  "launch_fade": 500,
+  "folder": "Sample Effects"
+}

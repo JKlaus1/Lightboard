@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>{% if scene %}{{ scene.name }} — {% endif %}Effect Editor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#0d0d0d; --surface:#1a1a1a; --surface2:#252525; --surface3:#2e2e2e;
+    --border:#333; --text:#e0e0e0; --sub:#888;
+    --accent:#3b82f6; --green:#22c55e; --red:#ef4444; --amber:#f59e0b;
+    --effect:#a855f7;
+  }
+  html,body { height:100%; background:var(--bg); color:var(--text);
+              font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+              font-size:15px; -webkit-tap-highlight-color:transparent; }
+  input,button,select { font-family:inherit; }
+  input:focus,select:focus { outline:none; border-color:var(--effect) !important; }
+
+  header { display:flex; align-items:center; gap:10px; padding:10px 14px;
+           background:var(--surface); border-bottom:1px solid var(--border);
+           position:sticky; top:0; z-index:20; }
+  header h1 { font-size:15px; font-weight:700; flex:1;
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hbtn { padding:8px 12px; border-radius:8px; border:none; font-size:13px;
+          font-weight:600; cursor:pointer; }
+  .hbtn-cancel { background:var(--surface2); color:var(--sub);
+                 border:1px solid var(--border); }
+  .hbtn-save   { background:var(--effect); color:#fff; }
+  .hbtn-del    { background:#3a1010; color:#ff8888; border:1px solid #5a1818; }
+  .hbtn:active { opacity:.75; }
+  #live-btn { background:#1f3a1f; border:1px solid #2e5e2e; color:#7fdb7f;
+              padding:6px 10px; border-radius:7px; font-size:0.78rem;
+              cursor:pointer; font-weight:700; }
+  #live-btn.off { background:#3a1010; border-color:#5a1818; color:#ff8888; }
+
+  main { padding:12px; display:flex; flex-direction:column; gap:12px;
+         padding-bottom:80px; }
+
+  .card { background:var(--surface); border:1px solid var(--border);
+          border-radius:12px; padding:14px; }
+  .card-label { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+                color:var(--sub); margin-bottom:10px; font-weight:700; }
+  .card-label.effect-label { color:var(--effect); }
+
+  .name-input { width:100%; background:var(--surface2); border:1px solid var(--border);
+                color:var(--text); border-radius:8px; padding:10px 12px;
+                font-size:16px; font-weight:600; }
+
+  .field-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .field-row label { font-size:12px; color:var(--sub); min-width:80px; }
+  .field-row input, .field-row select {
+    flex:1; background:var(--surface2); border:1px solid var(--border);
+    color:var(--text); border-radius:7px; padding:8px 10px; font-size:13px;
+  }
+  .field-row input[type=number] { flex:0 0 100px; }
+  .hint { font-size:11px; color:var(--sub); margin-top:4px; line-height:1.4; }
+
+  /* Effect description */
+  .effect-desc { font-size:12px; color:var(--sub); margin-top:8px;
+                 padding:8px 10px; background:var(--surface2);
+                 border-radius:7px; line-height:1.4; }
+
+  /* Color slot row */
+  .color-slots { display:flex; flex-direction:column; gap:8px; }
+  .color-slot { display:flex; align-items:center; gap:10px;
+                padding:8px; background:var(--surface2); border-radius:8px;
+                border:1px solid var(--border); }
+  .color-slot.disabled { opacity:.4; pointer-events:none; }
+  .slot-name { flex:1; font-size:13px; font-weight:600; }
+  .slot-sub  { display:block; font-size:10px; color:var(--sub);
+               font-weight:400; margin-top:2px; }
+  .swatch { width:52px; height:36px; border-radius:6px; cursor:pointer;
+            border:2px solid var(--border); flex-shrink:0; position:relative; }
+  .swatch.empty { background:repeating-linear-gradient(45deg,
+                  #222 0,#222 6px,#1a1a1a 6px,#1a1a1a 12px); }
+  /* When "from scene" is on, dash the border and overlay a tiny indicator
+     so users can see at a glance that this slot is live-sampled. The swatch
+     still shows the fallback colour underneath. */
+  .swatch.sampling { border-style:dashed; border-color:#a855f7; }
+  .swatch.sampling::after { content:'🎬'; position:absolute; top:-7px; right:-7px;
+                            font-size:14px; line-height:1;
+                            text-shadow:0 0 3px rgba(0,0,0,0.8); }
+  .sample-toggle { display:flex; align-items:center; gap:4px; cursor:pointer;
+                   user-select:none; font-size:10px; color:var(--sub);
+                   line-height:1.2; flex-shrink:0; max-width:78px; text-align:left; }
+  .sample-toggle input { width:14px; height:14px; cursor:pointer; flex-shrink:0; margin:0; }
+  .sample-toggle span { white-space:normal; }
+  .sample-toggle.on { color:#d4b6ff; }
+  .accent-toggle-row { display:flex; align-items:center; gap:8px; margin-top:4px;
+                       padding:8px; }
+  .accent-toggle-row input[type=checkbox] { width:18px; height:18px; }
+  .accent-toggle-row label { font-size:12px; color:var(--sub); flex:1; cursor:pointer; }
+
+  /* Tempo sync toggle */
+  .ts-toggle { border:none; border-radius:8px; padding:8px 16px; font-size:13px;
+               font-weight:700; cursor:pointer; }
+  .ts-toggle.on  { background:var(--green); color:#000; }
+  .ts-toggle.off { background:var(--surface2); color:var(--sub);
+                   border:1px solid var(--border); }
+  .bd-btn { background:var(--surface2); border:1px solid var(--border); color:var(--text);
+            border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; }
+  .bd-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+  /* Param sliders */
+  .params-list { display:flex; flex-direction:column; gap:14px; }
+  .param-row label { display:flex; justify-content:space-between;
+                     font-size:12px; color:var(--sub); margin-bottom:6px; }
+  .param-row .val { color:var(--text); font-weight:600;
+                    font-variant-numeric:tabular-nums; }
+  .param-row .unit { color:var(--sub); font-weight:400; margin-left:3px; }
+  input[type=range].param-slider { width:100%; height:4px; }
+  input[type=range].param-slider::-webkit-slider-thumb {
+    width:20px; height:20px; background:var(--effect); border-radius:50%; }
+  .param-row input[type=number].param-num {
+    width:100%; background:var(--surface2); border:1px solid var(--border);
+    color:var(--text); border-radius:7px; padding:8px 10px; font-size:13px; }
+
+  /* Rendering-mode toggle */
+  .mode-toggle { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .mode-btn { padding:14px 8px; background:var(--surface2);
+              border:2px solid var(--border); border-radius:8px;
+              color:var(--text); cursor:pointer; font-size:13px;
+              font-weight:600; text-align:center; }
+  .mode-btn.sel { border-color:var(--effect); background:rgba(168,85,247,.13); }
+  .mode-btn small { display:block; font-size:10px; color:var(--sub);
+                    margin-top:3px; font-weight:400; }
+
+  /* Fixtures list */
+  .fx-row { display:flex; align-items:center; gap:10px; padding:10px;
+            background:var(--surface2); border-radius:8px; margin-bottom:6px;
+            border:1px solid var(--border); cursor:pointer; }
+  .fx-row.sel { border-color:var(--effect); background:rgba(168,85,247,.10); }
+  .fx-checkbox { width:22px; height:22px; flex-shrink:0; }
+  .fx-info { flex:1; min-width:0; }
+  .fx-name { font-size:13px; font-weight:600; }
+  .fx-meta { font-size:10px; color:var(--sub); margin-top:2px; }
+  .fx-meta .pill { display:inline-block; padding:1px 6px; border-radius:8px;
+                   background:var(--surface3); margin-right:6px; }
+  .fx-meta .pill.strip { background:#3b1f5e; color:#d4b6ff; }
+
+  /* Color picker sheet — same shape as main editor */
+  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7);
+             z-index:50; align-items:flex-end; }
+  .overlay.open { display:flex; }
+  .picker-sheet { background:var(--surface); width:100%; border-radius:16px 16px 0 0;
+                  padding:16px; max-height:85vh; overflow-y:auto;
+                  border-top:2px solid var(--effect); }
+  .picker-title { font-size:14px; font-weight:700; margin-bottom:12px; }
+  .presets { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-bottom:14px; }
+  .preset { aspect-ratio:1; border-radius:8px; cursor:pointer;
+            border:2px solid transparent;
+            display:flex; align-items:center; justify-content:center;
+            font-size:9px; color:rgba(255,255,255,.7); text-align:center; line-height:1.2;
+            font-weight:600; white-space:pre-line; }
+  .preset.sel { border-color:#fff; }
+  .preset:active { filter:brightness(1.3); }
+
+  .channel-sliders { display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
+  .ch-row { display:flex; align-items:center; gap:8px; }
+  .ch-label { width:24px; font-size:12px; font-weight:700; text-align:right; flex-shrink:0; }
+  .ch-label.R { color:#ef4444; } .ch-label.G { color:#22c55e; }
+  .ch-label.B { color:#3b82f6; } .ch-label.A { color:#f59e0b; }
+  .ch-label.W { color:#e0e0e0; } .ch-label.UV { color:#a855f7; font-size:10px; }
+  .ch-label.L { color:#a3e635; } /* Lime */
+  .ch-val { width:34px; font-size:12px; text-align:right; flex-shrink:0;
+            font-variant-numeric:tabular-nums; }
+  input[type=range].ch-slider { flex:1; height:4px; }
+  input[type=range].ch-slider::-webkit-slider-thumb { width:20px; height:20px; }
+
+  .swatch-row { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  #picker-swatch { width:56px; height:42px; border-radius:8px; border:1px solid var(--border); }
+  .picker-btns { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .picker-btns button { padding:12px; border-radius:8px; border:none;
+                        font-size:14px; font-weight:600; cursor:pointer; }
+  .btn-apply  { background:var(--effect); color:#fff; }
+  .btn-cancel { background:var(--surface2); color:var(--sub);
+                border:1px solid var(--border) !important; }
+
+  /* Bottom save bar */
+  .save-bar { position:fixed; bottom:0; left:0; right:0; padding:12px 16px;
+              background:var(--surface); border-top:1px solid var(--border);
+              display:grid; grid-template-columns:1fr 1fr; gap:10px; z-index:30; }
+  .save-bar button { padding:13px; border-radius:10px; border:none;
+                     font-size:15px; font-weight:700; cursor:pointer; }
+  #save-btn   { background:var(--effect); color:#fff; }
+  #cancel-btn { background:var(--surface2); color:var(--sub);
+                border:1px solid var(--border); }
+
+  .toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+           background:var(--surface2); border:1px solid var(--border);
+           border-radius:20px; padding:8px 16px; font-size:0.8rem;
+           opacity:0; transition:opacity .2s; pointer-events:none; z-index:60; }
+  .toast.show { opacity:1; }
+  .toast.ok  { border-color:var(--green); color:var(--green); }
+  .toast.err { border-color:var(--red);   color:var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="header-title">{% if scene %}{{ scene.name }}{% else %}New Effect Scene{% endif %}</h1>
+  <button id="live-btn" onclick="toggleLive()" title="Toggle live preview" class="off">⚪ LIVE</button>
+  {% if scene_id %}
+  <button class="hbtn hbtn-del" onclick="deleteScene()">Delete</button>
+  {% endif %}
+  <button class="hbtn hbtn-cancel" onclick="cancelEdit()">Cancel</button>
+  <button class="hbtn hbtn-save"   onclick="saveScene()">Save</button>
+</header>
+
+<main>
+  <!-- Scene name + folder + fade -->
+  <div class="card">
+    <div class="card-label effect-label">🌀 Effect Scene</div>
+    <input class="name-input" id="scene-name" type="text"
+           placeholder="Effect name…" autocomplete="off" spellcheck="false"
+           value="{{ scene.name if scene else '' }}"
+           oninput="onNameChange(this.value)">
+    <div class="field-row">
+      <label>Folder</label>
+      <input id="scene-folder" type="text" list="folder-list"
+             placeholder="e.g. Party / Slow"
+             value="{{ scene.folder if scene else '' }}">
+      <datalist id="folder-list">
+        {% for f in folders %}<option value="{{ f }}">{% endfor %}
+      </datalist>
+    </div>
+    <div class="field-row">
+      <label>Fade in/out</label>
+      <input id="scene-launch-fade" type="number" min="0" max="30000" step="100"
+             value="{{ scene.launch_fade if scene and scene.launch_fade is not none else 500 }}"
+             oninput="markDirty()">
+      <span class="hint" style="margin-top:0;">ms</span>
+    </div>
+  </div>
+
+  <!-- Tempo sync -->
+  <div class="card" id="tempo-sync-card">
+    <div class="card-label">Tempo Sync</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button type="button" id="tempo-sync-btn" class="ts-toggle off" onclick="toggleTempoSync()">Off</button>
+      <span class="hint" style="flex:1;min-width:170px;margin-top:0;">When on, the effect locks to the beat (needs a live tap tempo). Pick a beat window; <b>Speed</b> then reads as cycles per window.</span>
+    </div>
+    <div id="beat-div-row" style="display:none;align-items:center;gap:6px;margin-top:12px;flex-wrap:wrap;">
+      <span class="hint" style="margin-top:0;margin-right:2px;">Beat window</span>
+      <button type="button" class="bd-btn" data-div="0.5" onclick="setBeatDivision(0.5,this)">½ beat</button>
+      <button type="button" class="bd-btn" data-div="1"   onclick="setBeatDivision(1,this)">1 beat</button>
+      <button type="button" class="bd-btn" data-div="2"   onclick="setBeatDivision(2,this)">2 beats</button>
+      <button type="button" class="bd-btn" data-div="4"   onclick="setBeatDivision(4,this)">4 beats</button>
+    </div>
+  </div>
+
+  <!-- Effect type -->
+  <div class="card">
+    <div class="card-label">Effect</div>
+    <select id="effect-type" onchange="onEffectChange()" style="
+      width:100%; background:var(--surface2); border:1px solid var(--border);
+      color:var(--text); border-radius:8px; padding:10px 12px;
+      font-size:15px; font-weight:600;">
+      <!-- populated from /api/effects/registry on init -->
+    </select>
+    <div class="effect-desc" id="effect-desc">…</div>
+  </div>
+
+  <!-- Color slots -->
+  <div class="card" id="colors-card">
+    <div class="card-label">Colours</div>
+    <div class="color-slots">
+      <div class="color-slot" id="slot-primary">
+        <div class="slot-name">Primary
+          <span class="slot-sub">Main effect colour</span>
+        </div>
+        <div class="swatch" onclick="openColorPicker('primary')"></div>
+        <label class="sample-toggle" id="sample-toggle-primary"
+               title="Live-sample the average colour of the currently-playing main scene. Static colour acts as fallback.">
+          <input type="checkbox" id="sample-primary"
+                 onchange="onSampleToggle('primary', this.checked)">
+          <span>🎬 from scene</span>
+        </label>
+      </div>
+      <div class="color-slot" id="slot-secondary">
+        <div class="slot-name">Secondary
+          <span class="slot-sub">Background / off colour</span>
+        </div>
+        <div class="swatch" onclick="openColorPicker('secondary')"></div>
+        <label class="sample-toggle" id="sample-toggle-secondary"
+               title="Live-sample the average colour of the currently-playing main scene. Static colour acts as fallback.">
+          <input type="checkbox" id="sample-secondary"
+                 onchange="onSampleToggle('secondary', this.checked)">
+          <span>🎬 from scene</span>
+        </label>
+      </div>
+    </div>
+    <div class="accent-toggle-row" id="accent-toggle-row">
+      <input type="checkbox" id="use-accent" onchange="toggleAccent()">
+      <label for="use-accent">Use accent colour (3-stop)</label>
+    </div>
+    <div class="color-slot" id="slot-accent" style="display:none;">
+      <div class="slot-name">Accent
+        <span class="slot-sub">Third colour for gradient / twinkle</span>
+      </div>
+      <div class="swatch" onclick="openColorPicker('accent')"></div>
+      <label class="sample-toggle" id="sample-toggle-accent"
+             title="Live-sample the average colour of the currently-playing main scene. Static colour acts as fallback.">
+        <input type="checkbox" id="sample-accent"
+               onchange="onSampleToggle('accent', this.checked)">
+        <span>🎬 from scene</span>
+      </label>
+    </div>
+    <div class="effect-desc" id="rainbow-notice" style="display:none;">
+      Rainbow generates colours from the HSV wheel — colour slots are ignored.
+    </div>
+  </div>
+
+  <!-- Parameters -->
+  <div class="card" id="params-card">
+    <div class="card-label">Parameters</div>
+    <div class="params-list" id="params-container"></div>
+  </div>
+
+  <!-- Rendering mode -->
+  <div class="card">
+    <div class="card-label">Rendering Mode</div>
+    <div class="mode-toggle">
+      <button class="mode-btn sel" data-mode="continuous_strip"
+              onclick="setMode('continuous_strip')">
+        ➡️ Continuous
+        <small>One strip wraps every enabled fixture</small>
+      </button>
+      <button class="mode-btn" data-mode="lock_to_segments"
+              onclick="setMode('lock_to_segments')">
+        🔁 Per segment
+        <small>Same effect on each segment / pod fixture</small>
+      </button>
+    </div>
+    <div class="hint" id="mode-help" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- Target group -->
+  <div class="card">
+    <div class="card-label">Target</div>
+    <select id="group-select" onchange="setTargetGroup(this.value)"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-size:14px;">
+      <option value="">All enabled fixtures (show order)</option>
+    </select>
+    <div class="hint" style="margin-top:6px;">Pick a group to run the effect across its fixtures in the group's custom order (build groups on the Stage page). "All enabled fixtures" uses the checkboxes below.</div>
+  </div>
+
+  <!-- Fixtures -->
+  <div class="card">
+    <div class="card-label">Fixtures · Tap to enable</div>
+    <div id="fixtures-container"></div>
+  </div>
+</main>
+
+<!-- Color picker overlay -->
+<div class="overlay" id="picker-overlay">
+  <div class="picker-sheet">
+    <div class="picker-title" id="picker-title">Pick Primary</div>
+    <div class="swatch-row">
+      <div id="picker-swatch"></div>
+      <div style="flex:1;font-size:11px;color:var(--sub);" id="picker-rgb-text"></div>
+    </div>
+    <div class="presets" id="presets"></div>
+    <div class="channel-sliders" id="picker-sliders"></div>
+    <div class="picker-btns">
+      <button class="btn-cancel" onclick="closeColorPicker()">Cancel</button>
+      <button class="btn-apply" onclick="applyColorPicker()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<div class="save-bar">
+  <button id="cancel-btn" onclick="cancelEdit()">Cancel</button>
+  <button id="save-btn"   onclick="saveScene()">Save Effect</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Bootstrapped from Flask context ────────────────────────────────────────
+const SHOW        = {{ show | tojson }};
+const SCENE_DATA  = {{ scene | tojson }};
+const SCENE_ID    = {{ scene_id | tojson }};
+const FROM_PARAM  = new URLSearchParams(location.search).get('from');
+const RETURN_PATH = FROM_PARAM === 'home' ? '/' : (SCENE_ID ? '/library' : '/');
+
+// ── Color preset banks (copied from editor.html so this template is standalone) ─
+const PRESETS_RGB = [
+  { name:'Off',         r:0,   g:0,   b:0   },
+  { name:'Red',         r:255, g:0,   b:0   },
+  { name:'Orange',      r:255, g:80,  b:0   },
+  { name:'Amber',       r:255, g:140, b:0   },
+  { name:'Yellow',      r:255, g:220, b:0   },
+  { name:'Lime',        r:140, g:255, b:0   },
+  { name:'Green',       r:0,   g:255, b:0   },
+  { name:'Teal',        r:0,   g:255, b:140 },
+  { name:'Cyan',        r:0,   g:255, b:255 },
+  { name:'Sky',         r:0,   g:140, b:255 },
+  { name:'Blue',        r:0,   g:0,   b:255 },
+  { name:'Purple',      r:140, g:0,   b:255 },
+  { name:'Magenta',     r:255, g:0,   b:255 },
+  { name:'Pink',        r:255, g:80,  b:140 },
+  { name:'Warm\nWhite', r:255, g:160, b:80  },
+  { name:'White',       r:255, g:255, b:255 },
+];
+const PRESETS_RGBW = [
+  { name:'Off',         r:0,   g:0,   b:0,   w:0   },
+  { name:'Warm\nWhite', r:0,   g:0,   b:0,   w:255 },
+  { name:'White',       r:255, g:255, b:255, w:255 },
+  { name:'Cool\nWhite', r:200, g:200, b:255, w:200 },
+  { name:'Red',         r:255, g:0,   b:0,   w:0   },
+  { name:'Orange',      r:255, g:80,  b:0,   w:30  },
+  { name:'Amber',       r:255, g:140, b:0,   w:60  },
+  { name:'Yellow',      r:255, g:220, b:0,   w:60  },
+  { name:'Lime',        r:140, g:255, b:0,   w:0   },
+  { name:'Green',       r:0,   g:255, b:0,   w:0   },
+  { name:'Teal',        r:0,   g:255, b:140, w:0   },
+  { name:'Cyan',        r:0,   g:255, b:255, w:0   },
+  { name:'Sky',         r:0,   g:140, b:255, w:0   },
+  { name:'Blue',        r:0,   g:0,   b:255, w:0   },
+  { name:'Purple',      r:140, g:0,   b:255, w:0   },
+  { name:'Magenta',     r:255, g:0,   b:255, w:0   },
+  { name:'Pink',        r:255, g:80,  b:140, w:30  },
+  { name:'Soft\nPink',  r:255, g:140, b:180, w:120 },
+];
+const PRESETS_RGBAW = [
+  { name:'Off',         r:0,   g:0,   b:0,   a:0,   w:0   },
+  { name:'Warm\nWhite', r:20,  g:0,   b:0,   a:200, w:220 },
+  { name:'White',       r:255, g:255, b:255, a:255, w:255 },
+  { name:'Amber',       r:30,  g:0,   b:0,   a:255, w:0   },
+  { name:'Red',         r:255, g:0,   b:0,   a:220, w:0   },
+  { name:'Orange',      r:255, g:30,  b:0,   a:255, w:0   },
+  { name:'Yellow',      r:255, g:180, b:0,   a:200, w:0   },
+  { name:'Lime',        r:140, g:255, b:0,   a:0,   w:0   },
+  { name:'Green',       r:0,   g:255, b:0,   a:0,   w:60  },
+  { name:'Teal',        r:0,   g:255, b:140, a:0,   w:30  },
+  { name:'Cyan',        r:0,   g:255, b:255, a:0,   w:120 },
+  { name:'Sky',         r:0,   g:140, b:255, a:0,   w:60  },
+  { name:'Blue',        r:0,   g:0,   b:255, a:0,   w:0   },
+  { name:'Purple',      r:180, g:0,   b:255, a:0,   w:0   },
+  { name:'Pink',        r:255, g:0,   b:80,  a:0,   w:0   },
+];
+const PRESETS_RGBAWUV = [
+  { name:'Off',         r:0,   g:0,   b:0,   a:0,   w:0,   uv:0   },
+  { name:'Warm\nWhite', r:20,  g:0,   b:0,   a:200, w:220, uv:0   },
+  { name:'Amber',       r:30,  g:0,   b:0,   a:255, w:0,   uv:0   },
+  { name:'Red',         r:255, g:0,   b:0,   a:220, w:0,   uv:0   },
+  { name:'Orange',      r:255, g:30,  b:0,   a:255, w:0,   uv:0   },
+  { name:'Yellow',      r:255, g:180, b:0,   a:200, w:0,   uv:0   },
+  { name:'Green',       r:0,   g:255, b:0,   a:0,   w:60,  uv:0   },
+  { name:'Cyan',        r:0,   g:255, b:255, a:0,   w:120, uv:40  },
+  { name:'Blue',        r:0,   g:0,   b:255, a:0,   w:0,   uv:220 },
+  { name:'Purple',      r:180, g:0,   b:255, a:0,   w:0,   uv:200 },
+  { name:'Pink',        r:255, g:0,   b:80,  a:0,   w:0,   uv:255 },
+  { name:'UV',          r:0,   g:0,   b:60,  a:0,   w:0,   uv:255 },
+  { name:'UV\nBlue',    r:0,   g:0,   b:180, a:0,   w:0,   uv:255 },
+  { name:'UV\nPink',    r:200, g:0,   b:60,  a:0,   w:0,   uv:255 },
+  { name:'White',       r:255, g:255, b:255, a:255, w:255, uv:0   },
+];
+
+// RGBLAUV — Lime + Amber + UV fixtures (Betopper LPC1818 etc.)
+const PRESETS_RGBLAUV = [
+  { name:'Off',              r:0,   g:0,  b:0,   l:0,   a:0,   uv:0  },
+  { name:'Warm\nWhite',      r:180, g:40, b:0,   l:140, a:220, uv:0  },
+  { name:'Cool\nWhite',      r:220, g:220,b:180, l:200, a:60,  uv:0  },
+  { name:'Red',              r:255, g:0,  b:0,   l:0,   a:160, uv:0  },
+  { name:'Orange',           r:255, g:0,  b:0,   l:0,   a:255, uv:0  },
+  { name:'Amber',            r:60,  g:0,  b:0,   l:0,   a:255, uv:0  },
+  { name:'Gold',             r:80,  g:0,  b:0,   l:200, a:255, uv:0  },
+  { name:'Sunburst',         r:160, g:0,  b:0,   l:255, a:200, uv:0  },
+  { name:'Vibrant\nYellow',  r:0,   g:0,  b:0,   l:255, a:180, uv:0  },
+  { name:'Yellow',           r:80,  g:0,  b:0,   l:255, a:100, uv:0  },
+  { name:'Lime\nGreen',      r:0,   g:0,  b:0,   l:255, a:0,   uv:0  },
+  { name:'Spring\nGreen',    r:0,   g:80, b:0,   l:255, a:0,   uv:0  },
+  { name:'Green',            r:0,   g:255,b:0,   l:80,  a:0,   uv:0  },
+  { name:'Teal',             r:0,   g:0,  b:180, l:200, a:0,   uv:0  },
+  { name:'Cyan',             r:0,   g:180,b:255, l:100, a:0,   uv:0  },
+  { name:'Blue',             r:0,   g:0,  b:255, l:0,   a:0,   uv:180},
+  { name:'Purple',           r:160, g:0,  b:255, l:0,   a:0,   uv:200},
+  { name:'UV',               r:0,   g:0,  b:60,  l:0,   a:0,   uv:255},
+  { name:'UV\nPink',         r:200, g:0,  b:60,  l:0,   a:0,   uv:255},
+];
+
+// ── Determine widest capability across all non-mover fixtures ──────────────
+// The picker shows the widest preset bank so the user can pick colours that
+// use any channel any fixture supports. Effects emit dicts with all of those
+// keys; per-fixture writers drop the keys they don't need.
+function fixtureColorKeys(fx) {
+  if (fx.type === 'mover') return [];
+  if (fx.type === 'pixel_strip') return Object.keys(fx.pixel_color_offsets || {r:0,g:1,b:2,w:3});
+  return Object.keys(fx.pod_color_offsets || {r:0,g:1,b:2});
+}
+function widestPresets() {
+  const all = new Set();
+  SHOW.fixtures.forEach(fx => fixtureColorKeys(fx).forEach(k => all.add(k)));
+  if (all.has('l'))                  return { bank: PRESETS_RGBLAUV,  keys: ['r','g','b','l','a','uv'] };
+  if (all.has('uv'))                 return { bank: PRESETS_RGBAWUV,  keys: ['r','g','b','a','w','uv'] };
+  if (all.has('a') && all.has('w'))  return { bank: PRESETS_RGBAW,    keys: ['r','g','b','a','w'] };
+  if (all.has('w'))                  return { bank: PRESETS_RGBW,     keys: ['r','g','b','w'] };
+  return { bank: PRESETS_RGB, keys: ['r','g','b'] };
+}
+const COLOR_BANK = widestPresets();
+
+// ── State ──────────────────────────────────────────────────────────────────
+let registry = {};   // effect_id → metadata (loaded from /api/effects/registry)
+let live = false;   // always off by default — must be explicitly enabled
+let previewTimer = null;
+
+function emptyColor() {
+  const c = {};
+  COLOR_BANK.keys.forEach(k => c[k] = 0);
+  return c;
+}
+function fullPrimary() {
+  // Sensible default new-scene primary: warm white-ish if W available, else white
+  const c = emptyColor();
+  if ('w' in c) c.w = 200; else { c.r=255; c.g=255; c.b=255; }
+  if ('r' in c && c.r===0 && c.g===0 && c.b===0 && c.w===200) c.r=180; // tint warm
+  return c;
+}
+
+let scene = {
+  name: '',
+  scene_type: 'effect',
+  effect: 'solid',
+  primary:   fullPrimary(),
+  secondary: emptyColor(),
+  accent:    null,
+  // Phase 2F: when a *_sample flag is true the engine substitutes the
+  // averaged colour of the currently-playing main scene for that slot
+  // at render time. The static colour remains the fallback when nothing
+  // is playing.
+  primary_sample:   false,
+  secondary_sample: false,
+  accent_sample:    false,
+  params: {},
+  fixtures_enabled: [],
+  rendering_mode: 'continuous_strip',
+  target_group: '',
+
+  launch_fade: 500,
+  folder: '',
+  tempo_sync: false,
+  beat_division: 1,
+};
+
+// Apply existing scene data when editing
+if (SCENE_DATA) {
+  Object.assign(scene, {
+    name:             SCENE_DATA.name || '',
+    effect:           SCENE_DATA.effect || 'solid',
+    primary:          SCENE_DATA.primary   || fullPrimary(),
+    secondary:        SCENE_DATA.secondary || emptyColor(),
+    accent:           SCENE_DATA.accent    || null,
+    primary_sample:   !!SCENE_DATA.primary_sample,
+    secondary_sample: !!SCENE_DATA.secondary_sample,
+    accent_sample:    !!SCENE_DATA.accent_sample,
+    params:           SCENE_DATA.params    || {},
+    fixtures_enabled: SCENE_DATA.fixtures_enabled || [],
+    rendering_mode:   SCENE_DATA.rendering_mode || 'continuous_strip',
+    target_group:     SCENE_DATA.target_group || '',
+    launch_fade:      SCENE_DATA.launch_fade != null ? SCENE_DATA.launch_fade : 500,
+    folder:           SCENE_DATA.folder || '',
+    tempo_sync:       !!SCENE_DATA.tempo_sync,
+    beat_division:    SCENE_DATA.beat_division || 1,
+  });
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    registry = await fetch('/api/effects/registry').then(r => r.json());
+  } catch (e) {
+    toast('Failed to load effects registry', 'err');
+    return;
+  }
+
+  // Populate effect type dropdown
+  const sel = document.getElementById('effect-type');
+  Object.entries(registry).forEach(([eid, info]) => {
+    const opt = document.createElement('option');
+    opt.value = eid; opt.textContent = info.name;
+    sel.appendChild(opt);
+  });
+
+  // Ensure current effect is valid; fill in default params if any are missing
+  if (!registry[scene.effect]) scene.effect = 'solid';
+  sel.value = scene.effect;
+  fillMissingParamDefaults();
+
+  renderEffectMeta();
+  renderColorSlots();
+  renderParams();
+  renderModeButtons();
+  renderFixtureList();
+  renderModeHelp();
+  applyTempoSyncBtn();
+  await populateGroups();
+  startPreviewIfLive();
+}
+
+async function populateGroups() {
+  let groups = [];
+  try { groups = await fetch('/api/groups').then(r => r.json()); } catch (e) {}
+  const sel = document.getElementById('group-select');
+  if (!sel) return;
+  (groups || []).forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = 'Group: ' + (g.name || g.id) +
+      ' (' + ((g.members || []).length) + ')';
+    sel.appendChild(opt);
+  });
+  sel.value = scene.target_group || '';
+}
+
+function setTargetGroup(v) {
+  scene.target_group = v || '';
+  markDirty();
+}
+
+function fillMissingParamDefaults() {
+  const info = registry[scene.effect];
+  if (!info) return;
+  Object.entries(info.params).forEach(([pname, pspec]) => {
+    if (scene.params[pname] === undefined) scene.params[pname] = pspec.default;
+  });
+  // Drop params that don't apply to this effect (kept tidy after type switch)
+  Object.keys(scene.params).forEach(p => {
+    if (!(p in info.params)) delete scene.params[p];
+  });
+}
+
+// ── Effect type change ─────────────────────────────────────────────────────
+function onEffectChange() {
+  scene.effect = document.getElementById('effect-type').value;
+  // Reset params to the new effect's defaults (don't preserve old ones —
+  // they're effect-specific). Keep colours untouched so the user doesn't
+  // lose their picks when toggling between effects.
+  scene.params = {};
+  fillMissingParamDefaults();
+  // If switching to/from rainbow, accent visibility may need updating;
+  // renderColorSlots handles that.
+  renderEffectMeta();
+  renderColorSlots();
+  renderParams();
+  markDirty();
+}
+
+function renderEffectMeta() {
+  const info = registry[scene.effect];
+  document.getElementById('effect-desc').textContent =
+    info ? info.description : '';
+}
+
+// ── Color slots ────────────────────────────────────────────────────────────
+function renderColorSlots() {
+  const info = registry[scene.effect] || {};
+  const primaryActive   = info.uses_primary !== false;
+  const secondaryActive = !!info.uses_secondary;
+  const accentAllowed   = !!info.uses_accent;
+  const isRainbow       = scene.effect === 'rainbow';
+
+  document.getElementById('slot-primary').classList.toggle('disabled', !primaryActive);
+  document.getElementById('slot-secondary').classList.toggle('disabled', !secondaryActive);
+  document.getElementById('accent-toggle-row').style.display = accentAllowed ? '' : 'none';
+  document.getElementById('rainbow-notice').style.display    = isRainbow ? '' : 'none';
+
+  document.getElementById('use-accent').checked = scene.accent !== null;
+  document.getElementById('slot-accent').style.display =
+    (accentAllowed && scene.accent !== null) ? '' : 'none';
+
+  applySwatch('slot-primary',   scene.primary,   scene.primary_sample);
+  applySwatch('slot-secondary', scene.secondary, scene.secondary_sample);
+  if (scene.accent) applySwatch('slot-accent', scene.accent, scene.accent_sample);
+
+  // Sync the "from scene" checkbox + label state for each slot. Hide the
+  // toggle entirely for Rainbow (it ignores all colour slots anyway).
+  ['primary','secondary','accent'].forEach(slot => {
+    const cb = document.getElementById('sample-' + slot);
+    const lab = document.getElementById('sample-toggle-' + slot);
+    if (!cb || !lab) return;
+    cb.checked = !!scene[slot + '_sample'];
+    lab.classList.toggle('on', cb.checked);
+    lab.style.display = isRainbow ? 'none' : '';
+  });
+}
+
+function applySwatch(slotId, color, sampling) {
+  const sw = document.querySelector('#' + slotId + ' .swatch');
+  if (!sw) return;
+  sw.style.background = previewCss(color);
+  sw.classList.toggle('empty', color && color.r === 0 && color.g === 0 && color.b === 0
+                                && !color.w && !color.a && !color.uv);
+  sw.classList.toggle('sampling', !!sampling);
+}
+
+function onSampleToggle(slot, checked) {
+  scene[slot + '_sample'] = checked;
+  // Update the swatch dashed border + label highlight without a full
+  // re-render (which would steal focus from any open colour picker).
+  const sw = document.querySelector(`#slot-${slot} .swatch`);
+  if (sw) sw.classList.toggle('sampling', checked);
+  const lab = document.getElementById('sample-toggle-' + slot);
+  if (lab) lab.classList.toggle('on', checked);
+  markDirty();
+}
+
+function previewCss(c) {
+  // Linear additive emitter mix -> sRGB (matches the stage visualizer engine).
+  // Channels sum in linear light, then gamma-encode for the screen — closer to
+  // real RGBAWUV fixture blending than adding 0-255 values. UV -> deep violet.
+  if (!c) return 'rgb(0,0,0)';
+  const E = {r:[1,0,0],g:[0,1,0],b:[0,0,1],a:[1,0.45,0],
+             w:[1,0.92,0.78],uv:[0.40,0,0.72],l:[0.72,1,0]};
+  let R=0,G=0,B=0;
+  for (const k in E){ const v=(c[k]||0)/255;
+    R+=v*E[k][0]; G+=v*E[k][1]; B+=v*E[k][2]; }
+  const enc=x=>{ x=x<0?0:(x>1?1:x);
+    return Math.round((x<=0.0031308?12.92*x:1.055*Math.pow(x,1/2.4)-0.055)*255); };
+  return `rgb(${enc(R)},${enc(G)},${enc(B)})`;
+}
+
+function toggleAccent() {
+  if (document.getElementById('use-accent').checked) {
+    if (!scene.accent) scene.accent = emptyColor();
+  } else {
+    scene.accent = null;
+  }
+  renderColorSlots();
+  markDirty();
+}
+
+// ── Color picker ───────────────────────────────────────────────────────────
+let pickerSlot = null;   // 'primary' | 'secondary' | 'accent'
+let pickerColor = null;
+
+function openColorPicker(slot) {
+  pickerSlot = slot;
+  const cur = scene[slot] || emptyColor();
+  pickerColor = Object.assign(emptyColor(), cur);
+  document.getElementById('picker-title').textContent =
+    'Pick ' + slot.charAt(0).toUpperCase() + slot.slice(1);
+  renderPresets();
+  renderPickerSliders();
+  updatePickerSwatch();
+  document.getElementById('picker-overlay').classList.add('open');
+}
+
+function closeColorPicker() {
+  document.getElementById('picker-overlay').classList.remove('open');
+}
+
+function applyColorPicker() {
+  // Only keep keys that exist in the colour bank
+  const out = {};
+  COLOR_BANK.keys.forEach(k => out[k] = pickerColor[k] || 0);
+  scene[pickerSlot] = out;
+  closeColorPicker();
+  renderColorSlots();
+  markDirty();
+}
+
+function renderPresets() {
+  const container = document.getElementById('presets');
+  container.innerHTML = '';
+  COLOR_BANK.bank.forEach(p => {
+    const cell = document.createElement('div');
+    cell.className = 'preset';
+    cell.style.background = previewCss(p);
+    cell.textContent = p.name.replace('\\n', '\n');
+    cell.onclick = () => {
+      pickerColor = Object.assign(emptyColor(), p);
+      renderPickerSliders();
+      updatePickerSwatch();
+    };
+    container.appendChild(cell);
+  });
+}
+
+const CH_LABELS = { r:'R', g:'G', b:'B', a:'A', w:'W', uv:'UV', l:'L' };
+function renderPickerSliders() {
+  const container = document.getElementById('picker-sliders');
+  container.innerHTML = '';
+  COLOR_BANK.keys.forEach(k => {
+    const row = document.createElement('div');
+    row.className = 'ch-row';
+    row.innerHTML = `
+      <div class="ch-label ${CH_LABELS[k]}">${CH_LABELS[k]}</div>
+      <input type="range" class="ch-slider" min="0" max="255" value="${pickerColor[k]||0}"
+             oninput="pickerColor['${k}']=parseInt(this.value); updatePickerSwatch();
+                      this.parentElement.querySelector('.ch-val').textContent=this.value;">
+      <div class="ch-val">${pickerColor[k]||0}</div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function updatePickerSwatch() {
+  document.getElementById('picker-swatch').style.background = previewCss(pickerColor);
+  const parts = COLOR_BANK.keys.map(k => `${CH_LABELS[k]}:${pickerColor[k]||0}`);
+  document.getElementById('picker-rgb-text').textContent = parts.join(' · ');
+}
+
+// ── Parameters ─────────────────────────────────────────────────────────────
+function renderParams() {
+  const info = registry[scene.effect];
+  const container = document.getElementById('params-container');
+  container.innerHTML = '';
+  if (!info || Object.keys(info.params).length === 0) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--sub);text-align:center;padding:8px;">' +
+                          'No parameters for this effect.</div>';
+    return;
+  }
+  Object.entries(info.params).forEach(([pname, pspec]) => {
+    const cur = scene.params[pname] != null ? scene.params[pname] : pspec.default;
+    const isInt = pspec.type === 'int';
+
+    // Build the row via DOM API. We deliberately do NOT template event
+    // handlers into innerHTML — `pspec.unit` is wrapped in <span class="unit">
+    // whose own double quotes would terminate an oninput attribute, silently
+    // dropping the listener.
+    const row = document.createElement('div');
+    row.className = 'param-row';
+
+    const label = document.createElement('label');
+    const labelText = document.createElement('span');
+    labelText.textContent = pspec.label +
+      (scene.tempo_sync && pname === 'speed'
+        ? ' (cycles per ' + beatWindowText(scene.beat_division || 1) + ')'
+        : '');
+    const valSpan = document.createElement('span');
+    valSpan.className = 'val';
+    valSpan.id = 'val-' + pname;
+    label.appendChild(labelText);
+    label.appendChild(valSpan);
+
+    const fmt = v => isInt ? String(v) : fmtNum(v);
+    const updateValDisplay = v => {
+      valSpan.textContent = '';                      // clear (kills any old <span>)
+      valSpan.appendChild(document.createTextNode(fmt(v)));
+      if (pspec.unit) {
+        const u = document.createElement('span');
+        u.className = 'unit';
+        u.textContent = ' ' + pspec.unit;
+        valSpan.appendChild(u);
+      }
+    };
+    updateValDisplay(cur);
+
+    const input = document.createElement('input');
+    input.type = isInt ? 'number' : 'range';
+    input.className = isInt ? 'param-num' : 'param-slider';
+    input.min  = pspec.min;
+    input.max  = pspec.max;
+    input.step = pspec.step != null ? pspec.step : (isInt ? 1 : 0.01);
+    input.value = cur;
+    input.addEventListener('input', () => {
+      const v = isInt ? parseInt(input.value) : parseFloat(input.value);
+      // parseInt/parseFloat can return NaN on an empty number field; in that
+      // case skip the update so the user can keep typing without us writing
+      // bad data and triggering a preview.
+      if (Number.isNaN(v)) return;
+      setParam(pname, v);
+      updateValDisplay(v);
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    container.appendChild(row);
+  });
+}
+
+function fmtNum(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+function setParam(name, val) {
+  scene.params[name] = val;
+  markDirty();
+}
+
+function toggleTempoSync() {
+  scene.tempo_sync = !scene.tempo_sync;
+  applyTempoSyncBtn();
+  renderParams();   // refresh Speed label (per-beat vs per-second)
+  markDirty();
+}
+function setBeatDivision(d, el) {
+  scene.beat_division = d;
+  document.querySelectorAll('#beat-div-row .bd-btn').forEach(b => b.classList.toggle('active', b === el));
+  renderParams();   // Speed label depends on the beat window
+  markDirty();
+}
+function beatWindowText(div) {
+  if (div === 0.5) return '½ beat';
+  if (div === 1)   return 'beat';
+  return div + ' beats';
+}
+function applyTempoSyncBtn() {
+  const btn = document.getElementById('tempo-sync-btn');
+  const row = document.getElementById('beat-div-row');
+  if (!btn) return;
+  btn.textContent = scene.tempo_sync ? 'On' : 'Off';
+  btn.classList.toggle('on', !!scene.tempo_sync);
+  btn.classList.toggle('off', !scene.tempo_sync);
+  if (row) {
+    row.style.display = scene.tempo_sync ? 'flex' : 'none';
+    document.querySelectorAll('#beat-div-row .bd-btn').forEach(b =>
+      b.classList.toggle('active', parseFloat(b.dataset.div) === (scene.beat_division || 1)));
+  }
+}
+
+// ── Rendering mode ─────────────────────────────────────────────────────────
+function setMode(m) {
+  scene.rendering_mode = m;
+  renderModeButtons();
+  renderModeHelp();
+  markDirty();
+}
+function renderModeButtons() {
+  document.querySelectorAll('.mode-btn').forEach(b => {
+    b.classList.toggle('sel', b.dataset.mode === scene.rendering_mode);
+  });
+}
+
+// Describe what cell layout this mode produces given the currently-enabled
+// fixtures, so the user can see what the effect will actually run on.
+function renderModeHelp() {
+  const enabled = SHOW.fixtures.filter(fx => scene.fixtures_enabled.includes(fx.id));
+  if (enabled.length === 0) {
+    document.getElementById('mode-help').innerHTML =
+      'Select fixtures below to see how the strip is laid out.';
+    return;
+  }
+  if (scene.rendering_mode === 'continuous_strip') {
+    // One strip per fixture, length = total cells in the fixture
+    const parts = enabled.map(fx => `${fxName(fx)}: ${fxCellCount(fx, 'continuous_strip')} cells`);
+    document.getElementById('mode-help').innerHTML =
+      'Effect runs once across each fixture: ' + parts.join(' · ');
+  } else {
+    const parts = enabled.map(fx => {
+      const segs = fxSegmentCounts(fx);
+      return `${fxName(fx)}: ${segs}`;
+    });
+    document.getElementById('mode-help').innerHTML =
+      'Effect repeats on each segment: ' + parts.join(' · ');
+  }
+}
+
+function fxName(fx) { return fx.name || fx.id; }
+function fxCellCount(fx, mode) {
+  if (fx.type === 'pixel_strip') {
+    const segs = fx.segments || [];
+    if (segs.length === 0) return fx.pixel_count || 0;
+    return segs.reduce((s, x) => s + (x.length || 0), 0);
+  }
+  return fx.pods || 1;
+}
+function fxSegmentCounts(fx) {
+  if (fx.type === 'pixel_strip') {
+    const segs = fx.segments || [];
+    if (segs.length === 0) return `1×${fx.pixel_count || 0}`;
+    return segs.map(s => s.length).join('+');
+  }
+  return String(fx.pods || 1);
+}
+
+// ── Fixtures list ──────────────────────────────────────────────────────────
+function renderFixtureList() {
+  const container = document.getElementById('fixtures-container');
+  container.innerHTML = '';
+  const nonMover = SHOW.fixtures.filter(fx => fx.type !== 'mover');
+  if (nonMover.length === 0) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--sub);padding:8px;">' +
+      'No non-mover fixtures in this show.</div>';
+    return;
+  }
+  nonMover.forEach(fx => {
+    const enabled = scene.fixtures_enabled.includes(fx.id);
+    const row = document.createElement('div');
+    row.className = 'fx-row' + (enabled ? ' sel' : '');
+    const typeLabel = fx.type === 'pixel_strip' ? 'pixel strip' : 'pod fixture';
+    const typePill  = fx.type === 'pixel_strip' ? 'strip' : '';
+    const sizeBit = fx.type === 'pixel_strip'
+      ? `${fxCellCount(fx)} px · ${(fx.segments||[]).length||1} seg`
+      : `${fx.pods||1} pod${(fx.pods||1)>1?'s':''}`;
+    row.innerHTML = `
+      <input type="checkbox" class="fx-checkbox" ${enabled ? 'checked' : ''}>
+      <div class="fx-info">
+        <div class="fx-name">${escapeHtml(fx.name || fx.id)}</div>
+        <div class="fx-meta">
+          <span class="pill ${typePill}">${typeLabel}</span>
+          <span>${sizeBit}</span>
+        </div>
+      </div>
+    `;
+    row.onclick = () => toggleFixture(fx.id);
+    // Prevent the checkbox click from double-firing the row handler
+    row.querySelector('input').onclick = (e) => {
+      e.stopPropagation();
+      toggleFixture(fx.id);
+    };
+    container.appendChild(row);
+  });
+}
+
+function toggleFixture(fxId) {
+  const i = scene.fixtures_enabled.indexOf(fxId);
+  if (i >= 0) scene.fixtures_enabled.splice(i, 1);
+  else        scene.fixtures_enabled.push(fxId);
+  renderFixtureList();
+  renderModeHelp();
+  markDirty();
+}
+
+// ── Live preview ───────────────────────────────────────────────────────────
+function toggleLive() {
+  live = !live;
+  const btn = document.getElementById('live-btn');
+  if (live) {
+    btn.textContent = '🟢 LIVE';
+    btn.classList.remove('off');
+    startPreviewIfLive();
+  } else {
+    btn.textContent = '⚪ LIVE';
+    btn.classList.add('off');
+    clearPreview();
+  }
+}
+
+function startPreviewIfLive() {
+  if (live) markDirty();
+}
+
+function markDirty() {
+  if (!live) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(sendPreview, 120);
+}
+
+function sendPreview() {
+  fetch('/api/effect/preview', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({scene: buildScenePayload()}),
+  }).catch(() => {});
+}
+
+function clearPreview() {
+  navigator.sendBeacon
+    ? navigator.sendBeacon('/api/effect/preview',
+        new Blob([JSON.stringify({clear:true})], {type:'application/json'}))
+    : fetch('/api/effect/preview', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({clear:true}),
+        keepalive: true,
+      }).catch(() => {});
+}
+
+window.addEventListener('beforeunload', clearPreview);
+window.addEventListener('pagehide',     clearPreview);
+
+// ── Name change ────────────────────────────────────────────────────────────
+function onNameChange(v) {
+  scene.name = v;
+  document.getElementById('header-title').textContent = v || 'New Effect Scene';
+  markDirty();
+}
+
+// ── Save / cancel / delete ─────────────────────────────────────────────────
+function buildScenePayload() {
+  const launchFade = parseInt(document.getElementById('scene-launch-fade').value);
+  return {
+    name: scene.name,
+    scene_type: 'effect',
+    effect: scene.effect,
+    primary:   scene.primary,
+    secondary: scene.secondary,
+    accent:    scene.accent,
+    primary_sample:   !!scene.primary_sample,
+    secondary_sample: !!scene.secondary_sample,
+    accent_sample:    !!scene.accent_sample,
+    params:    scene.params,
+    fixtures_enabled: scene.fixtures_enabled,
+    rendering_mode:   scene.rendering_mode,
+    target_group:     scene.target_group || null,
+    launch_fade: isNaN(launchFade) ? 500 : Math.max(0, launchFade),
+    folder: document.getElementById('scene-folder').value.trim(),
+    tempo_sync: !!scene.tempo_sync,
+    beat_division: scene.beat_division || 1,
+  };
+}
+
+async function saveScene() {
+  if (!scene.name.trim()) {
+    toast('Please name the effect first.', 'err');
+    document.getElementById('scene-name').focus();
+    return;
+  }
+  if (scene.fixtures_enabled.length === 0) {
+    if (!confirm('No fixtures enabled — this effect will play to nothing. Save anyway?'))
+      return;
+  }
+  const payload = buildScenePayload();
+  const url = SCENE_ID ? `/api/library/scene/${SCENE_ID}` : '/api/library/scene';
+  try {
+    const r = await fetch(url, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!d.ok) { toast('Save failed: ' + d.error, 'err'); return; }
+    // Auto-enable new scenes in the current show
+    if (!SCENE_ID && d.id) {
+      try {
+        const state = await fetch('/api/state').then(r => r.json());
+        const enabled = (state.enabled_scenes || []).map(s => s.id);
+        if (!enabled.includes(d.id)) enabled.push(d.id);
+        await fetch('/api/show/enabled-scenes', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({scenes: enabled}),
+        });
+      } catch (e) { /* ignore */ }
+    }
+    clearPreview();
+    toast('Saved', 'ok');
+    setTimeout(() => location.href = RETURN_PATH, 350);
+  } catch (e) {
+    toast('Save failed: ' + e, 'err');
+  }
+}
+
+function cancelEdit() {
+  if (!confirm('Discard changes?')) return;
+  clearPreview();
+  location.href = RETURN_PATH;
+}
+
+function deleteScene() {
+  if (!SCENE_ID) return;
+  const name = scene.name || 'this effect';
+  if (!confirm(`Delete "${name}" from the library? This cannot be undone.`)) return;
+  fetch(`/api/library/scene/${SCENE_ID}`, { method:'DELETE' })
+    .then(r => r.json()).then(d => {
+      if (d.ok) { clearPreview(); location.href = RETURN_PATH; }
+      else      { toast('Delete failed: ' + d.error, 'err'); }
+    });
+}
+
+// ── Utility ────────────────────────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+let toastT;
+function toast(msg, type='') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => el.className = 'toast', 2200);
+}
+
+init();
+</script>
+</body>
+</html>

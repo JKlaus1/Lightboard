@@ -1,0 +1,43 @@
+{
+  "name": "Blue/green twinkle",
+  "scene_type": "effect",
+  "effect": "twinkle",
+  "primary": {
+    "a": 0,
+    "b": 255,
+    "g": 0,
+    "r": 0,
+    "uv": 255,
+    "w": 0
+  },
+  "secondary": {
+    "a": 0,
+    "b": 0,
+    "g": 255,
+    "r": 0,
+    "uv": 0,
+    "w": 60
+  },
+  "accent": {
+    "r": 255,
+    "g": 180,
+    "b": 0,
+    "a": 200,
+    "w": 0,
+    "uv": 0
+  },
+  "primary_sample": false,
+  "secondary_sample": false,
+  "accent_sample": false,
+  "params": {
+    "fade": 1,
+    "speed": 2.5
+  },
+  "fixtures_enabled": [
+    "blizzard_exa_54ch_1779867499106_0",
+    "blizzard_exa_54ch_1779867499106_1"
+  ],
+  "rendering_mode": "continuous_strip",
+  "launch_fade": 500,
+  "folder": "Bars"
+}

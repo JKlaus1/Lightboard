@@ -1,0 +1,1591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Scene Editor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#0d0d0d; --surface:#1a1a1a; --surface2:#252525; --surface3:#2e2e2e;
+    --border:#333; --text:#e0e0e0; --sub:#888;
+    --accent:#3b82f6; --green:#22c55e; --red:#ef4444; --amber:#f59e0b;
+  }
+  html,body { height:100%; background:var(--bg); color:var(--text);
+              font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+              font-size:15px; -webkit-tap-highlight-color:transparent; }
+  input,button,select { font-family:inherit; }
+
+  /* Header */
+  header { display:flex; align-items:center; gap:10px; padding:10px 14px;
+           background:var(--surface); border-bottom:1px solid var(--border);
+           position:sticky; top:0; z-index:20; }
+  header h1 { font-size:15px; font-weight:700; flex:1; }
+  .hbtn { padding:8px 14px; border-radius:8px; border:none; font-size:13px;
+          font-weight:600; cursor:pointer; }
+  .hbtn-cancel { background:var(--surface2); color:var(--sub);
+                 border:1px solid var(--border); }
+  .hbtn-save   { background:var(--accent); color:#fff; }
+  .hbtn:active { opacity:.75; }
+
+  main { padding:12px; display:flex; flex-direction:column; gap:12px;
+         padding-bottom:80px; }
+
+  /* Card */
+  .card { background:var(--surface); border:1px solid var(--border);
+          border-radius:12px; padding:14px; }
+  .card-title { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+                color:var(--sub); margin-bottom:10px; }
+
+  /* Tempo sync controls */
+  .ts-toggle { border:none; border-radius:8px; padding:8px 16px; font-size:13px;
+               font-weight:700; cursor:pointer; }
+  .ts-toggle.on  { background:var(--green); color:#000; }
+  .ts-toggle.off { background:var(--surface2); color:var(--sub);
+                   border:1px solid var(--border); }
+  .bd-btn { background:var(--surface2); border:1px solid var(--border); color:var(--text);
+            border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; }
+  .bd-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+  /* Scene name */
+  .name-input { width:100%; background:var(--surface2); border:1px solid var(--border);
+                color:var(--text); border-radius:8px; padding:10px 12px;
+                font-size:16px; font-weight:600; }
+  .name-input:focus { outline:none; border-color:var(--accent); }
+
+  /* Steps row */
+  .steps-scroll { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:10px; }
+  .step-pill { flex-shrink:0; padding:8px 14px; border-radius:20px; cursor:pointer;
+               background:var(--surface2); border:2px solid var(--border);
+               font-size:13px; white-space:nowrap; }
+  .step-pill.active { border-color:var(--accent); background:rgba(59,130,246,.15); }
+  .step-pill.add-step { border-style:dashed; color:var(--sub); }
+
+  /* Step timing */
+  .timing-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+  .timing-field label { font-size:11px; color:var(--sub); display:block; margin-bottom:4px; }
+  .timing-field input { width:100%; background:var(--surface2); border:1px solid var(--border);
+                        color:var(--text); border-radius:8px; padding:8px 10px; font-size:14px; }
+  .timing-field input:focus { outline:none; border-color:var(--accent); }
+  .timing-hint { font-size:10px; color:var(--sub); margin-top:3px; }
+
+  /* Fixture section */
+  .fixture-section { margin-bottom:14px; }
+  .fixture-title { font-size:12px; font-weight:600; color:var(--sub);
+                   margin-bottom:8px; text-transform:uppercase; letter-spacing:.06em; }
+
+  /* Pod grid */
+  .pod-grid { display:grid; gap:6px; }
+  .pod-grid-8 { grid-template-columns:repeat(4,1fr); }
+  /* Single-pod fixtures (RGB pars, WLED in single-RGB mode, etc.):
+     show as a wide rectangle, not a giant full-width square. */
+  .pod-grid-1 { grid-template-columns:1fr; max-width:180px; }
+
+  .pod { aspect-ratio:1; border-radius:8px; border:2px solid var(--border);
+         display:flex; flex-direction:column; align-items:center; justify-content:center;
+         cursor:pointer; position:relative; transition:border-color .15s; min-height:54px; }
+  /* Single-pod fixtures get a fixed shorter height so they don't blow up
+     when the container is wide. Multi-pod grids keep aspect-ratio:1. */
+  .pod-grid-1 .pod { aspect-ratio:auto; height:80px; }
+  .pod:active { filter:brightness(1.3); }
+  .pod.singer { border-color:var(--amber); }
+  .pod.singer::after { content:'🎤'; position:absolute; bottom:2px; right:3px;
+                       font-size:10px; line-height:1; }
+  .pod-num { font-size:9px; color:rgba(255,255,255,.5); position:absolute;
+             top:3px; left:4px; }
+
+  /* Color picker sheet */
+  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7);
+             z-index:50; align-items:flex-end; }
+  .overlay.open { display:flex; }
+  .picker-sheet { background:var(--surface); width:100%; border-radius:16px 16px 0 0;
+                  padding:16px; max-height:85vh; overflow-y:auto; }
+  .picker-title { font-size:14px; font-weight:700; margin-bottom:12px; }
+
+  /* Color presets */
+  .presets { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-bottom:14px; }
+  .preset { aspect-ratio:1; border-radius:8px; cursor:pointer; border:2px solid transparent;
+            display:flex; align-items:center; justify-content:center;
+            font-size:9px; color:rgba(255,255,255,.7); text-align:center; line-height:1.2;
+            font-weight:600; }
+  .preset.sel { border-color:#fff; }
+  .preset:active { filter:brightness(1.3); }
+
+  /* RGBAWUV sliders */
+  .channel-sliders { display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
+  .ch-row { display:flex; align-items:center; gap:8px; }
+  .ch-label { width:24px; font-size:12px; font-weight:700; text-align:right; flex-shrink:0; }
+  .ch-label.R { color:#ef4444; } .ch-label.G { color:#22c55e; }
+  .ch-label.B { color:#3b82f6; } .ch-label.A { color:#f59e0b; }
+  .ch-label.W { color:#e0e0e0; } .ch-label.UV { color:#a855f7; font-size:10px; }
+  .ch-label.L { color:#a3e635; } /* Lime — yellow-green, distinct from G */
+  .ch-val { width:34px; font-size:12px; text-align:right; flex-shrink:0;
+            font-variant-numeric:tabular-nums; }
+  input[type=range].ch-slider { flex:1; height:4px; }
+  input[type=range].ch-slider::-webkit-slider-thumb { width:20px; height:20px; }
+
+  /* Preview swatch */
+  .swatch-row { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  #picker-swatch { width:48px; height:48px; border-radius:10px; border:1px solid var(--border); }
+  .swatch-hex { font-size:12px; color:var(--sub); }
+
+  /* Picker buttons */
+  .picker-btns { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .picker-btns button { padding:12px; border-radius:8px; border:none; font-size:14px;
+                        font-weight:600; cursor:pointer; }
+  .btn-apply  { background:var(--accent); color:#fff; }
+  .btn-cancel { background:var(--surface2); color:var(--sub); border:1px solid var(--border) !important; }
+
+  /* Step delete */
+  .step-del { color:var(--red); font-size:12px; cursor:pointer; margin-left:8px; }
+
+  /* Bottom save bar */
+  .save-bar { position:fixed; bottom:0; left:0; right:0; padding:12px 16px;
+              background:var(--surface); border-top:1px solid var(--border);
+              display:grid; grid-template-columns:1fr 1fr; gap:10px; z-index:30; }
+  .save-bar button { padding:13px; border-radius:10px; border:none; font-size:15px;
+                     font-weight:700; cursor:pointer; }
+  #save-btn   { background:var(--accent); color:#fff; }
+  #cancel-btn { background:var(--surface2); color:var(--sub);
+                border:1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="header-title">New Scene</h1>
+  <button class="hbtn" id="live-btn" onclick="toggleLive()"
+          style="background:#1f3a1f;border:1px solid #2e5e2e;color:#7fdb7f;padding:6px 12px;border-radius:7px;font-size:0.78rem;cursor:pointer;font-weight:700;">
+    ⚪ LIVE
+  </button>
+  <button class="hbtn hbtn-cancel" id="delete-btn" style="display:none;background:#3a1010;border-color:#5a1818;color:#ff8888;" onclick="deleteScene()">Delete</button>
+  <button class="hbtn hbtn-cancel" onclick="cancelEdit()">Cancel</button>
+  <button class="hbtn hbtn-save"   onclick="saveScene()">Save</button>
+</header>
+
+<main class="scene-type-{{ scene_type }}">
+  <!-- Scene name + folder -->
+  <div class="card" style="display:flex;flex-direction:column;gap:8px;">
+    <div style="font-size:0.7rem;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">
+      {% if scene_type == 'mover_motion' %}🎯 Mover Motion Scene{% elif scene_type == 'mover_look' %}💡 Mover Look Scene{% else %}Main Scene{% endif %}
+    </div>
+    <input class="name-input" id="scene-name" type="text"
+           placeholder="Scene name…" autocomplete="off" spellcheck="false"
+           oninput="onNameChange(this.value)">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <label style="font-size:0.75rem;color:var(--sub);min-width:50px;">Folder</label>
+      <input id="scene-folder" type="text" list="folder-list" placeholder="e.g. Upbeat / Slow / Party"
+             style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:7px 10px;font-size:0.82rem;outline:none;"
+             autocomplete="off">
+      <datalist id="folder-list">
+        {% for f in folders %}<option value="{{ f }}">{% endfor %}
+      </datalist>
+    </div>
+    <div style="font-size:0.68rem;color:var(--sub);padding-left:56px;">
+      Optional. Use slashes to nest folders (e.g. "Party/Strobe"). Leave blank for Uncategorized.
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+      <label style="font-size:0.75rem;color:var(--sub);min-width:50px;">Fade in/out</label>
+      <input id="scene-launch-fade" type="number" min="0" max="30000" step="100" value="1000"
+             style="width:90px;background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:7px 10px;font-size:0.82rem;outline:none;">
+      <span style="font-size:0.68rem;color:var(--sub);">ms · fade when scene starts and stops (0 = snap)</span>
+    </div>
+  </div>
+
+  {% if scene_type == 'main' %}
+  <!-- Tempo sync -->
+  <div class="card" id="tempo-sync-card">
+    <div class="card-title">Tempo Sync</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button type="button" id="tempo-sync-btn" class="ts-toggle off" onclick="toggleTempoSync()">Off</button>
+      <span style="font-size:0.72rem;color:var(--sub);flex:1;min-width:160px;">When on, steps advance on the beat instead of their hold times (needs a live tap tempo).</span>
+    </div>
+    <div id="beat-div-row" style="display:none;align-items:center;gap:6px;margin-top:12px;flex-wrap:wrap;">
+      <span style="font-size:0.72rem;color:var(--sub);margin-right:2px;">Advance every</span>
+      <button type="button" class="bd-btn" data-div="0.5" onclick="setBeatDivision(0.5,this)">½ beat</button>
+      <button type="button" class="bd-btn" data-div="1"   onclick="setBeatDivision(1,this)">1 beat</button>
+      <button type="button" class="bd-btn" data-div="2"   onclick="setBeatDivision(2,this)">2 beats</button>
+      <button type="button" class="bd-btn" data-div="4"   onclick="setBeatDivision(4,this)">4 beats</button>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if scene_type in ('mover_motion', 'mover_look') %}
+  <!-- ─── Mover scene editor ─── -->
+  <div class="card">
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">Steps</span>
+      <button onclick="addMoverStep()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 12px;font-size:11px;cursor:pointer;">+ Step</button>
+    </div>
+    <div id="mover-steps" style="display:flex;flex-direction:column;gap:6px;"></div>
+    <div style="font-size:0.7rem;color:var(--sub);margin-top:8px;">
+      Each step holds for its hold time, then fades to the next.
+      For a static look, use one step.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Editing Step <span id="mover-current-step">1</span></div>
+    <div class="timing-row" style="display:flex;gap:10px;margin-bottom:10px;">
+      <div class="timing-field" style="flex:1;">
+        <label style="font-size:0.7rem;color:var(--sub);">Fade in (ms)</label>
+        <input type="number" id="mover-step-fade" min="0" max="30000" step="100" value="0"
+               oninput="onMoverTimingChange()" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;">
+      </div>
+      <div class="timing-field" style="flex:1;">
+        <label style="font-size:0.7rem;color:var(--sub);">Hold (ms)</label>
+        <input type="number" id="mover-step-hold" min="0" max="30000" step="100" value="500"
+               oninput="onMoverTimingChange()" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <button onclick="copyCurrentStep()" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px;font-size:0.75rem;cursor:pointer;">📋 Copy step</button>
+      <button id="mover-paste-step-btn" onclick="pasteStepAt(currentStep + 1)" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--sub);padding:6px;font-size:0.75rem;cursor:pointer;opacity:0.5;">📎 Paste after</button>
+    </div>
+    <div id="mover-fixtures"></div>
+  </div>
+  {% endif %}
+
+  {% if scene_type == 'main' %}
+  <!-- ─── Main scene editor (existing pod-based) ─── -->
+
+  <!-- Steps + content -->
+  <div class="card">
+    <div class="card-title">Steps</div>
+    <div class="steps-scroll" id="steps-scroll"></div>
+
+    <div class="timing-row">
+      <div class="timing-field">
+        <label>Fade in (ms)</label>
+        <input type="number" id="step-fade" min="0" max="30000" step="100"
+               value="0" oninput="onTimingChange()">
+        <div class="timing-hint">0 = snap</div>
+      </div>
+      <div class="timing-field">
+        <label>Hold (ms)</label>
+        <input type="number" id="step-hold" min="50" max="60000" step="100"
+               value="2000" oninput="onTimingChange()">
+        <div class="timing-hint">How long before next step</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:4px;">
+      <button onclick="copyCurrentStep()" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px;font-size:0.75rem;cursor:pointer;">📋 Copy step</button>
+      <button id="paste-step-btn" onclick="pasteStepAt(currentStep + 1)" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--sub);padding:6px;font-size:0.75rem;cursor:pointer;opacity:0.5;">📎 Paste after</button>
+    </div>
+    <div id="clipboard-hint" style="font-size:0.68rem;color:var(--sub);margin-top:4px;text-align:center;display:none;">
+      Clipboard ready · tap the <strong>⊕</strong> between steps (or right-click) to paste at that position
+    </div>
+
+    <!-- Fixtures -->
+    <div id="fixtures-section"></div>
+  </div>
+  {% endif %}
+</main>
+
+<!-- Color picker sheet -->
+<div class="overlay" id="picker-overlay" onclick="closePicker()">
+  <div class="picker-sheet" onclick="event.stopPropagation()">
+    <div class="picker-title" id="picker-title">Pod color</div>
+    <div style="font-size:0.68rem;color:var(--sub);margin-top:-6px;margin-bottom:10px;">
+      Tap to select · double-tap to apply
+    </div>
+    <div class="presets" id="presets"></div>
+    <div class="swatch-row">
+      <div id="picker-swatch"></div>
+      <div class="swatch-hex" id="picker-hex"></div>
+    </div>
+    <div class="channel-sliders" id="channel-sliders"></div>
+
+    <!-- Pod brightness -->
+    <div style="margin:12px 0 4px; display:flex; align-items:center; gap:10px;">
+      <span style="font-size:0.75rem;font-weight:700;color:var(--sub);min-width:76px;">BRIGHTNESS</span>
+      <input type="range" id="brightness-slider" min="1" max="100" value="100"
+             oninput="onBrightnessChange(this.value)"
+             style="flex:1;height:6px;-webkit-appearance:none;appearance:none;
+                    background:linear-gradient(to right,#222,#fff);border-radius:3px;outline:none;cursor:pointer;">
+      <span id="brightness-val"
+            style="font-size:0.82rem;min-width:36px;text-align:right;
+                   color:var(--text);font-variant-numeric:tabular-nums;">100%</span>
+    </div>
+    <div style="font-size:0.68rem;color:var(--sub);margin-bottom:10px;padding-left:86px;">
+      Scales all channels — pick color first, then set brightness
+    </div>
+
+    <div class="picker-btns">
+      <button class="btn-cancel" onclick="closePicker()">Cancel</button>
+      <button class="btn-apply-all" onclick="applyColorAll()" style="
+        background:var(--surface2);border:1px solid var(--border);color:var(--text);
+        padding:12px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;flex:1;">
+        All Pods
+      </button>
+      <button class="btn-apply"  onclick="applyColor()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- Copy-values-to-other-fixtures sheet (mover/WLED scenes) -->
+<div class="overlay" id="copy-overlay" onclick="closeCopySheet()" style="display:none;">
+  <div class="picker-sheet" onclick="event.stopPropagation()" style="max-width:420px;">
+    <div class="picker-title">Copy values to…</div>
+    <div style="font-size:0.72rem;color:var(--sub);margin-top:-4px;margin-bottom:10px;">
+      From: <span id="copy-src-name" style="color:var(--accent);font-weight:700;"></span>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;">
+      <button onclick="copySheetSetAll(true)"  style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px;font-size:0.75rem;cursor:pointer;">Select all</button>
+      <button onclick="copySheetSetAll(false)" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px;font-size:0.75rem;cursor:pointer;">Select none</button>
+    </div>
+    <div id="copy-targets" style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;"></div>
+    <div class="picker-btns" style="margin-top:14px;">
+      <button class="btn-cancel" onclick="closeCopySheet()">Cancel</button>
+      <button class="btn-apply" onclick="applyCopySheet()">Copy</button>
+    </div>
+  </div>
+</div>
+
+<div class="save-bar">
+  <button id="cancel-btn" onclick="cancelEdit()">Cancel</button>
+  <button id="save-btn"   onclick="saveScene()">Save Scene</button>
+</div>
+
+<script>
+// ── Show config from Flask ─────────────────────────────────────────────
+const SHOW = {{ show | tojson }};
+const EXISTING_SCENE = {{ scene | tojson if scene else 'null' }};
+const EXISTING_ID    = {{ scene_id | tojson if scene_id else 'null' }};
+const SCENE_TYPE     = {{ scene_type | tojson }};
+const MOVERS = SHOW.fixtures.filter(fx => fx.type === 'mover');
+
+// Where to return when the user saves, cancels, or deletes. Set via ?from=…
+// in the URL when the editor is opened. Defaults to '/library' for existing
+// scenes (since the library is where scenes naturally live), and '/' for
+// brand-new scenes (the home page auto-enables them).
+const FROM_PARAM = new URLSearchParams(location.search).get('from');
+const RETURN_PATH = FROM_PARAM === 'home' ? '/' : (EXISTING_ID ? '/library' : '/');
+
+// ── Live preview ───────────────────────────────────────────────────────
+let liveMode = false;
+let livePreviewT = null;
+let liveLastSent = 0;
+
+function toggleLive() {
+  liveMode = !liveMode;
+  const btn = document.getElementById('live-btn');
+  if (liveMode) {
+    btn.innerHTML = '🟢 LIVE';
+    btn.style.background = '#2e5e2e';
+    btn.style.borderColor = '#4eae4e';
+    btn.style.color = '#fff';
+    sendLivePreview();   // push the current step immediately
+  } else {
+    btn.innerHTML = '⚪ LIVE';
+    btn.style.background = '#1f3a1f';
+    btn.style.borderColor = '#2e5e2e';
+    btn.style.color = '#7fdb7f';
+    stopLivePreview();
+  }
+}
+
+function sendLivePreview() {
+  if (!liveMode) return;
+  // Throttle: at most one send every 30ms; coalesce additional changes
+  clearTimeout(livePreviewT);
+  const step = steps[currentStep];
+  if (!step) return;
+  livePreviewT = setTimeout(() => {
+    fetch('/api/preview', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        scene_type: SCENE_TYPE,
+        fixtures:   step.fixtures || {},
+      }),
+    }).catch(() => {});
+    liveLastSent = Date.now();
+  }, 30);
+}
+
+function stopLivePreview() {
+  clearTimeout(livePreviewT);
+  fetch('/api/preview/stop', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ scene_type: SCENE_TYPE }),
+  }).catch(() => {});
+}
+
+// Stop preview when leaving the page so values don't persist forever
+window.addEventListener('beforeunload', () => {
+  if (liveMode) {
+    // Use sendBeacon for guaranteed delivery during unload
+    const blob = new Blob([JSON.stringify({ scene_type: SCENE_TYPE })],
+                          { type: 'application/json' });
+    navigator.sendBeacon('/api/preview/stop', blob);
+  }
+});
+
+// ── Color presets ──────────────────────────────────────────────────────
+// ── Preset banks per fixture capability ────────────────────────────────
+// Each preset specifies whatever channels apply; missing channels default to 0.
+// The picker chooses the right bank based on which color channels the fixture
+// actually has (from pod_color_offsets).
+
+// RGB-only (basic LED bars, WLED in RGB mode, generic pars)
+const PRESETS_RGB = [
+  { name:'Off',         r:0,   g:0,   b:0   },
+  { name:'Red',         r:255, g:0,   b:0   },
+  { name:'Orange',      r:255, g:80,  b:0   },
+  { name:'Amber',       r:255, g:140, b:0   },
+  { name:'Yellow',      r:255, g:220, b:0   },
+  { name:'Lime',        r:140, g:255, b:0   },
+  { name:'Green',       r:0,   g:255, b:0   },
+  { name:'Teal',        r:0,   g:255, b:140 },
+  { name:'Cyan',        r:0,   g:255, b:255 },
+  { name:'Sky',         r:0,   g:140, b:255 },
+  { name:'Blue',        r:0,   g:0,   b:255 },
+  { name:'Purple',      r:140, g:0,   b:255 },
+  { name:'Magenta',     r:255, g:0,   b:255 },
+  { name:'Pink',        r:255, g:80,  b:140 },
+  { name:'Warm\nWhite', r:255, g:160, b:80  },
+  { name:'White',       r:255, g:255, b:255 },
+];
+
+// RGBW (adds a true white channel - WLED RGBW, RGBW pars)
+// White channel does heavy lifting for proper whites; RGB channels handle hue
+const PRESETS_RGBW = [
+  { name:'Off',         r:0,   g:0,   b:0,   w:0   },
+  { name:'Warm\nWhite', r:0,   g:0,   b:0,   w:255 },  // pure W (warm if strip is warm white)
+  { name:'White',       r:255, g:255, b:255, w:255 },  // max white = full all
+  { name:'Cool\nWhite', r:200, g:200, b:255, w:200 },  // bluish bias
+  { name:'Red',         r:255, g:0,   b:0,   w:0   },
+  { name:'Orange',      r:255, g:80,  b:0,   w:30  },
+  { name:'Amber',       r:255, g:140, b:0,   w:60  },
+  { name:'Yellow',      r:255, g:220, b:0,   w:60  },
+  { name:'Lime',        r:140, g:255, b:0,   w:0   },
+  { name:'Green',       r:0,   g:255, b:0,   w:0   },
+  { name:'Teal',        r:0,   g:255, b:140, w:0   },
+  { name:'Cyan',        r:0,   g:255, b:255, w:0   },
+  { name:'Sky',         r:0,   g:140, b:255, w:0   },
+  { name:'Blue',        r:0,   g:0,   b:255, w:0   },
+  { name:'Purple',      r:140, g:0,   b:255, w:0   },
+  { name:'Magenta',     r:255, g:0,   b:255, w:0   },
+  { name:'Pink',        r:255, g:80,  b:140, w:30  },
+  { name:'Soft\nPink',  r:255, g:140, b:180, w:120 },
+];
+
+// RGBAW (no UV, adds amber and white - some LED bars)
+const PRESETS_RGBAW = [
+  { name:'Off',         r:0,   g:0,   b:0,   a:0,   w:0   },
+  { name:'Warm\nWhite', r:20,  g:0,   b:0,   a:200, w:220 },
+  { name:'White',       r:255, g:255, b:255, a:255, w:255 },
+  { name:'Amber',       r:30,  g:0,   b:0,   a:255, w:0   },
+  { name:'Red',         r:255, g:0,   b:0,   a:220, w:0   },
+  { name:'Orange',      r:255, g:30,  b:0,   a:255, w:0   },
+  { name:'Yellow',      r:255, g:180, b:0,   a:200, w:0   },
+  { name:'Lime',        r:140, g:255, b:0,   a:0,   w:0   },
+  { name:'Green',       r:0,   g:255, b:0,   a:0,   w:60  },
+  { name:'Teal',        r:0,   g:255, b:140, a:0,   w:30  },
+  { name:'Cyan',        r:0,   g:255, b:255, a:0,   w:120 },
+  { name:'Sky',         r:0,   g:140, b:255, a:0,   w:60  },
+  { name:'Blue',        r:0,   g:0,   b:255, a:0,   w:0   },
+  { name:'Purple',      r:180, g:0,   b:255, a:0,   w:0   },
+  { name:'Pink',        r:255, g:0,   b:80,  a:0,   w:0   },
+];
+
+// RGBAWUV (the full set - Blizzard EXA, Chauvet H18X)
+const PRESETS_RGBAWUV = [
+  { name:'Off',         r:0,   g:0,   b:0,   a:0,   w:0,   uv:0   },
+  { name:'Warm\nWhite', r:20,  g:0,   b:0,   a:200, w:220, uv:0   },
+  { name:'Amber',       r:30,  g:0,   b:0,   a:255, w:0,   uv:0   },
+  { name:'Red',         r:255, g:0,   b:0,   a:220, w:0,   uv:0   },
+  { name:'Orange',      r:255, g:30,  b:0,   a:255, w:0,   uv:0   },
+  { name:'Yellow',      r:255, g:180, b:0,   a:200, w:0,   uv:0   },
+  { name:'Green',       r:0,   g:255, b:0,   a:0,   w:60,  uv:0   },
+  { name:'Cyan',        r:0,   g:255, b:255, a:0,   w:120, uv:40  },
+  { name:'Blue',        r:0,   g:0,   b:255, a:0,   w:0,   uv:220 },
+  { name:'Purple',      r:180, g:0,   b:255, a:0,   w:0,   uv:200 },
+  { name:'Pink',        r:255, g:0,   b:80,  a:0,   w:0,   uv:255 },
+  { name:'UV',          r:0,   g:0,   b:60,  a:0,   w:0,   uv:255 },
+  { name:'UV\nBlue',    r:0,   g:0,   b:180, a:0,   w:0,   uv:255 },
+  { name:'UV\nPink',    r:200, g:0,   b:60,  a:0,   w:0,   uv:255 },
+  { name:'White',       r:255, g:255, b:255, a:255, w:255, uv:0   },
+];
+
+// RGBLAUV — Lime + Amber + UV fixtures (Betopper LPC1818 etc.)
+// The Lime channel unlocks true yellows, chartreuse, and richer ambers
+// that RGBAWUV fixtures can only approximate via colour mixing.
+const PRESETS_RGBLAUV = [
+  // Blacks / whites
+  { name:'Off',         r:0,   g:0,   b:0,   l:0,   a:0,   uv:0   },
+  { name:'Warm\nWhite', r:180, g:40,  b:0,   l:140, a:220, uv:0   },
+  { name:'Cool\nWhite', r:220, g:220, b:180, l:200, a:60,  uv:0   },
+  // Reds / oranges
+  { name:'Red',         r:255, g:0,   b:0,   l:0,   a:160, uv:0   },
+  { name:'Orange',      r:255, g:0,   b:0,   l:0,   a:255, uv:0   },
+  // Ambers / golds — the real strength of Lime+Amber fixtures
+  { name:'Amber',       r:60,  g:0,   b:0,   l:0,   a:255, uv:0   },
+  { name:'Gold',        r:80,  g:0,   b:0,   l:200, a:255, uv:0   },
+  { name:'Sunburst',    r:160, g:0,   b:0,   l:255, a:200, uv:0   },
+  // Yellows — where Lime truly shines vs pure RGBAWUV
+  { name:'Vibrant\nYellow', r:0, g:0, b:0,   l:255, a:180, uv:0  },
+  { name:'Yellow',      r:80,  g:0,   b:0,   l:255, a:100, uv:0   },
+  // Greens
+  { name:'Lime\nGreen', r:0,   g:0,   b:0,   l:255, a:0,   uv:0   },
+  { name:'Spring\nGreen',r:0,  g:80,  b:0,   l:255, a:0,   uv:0   },
+  { name:'Green',       r:0,   g:255, b:0,   l:80,  a:0,   uv:0   },
+  // Blues / cyans / purples
+  { name:'Teal',        r:0,   g:0,   b:180, l:200, a:0,   uv:0   },
+  { name:'Cyan',        r:0,   g:180, b:255, l:100, a:0,   uv:0   },
+  { name:'Blue',        r:0,   g:0,   b:255, l:0,   a:0,   uv:180 },
+  { name:'Purple',      r:160, g:0,   b:255, l:0,   a:0,   uv:200 },
+  // UV effects
+  { name:'UV',          r:0,   g:0,   b:60,  l:0,   a:0,   uv:255 },
+  { name:'UV\nPink',    r:200, g:0,   b:60,  l:0,   a:0,   uv:255 },
+];
+
+function presetsForFixture(fx) {
+  // Determine which color channels this fixture has, and pick the matching
+  // preset bank. Falls back to RGB if nothing matches (safest minimum).
+  const offsets = (fx && fx.pod_color_offsets) ? fx.pod_color_offsets : {};
+  const has = ch => ch in offsets;
+  if (has('l')) return PRESETS_RGBLAUV;          // Lime fixtures (LPC1818 etc.)
+  if (has('uv')) return PRESETS_RGBAWUV;         // full RGBAWUV
+  if (has('a') && has('w')) return PRESETS_RGBAW;
+  if (has('w')) return PRESETS_RGBW;
+  return PRESETS_RGB;
+}
+
+// Legacy PRESETS reference used as fallback elsewhere; points to widest bank
+const PRESETS = PRESETS_RGBAWUV;
+
+// ── Scene data model ───────────────────────────────────────────────────
+// steps[i] = { fade, hold, fixtures: { fx_id: { dimmer, pods:[{r,g,b,a,w,uv}] } } }
+let sceneName = '';
+let steps = [];
+let currentStep = 0;
+
+// ── Singer pod lookup ──────────────────────────────────────────────────
+function singerPodsFor(fxId) {
+  const fx = SHOW.fixtures.find(f => f.id === fxId);
+  return fx ? (fx.singer_pods || []) : [];
+}
+
+// ── Blank step factory ─────────────────────────────────────────────────
+function blankStep() {
+  const s = { fade:0, hold:2000, fixtures:{} };
+  for (const fx of SHOW.fixtures) {
+    // New format: every fixture has `pods`; 1 = single-color par, more = bar
+    // Build initial color objects with only the colors the fixture supports
+    const colors = fx.pod_color_offsets || {r:0,g:1,b:2,a:3,w:4,uv:5};
+    const emptyPod = {};
+    Object.keys(colors).forEach(c => emptyPod[c] = 0);
+    const podCount = fx.pods || (fx.type === 'rgbawuv_bar' ? 8 : 1);
+    s.fixtures[fx.id] = {
+      dimmer: 255,
+      pods: Array.from({length: podCount}, () => ({...emptyPod}))
+    };
+  }
+  return s;
+}
+
+// ── Tempo sync (main scenes) ───────────────────────────────────────────
+let tempoSync    = false;
+let beatDivision = 1;
+
+function toggleTempoSync() {
+  tempoSync = !tempoSync;
+  applyTempoSyncUI();
+}
+function setBeatDivision(d, el) {
+  beatDivision = d;
+  document.querySelectorAll('.bd-btn').forEach(b => b.classList.toggle('active', b === el));
+}
+function applyTempoSyncUI() {
+  const btn = document.getElementById('tempo-sync-btn');
+  const row = document.getElementById('beat-div-row');
+  if (!btn || !row) return;   // card only present on main scenes
+  btn.textContent = tempoSync ? 'On' : 'Off';
+  btn.classList.toggle('on', tempoSync);
+  btn.classList.toggle('off', !tempoSync);
+  row.style.display = tempoSync ? 'flex' : 'none';
+  document.querySelectorAll('.bd-btn').forEach(b =>
+    b.classList.toggle('active', parseFloat(b.dataset.div) === beatDivision));
+}
+
+// ── Init ───────────────────────────────────────────────────────────────
+function init() {
+  if (EXISTING_SCENE) {
+    sceneName = EXISTING_SCENE.name || '';
+    steps     = EXISTING_SCENE.steps ? JSON.parse(JSON.stringify(EXISTING_SCENE.steps)) : [blankMoverStep()];
+    document.getElementById('scene-name').value = sceneName;
+    document.getElementById('scene-folder').value = EXISTING_SCENE.folder || '';
+    document.getElementById('scene-launch-fade').value =
+      EXISTING_SCENE.launch_fade !== undefined ? EXISTING_SCENE.launch_fade : (SHOW.default_launch_fade || 1000);
+    document.getElementById('header-title').textContent = 'Edit Scene';
+    const dbtn = document.getElementById('delete-btn');
+    if (dbtn) dbtn.style.display = '';
+    tempoSync    = !!EXISTING_SCENE.tempo_sync;
+    beatDivision = EXISTING_SCENE.beat_division || 1;
+  } else {
+    steps = SCENE_TYPE === 'main' ? [blankStep()] : [blankMoverStep()];
+    document.getElementById('scene-launch-fade').value = SHOW.default_launch_fade || 1000;
+  }
+
+  if (SCENE_TYPE === 'main') {
+    applyTempoSyncUI();
+    renderStepPills();
+    selectStep(0);
+  } else {
+    renderMoverSteps();
+    selectMoverStep(0);
+  }
+}
+
+// ── Mover Scene Editor ─────────────────────────────────────────────────
+function blankMoverStep() {
+  const s = { fade: 0, hold: 500, fixtures: {} };
+  for (const fx of MOVERS) {
+    s.fixtures[fx.id] = {};
+    const roles = fx.channel_roles || {};
+    // Initialize: for motion scenes start at center pan/tilt, for look start with dimmer on
+    if (SCENE_TYPE === 'mover_motion') {
+      if ('pan' in roles)  s.fixtures[fx.id].pan  = 128;
+      if ('tilt' in roles) s.fixtures[fx.id].tilt = 128;
+    } else {
+      if ('dimmer' in roles) s.fixtures[fx.id].dimmer = 255;
+    }
+  }
+  return s;
+}
+
+function renderMoverSteps() {
+  const wrap = document.getElementById('mover-steps');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  // Insert marker before step 0
+  if (steps.length > 0) wrap.appendChild(makeMoverInsertMarker(0));
+
+  steps.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--surface2);border:1px solid '+(i===currentStep?'var(--accent)':'var(--border)')+';border-radius:7px;cursor:pointer;';
+    row.onclick = () => selectMoverStep(i);
+    row.innerHTML = `
+      <span style="font-weight:700;color:${i===currentStep?'var(--accent)':'var(--text)'};">${i+1}</span>
+      <span style="flex:1;font-size:0.78rem;color:var(--sub);">fade ${s.fade||0}ms · hold ${s.hold||0}ms</span>
+      ${steps.length > 1 ? `<button onclick="event.stopPropagation();removeMoverStep(${i})" style="background:transparent;border:none;color:var(--danger);font-size:14px;cursor:pointer;padding:2px 6px;">✕</button>` : ''}`;
+    wrap.appendChild(row);
+
+    // Insert marker after this step
+    wrap.appendChild(makeMoverInsertMarker(i + 1));
+  });
+}
+
+function makeMoverInsertMarker(insertIdx) {
+  const m = document.createElement('div');
+  m.title = 'Insert step here' + (stepClipboard ? ' · right-click to paste' : '');
+  m.style.cssText = 'align-self:center;width:24px;height:18px;display:flex;align-items:center;justify-content:center;color:var(--sub);cursor:pointer;font-size:14px;opacity:0.5;border-radius:4px;';
+  m.textContent = stepClipboard ? '⊕' : '+';
+  m.onmouseenter = () => { m.style.opacity = '1'; m.style.background = 'var(--surface2)'; };
+  m.onmouseleave = () => { m.style.opacity = '0.5'; m.style.background = 'transparent'; };
+  m.onclick = (e) => {
+    if (e.shiftKey && stepClipboard) {
+      pasteStepAt(insertIdx);
+    } else {
+      insertBlankStepAt(insertIdx);
+    }
+  };
+  m.oncontextmenu = (e) => {
+    e.preventDefault();
+    if (stepClipboard) pasteStepAt(insertIdx);
+  };
+  let pressT = null;
+  m.ontouchstart = () => {
+    pressT = setTimeout(() => {
+      pressT = null;
+      if (stepClipboard) pasteStepAt(insertIdx);
+    }, 500);
+  };
+  m.ontouchend = () => { if (pressT) { clearTimeout(pressT); pressT = null; } };
+  m.ontouchcancel = m.ontouchend;
+  return m;
+}
+
+function selectMoverStep(i) {
+  currentStep = i;
+  renderMoverSteps();
+  const s = steps[i];
+  document.getElementById('mover-current-step').textContent = (i+1);
+  document.getElementById('mover-step-fade').value = s.fade || 0;
+  document.getElementById('mover-step-hold').value = s.hold || 0;
+  renderMoverFixtureControls();
+  sendLivePreview();
+}
+
+function addMoverStep() {
+  // Clone current step's fixture data as starting point for the new one
+  const cur  = steps[currentStep] || blankMoverStep();
+  const cp   = JSON.parse(JSON.stringify(cur));
+  cp.fade    = 1000;
+  cp.hold    = 500;
+  steps.splice(currentStep + 1, 0, cp);
+  selectMoverStep(currentStep + 1);
+}
+
+function removeMoverStep(i) {
+  if (steps.length <= 1) return;
+  steps.splice(i, 1);
+  if (currentStep >= steps.length) currentStep = steps.length - 1;
+  selectMoverStep(currentStep);
+}
+
+function onMoverTimingChange() {
+  steps[currentStep].fade = parseInt(document.getElementById('mover-step-fade').value) || 0;
+  steps[currentStep].hold = parseInt(document.getElementById('mover-step-hold').value) || 0;
+  renderMoverSteps();
+}
+
+function renderMoverFixtureControls() {
+  const wrap = document.getElementById('mover-fixtures');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (MOVERS.length === 0) {
+    wrap.innerHTML = '<div style="color:var(--sub);text-align:center;padding:20px;font-size:0.85rem;">No mover fixtures in this show. Add one in Settings first.</div>';
+    return;
+  }
+  const motionRoles = new Set(['pan','pan_fine','tilt','tilt_fine']);
+  const step = steps[currentStep];
+
+  for (const fx of MOVERS) {
+    if (!step.fixtures[fx.id]) step.fixtures[fx.id] = {};
+    const fd = step.fixtures[fx.id];
+    const roles = fx.channel_roles || {};
+
+    const card = document.createElement('div');
+    card.style.cssText = 'background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;';
+    // Only show "Copy to..." button if there are other movers in the show to copy to
+    const otherMovers = MOVERS.filter(o => o.id !== fx.id);
+    const copyBtn = otherMovers.length > 0
+      ? `<button onclick="openCopySheet('${fx.id}')" style="background:#1a1a1a;border:1px solid var(--border);border-radius:5px;color:var(--accent);padding:3px 9px;font-size:0.7rem;cursor:pointer;font-weight:600;">📋 Copy to…</button>`
+      : '';
+    let html = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <div style="font-weight:700;color:var(--accent);font-size:0.88rem;flex:1;">${fx.name}</div>
+      ${copyBtn}
+    </div>`;
+
+    // Pan/Tilt 2D pad for motion scenes
+    if (SCENE_TYPE === 'mover_motion' && 'pan' in roles && 'tilt' in roles) {
+      const padId = 'pad-' + fx.id;
+      html += `
+        <div style="display:flex;gap:12px;margin-bottom:10px;align-items:center;">
+          <div style="position:relative;width:140px;height:140px;background:#111;border:2px solid var(--border);border-radius:8px;flex-shrink:0;" id="${padId}-bg">
+            <div id="${padId}-dot" style="position:absolute;width:18px;height:18px;background:var(--accent);border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;"></div>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
+            <div>
+              <div style="font-size:0.7rem;color:var(--sub);display:flex;justify-content:space-between;"><span>Pan</span><span id="${padId}-pan-val">${fd.pan||0}</span></div>
+              <input type="range" min="0" max="255" value="${fd.pan||0}" oninput="setMoverRole('${fx.id}','pan',this.value)" id="${padId}-pan-slider" style="width:100%;">
+            </div>
+            <div>
+              <div style="font-size:0.7rem;color:var(--sub);display:flex;justify-content:space-between;"><span>Tilt</span><span id="${padId}-tilt-val">${fd.tilt||0}</span></div>
+              <input type="range" min="0" max="255" value="${fd.tilt||0}" oninput="setMoverRole('${fx.id}','tilt',this.value)" id="${padId}-tilt-slider" style="width:100%;">
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // Sliders for the remaining relevant roles
+    Object.keys(roles).sort().forEach(role => {
+      const isMotion = motionRoles.has(role);
+      if (SCENE_TYPE === 'mover_motion') {
+        // Motion: only show pan_fine and tilt_fine here (pan/tilt are in the pad above)
+        if (!isMotion || role === 'pan' || role === 'tilt') return;
+      } else {
+        // Look: skip pan/tilt entirely
+        if (isMotion) return;
+      }
+      const val = fd[role] !== undefined ? fd[role] : 0;
+      html += `
+        <div style="margin-top:6px;">
+          <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--sub);">
+            <span>${role.replace('_',' ')}</span>
+            <span id="val-${fx.id}-${role}">${val}</span>
+          </div>
+          <input type="range" min="0" max="255" value="${val}"
+                 oninput="setMoverRole('${fx.id}','${role}',this.value)" style="width:100%;">
+        </div>`;
+    });
+
+    card.innerHTML = html;
+    wrap.appendChild(card);
+
+    // Wire up XY pad if present
+    if (SCENE_TYPE === 'mover_motion' && 'pan' in roles && 'tilt' in roles) {
+      bindXYPad(fx.id);
+      updateXYPad(fx.id);
+    }
+  }
+}
+
+// ── Tiny toast helper ──────────────────────────────────────────────────
+function toast(msg) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:8px;font-size:0.85rem;z-index:9999;pointer-events:none;opacity:0;transition:opacity 0.2s;box-shadow:0 4px 12px rgba(0,0,0,0.4);';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = '0'; }, 1800);
+}
+
+// ── Copy values to other fixtures ──────────────────────────────────────
+let _copySrcId = null;
+
+function openCopySheet(srcId) {
+  _copySrcId = srcId;
+  const src = MOVERS.find(m => m.id === srcId);
+  if (!src) return;
+  document.getElementById('copy-src-name').textContent = src.name;
+  const wrap = document.getElementById('copy-targets');
+  const others = MOVERS.filter(m => m.id !== srcId);
+  wrap.innerHTML = others.map(m =>
+    `<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.85rem;">
+      <input type="checkbox" data-fxid="${m.id}" checked style="width:18px;height:18px;cursor:pointer;">
+      <span>${m.name}</span>
+    </label>`
+  ).join('');
+  document.getElementById('copy-overlay').style.display = 'flex';
+}
+
+function copySheetSetAll(checked) {
+  document.querySelectorAll('#copy-targets input[type=checkbox]').forEach(c => c.checked = checked);
+}
+
+function closeCopySheet() {
+  document.getElementById('copy-overlay').style.display = 'none';
+  _copySrcId = null;
+}
+
+function applyCopySheet() {
+  if (!_copySrcId) { closeCopySheet(); return; }
+  const step = steps[currentStep];
+  const srcData = step.fixtures[_copySrcId] || {};
+  const targets = Array.from(document.querySelectorAll('#copy-targets input[type=checkbox]:checked'))
+                       .map(c => c.dataset.fxid);
+  if (!targets.length) { closeCopySheet(); return; }
+
+  for (const tgtId of targets) {
+    const tgtFx = MOVERS.find(m => m.id === tgtId);
+    if (!tgtFx) continue;
+    const tgtRoles = tgtFx.channel_roles || {};
+    // Only copy roles the target fixture actually supports; this lets you
+    // (for example) copy color/effect from a WLED segment to another, or
+    // copy gobo/dimmer from one mover to another, without dropping in
+    // roles the target doesn't define.
+    const copied = {};
+    for (const [role, val] of Object.entries(srcData)) {
+      if (role in tgtRoles) copied[role] = val;
+    }
+    step.fixtures[tgtId] = copied;
+  }
+
+  renderMoverFixtureControls();
+  closeCopySheet();
+  sendLivePreview();
+  toast('Copied to ' + targets.length + ' fixture' + (targets.length === 1 ? '' : 's'));
+}
+
+function setMoverRole(fxId, role, value) {
+  const v = parseInt(value);
+  steps[currentStep].fixtures[fxId][role] = v;
+  const valEl = document.getElementById('val-'+fxId+'-'+role);
+  if (valEl) valEl.textContent = v;
+  // Also update XY pad value displays/dot
+  const padPanVal  = document.getElementById('pad-'+fxId+'-pan-val');
+  const padTiltVal = document.getElementById('pad-'+fxId+'-tilt-val');
+  if (padPanVal  && role === 'pan')  padPanVal.textContent  = v;
+  if (padTiltVal && role === 'tilt') padTiltVal.textContent = v;
+  updateXYPad(fxId);
+  sendLivePreview();
+}
+
+function bindXYPad(fxId) {
+  const bg = document.getElementById('pad-'+fxId+'-bg');
+  if (!bg) return;
+  let dragging = false;
+  const handle = (e) => {
+    const rect = bg.getBoundingClientRect();
+    const evt = e.touches ? e.touches[0] : e;
+    const x = Math.max(0, Math.min(1, (evt.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (evt.clientY - rect.top)  / rect.height));
+    const pan  = Math.round(x * 255);
+    const tilt = Math.round(y * 255);
+    steps[currentStep].fixtures[fxId].pan  = pan;
+    steps[currentStep].fixtures[fxId].tilt = tilt;
+    const panSl  = document.getElementById('pad-'+fxId+'-pan-slider');
+    const tiltSl = document.getElementById('pad-'+fxId+'-tilt-slider');
+    if (panSl)  panSl.value  = pan;
+    if (tiltSl) tiltSl.value = tilt;
+    document.getElementById('pad-'+fxId+'-pan-val').textContent  = pan;
+    document.getElementById('pad-'+fxId+'-tilt-val').textContent = tilt;
+    updateXYPad(fxId);
+    sendLivePreview();
+  };
+  bg.addEventListener('mousedown',  (e) => { dragging = true; handle(e); });
+  bg.addEventListener('touchstart', (e) => { dragging = true; handle(e); e.preventDefault(); }, {passive:false});
+  window.addEventListener('mousemove', (e) => { if (dragging) handle(e); });
+  window.addEventListener('touchmove', (e) => { if (dragging) { handle(e); e.preventDefault(); } }, {passive:false});
+  window.addEventListener('mouseup',   () => { dragging = false; });
+  window.addEventListener('touchend',  () => { dragging = false; });
+}
+
+function updateXYPad(fxId) {
+  const dot = document.getElementById('pad-'+fxId+'-dot');
+  if (!dot) return;
+  const fd  = steps[currentStep].fixtures[fxId] || {};
+  const pan  = fd.pan  || 0;
+  const tilt = fd.tilt || 0;
+  dot.style.left = (pan  / 255 * 100) + '%';
+  dot.style.top  = (tilt / 255 * 100) + '%';
+}
+
+// ── Scene name ─────────────────────────────────────────────────────────
+function onNameChange(v) { sceneName = v; }
+
+// ── Step pills ─────────────────────────────────────────────────────────
+function renderStepPills() {
+  const scroll = document.getElementById('steps-scroll');
+  scroll.innerHTML = '';
+
+  // Optional insert marker at position 0 (only if there's already a step there)
+  if (steps.length > 0) {
+    scroll.appendChild(makeInsertMarker(0));
+  }
+
+  steps.forEach((s, i) => {
+    const p = document.createElement('div');
+    p.className = 'step-pill' + (i === currentStep ? ' active' : '');
+    p.textContent = 'Step ' + (i+1);
+    p.onclick = () => selectStep(i);
+    if (steps.length > 1) {
+      const del = document.createElement('span');
+      del.className = 'step-del';
+      del.textContent = ' ×';
+      del.onclick = e => { e.stopPropagation(); deleteStep(i); };
+      p.appendChild(del);
+    }
+    scroll.appendChild(p);
+
+    // Insert marker after this step
+    scroll.appendChild(makeInsertMarker(i + 1));
+  });
+
+  const add = document.createElement('div');
+  add.className = 'step-pill add-step';
+  add.textContent = '+ Add Step';
+  add.onclick = addStep;
+  scroll.appendChild(add);
+}
+
+function makeInsertMarker(insertIdx) {
+  // A small "+" button between pills. Click to insert a blank step at insertIdx.
+  // Right-click (or long-press on touch) to paste from clipboard at insertIdx.
+  const m = document.createElement('div');
+  m.title = 'Insert step here' + (stepClipboard ? ' · right-click to paste' : '');
+  m.style.cssText = 'flex-shrink:0;width:18px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--sub);cursor:pointer;font-size:14px;opacity:0.5;transition:opacity 0.15s;';
+  m.textContent = stepClipboard ? '⊕' : '+';
+  m.onmouseenter = () => m.style.opacity = '1';
+  m.onmouseleave = () => m.style.opacity = '0.5';
+  m.onclick = (e) => {
+    if (e.shiftKey && stepClipboard) {
+      pasteStepAt(insertIdx);
+    } else {
+      insertBlankStepAt(insertIdx);
+    }
+  };
+  m.oncontextmenu = (e) => {
+    e.preventDefault();
+    if (stepClipboard) pasteStepAt(insertIdx);
+  };
+  // Touch long-press → paste (if anything copied)
+  let pressT = null;
+  m.ontouchstart = () => {
+    pressT = setTimeout(() => {
+      pressT = null;
+      if (stepClipboard) pasteStepAt(insertIdx);
+    }, 500);
+  };
+  m.ontouchend = () => { if (pressT) { clearTimeout(pressT); pressT = null; } };
+  m.ontouchcancel = m.ontouchend;
+  return m;
+}
+
+function selectStep(i) {
+  currentStep = i;
+  renderStepPills();
+  const s = steps[i];
+  document.getElementById('step-fade').value = s.fade;
+  document.getElementById('step-hold').value = s.hold;
+  renderFixtures();
+  sendLivePreview();
+}
+
+function addStep() {
+  const prev = steps[steps.length - 1];
+  steps.push(JSON.parse(JSON.stringify(prev))); // copy last step
+  steps[steps.length-1].fade = 500;
+  selectStep(steps.length - 1);
+}
+
+function deleteStep(i) {
+  steps.splice(i, 1);
+  if (currentStep >= steps.length) currentStep = steps.length - 1;
+  selectStep(currentStep);
+}
+
+function onTimingChange() {
+  steps[currentStep].fade = parseInt(document.getElementById('step-fade').value) || 0;
+  steps[currentStep].hold = parseInt(document.getElementById('step-hold').value) || 500;
+}
+
+// ── Step clipboard (copy/paste/insert) ─────────────────────────────────
+let stepClipboard = null;
+
+function copyCurrentStep() {
+  // Deep clone so future edits to current step don't mutate the clipboard
+  stepClipboard = JSON.parse(JSON.stringify(steps[currentStep]));
+  updatePasteUI();
+  toast('Step ' + (currentStep + 1) + ' copied');
+}
+
+function pasteStepAt(insertIdx) {
+  if (!stepClipboard) return;
+  const cp = JSON.parse(JSON.stringify(stepClipboard));
+  insertIdx = Math.max(0, Math.min(insertIdx, steps.length));
+  steps.splice(insertIdx, 0, cp);
+  currentStep = insertIdx;
+  if (SCENE_TYPE === 'main') {
+    renderStepPills();
+    selectStep(currentStep);
+  } else {
+    selectMoverStep(currentStep);
+  }
+}
+
+function insertBlankStepAt(insertIdx) {
+  insertIdx = Math.max(0, Math.min(insertIdx, steps.length));
+  const newStep = (SCENE_TYPE === 'main')
+    ? Object.assign(blankStep(), { fade: 500, hold: 500 })
+    : Object.assign(blankMoverStep(), { fade: 500, hold: 500 });
+  steps.splice(insertIdx, 0, newStep);
+  currentStep = insertIdx;
+  if (SCENE_TYPE === 'main') {
+    renderStepPills();
+    selectStep(currentStep);
+  } else {
+    selectMoverStep(currentStep);
+  }
+}
+
+function updatePasteUI() {
+  const ready = !!stepClipboard;
+  ['paste-step-btn', 'mover-paste-step-btn'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) {
+      b.style.opacity = ready ? '1' : '0.5';
+      b.style.color   = ready ? 'var(--text)' : 'var(--sub)';
+      b.disabled = !ready;
+    }
+  });
+  const hint = document.getElementById('clipboard-hint');
+  if (hint) hint.style.display = ready ? '' : 'none';
+}
+
+// ── Fixtures & pod grid ────────────────────────────────────────────────
+function renderFixtures() {
+  const container = document.getElementById('fixtures-section');
+  container.innerHTML = '';
+  const step = steps[currentStep];
+
+  for (const fx of SHOW.fixtures) {
+    const sec   = document.createElement('div');
+    sec.className = 'fixture-section';
+
+    // Ensure fixture data exists in step
+    if (!step.fixtures[fx.id]) {
+      const colors = fx.pod_color_offsets || {r:0,g:1,b:2,a:3,w:4,uv:5};
+      const emptyPod = {};
+      Object.keys(colors).forEach(c => emptyPod[c] = 0);
+      const podCount = fx.pods || 1;
+      step.fixtures[fx.id] = { dimmer:255, pods: Array.from({length:podCount}, ()=>({...emptyPod})) };
+    }
+
+    const fxData  = step.fixtures[fx.id];
+    const podCount = fx.pods || 1;
+    const singers = singerPodsFor(fx.id);
+
+    // Ensure pods array is long enough (preserving nulls if any)
+    if (!fxData.pods) fxData.pods = [];
+    while (fxData.pods.length < podCount) {
+      fxData.pods.push(null);  // new pods default to non-participating
+    }
+
+    // Compute participation state
+    const totalPods = podCount;
+    const activePods = fxData.pods.slice(0, podCount).filter(p => p !== null).length;
+    const allActive = activePods === totalPods;
+    const noneActive = activePods === 0;
+    const someActive = activePods > 0 && activePods < totalPods;
+
+    // Header row: checkbox + fixture name + participation badge + bulk action
+    const header = document.createElement('div');
+    header.className = 'fixture-title';
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
+    // Tri-state checkbox: empty (none) / dash (some) / check (all)
+    let checkLabel, checkBg, checkColor;
+    if (allActive)       { checkLabel = '✓'; checkBg = '#2e5e2e'; checkColor = '#fff'; }
+    else if (someActive) { checkLabel = '–'; checkBg = '#3a3a10'; checkColor = '#dbcb7f'; }
+    else                 { checkLabel = '';  checkBg = '#2a2a2a'; checkColor = '#888'; }
+
+    let badge = '';
+    if (allActive)       badge = '<span style="font-size:0.65rem;background:#2e5e2e;color:#7fdb7f;padding:2px 8px;border-radius:10px;">All pods</span>';
+    else if (someActive) badge = `<span style="font-size:0.65rem;background:#3a3a10;color:#dbcb7f;padding:2px 8px;border-radius:10px;">${activePods}/${totalPods} pods</span>`;
+    else                 badge = '<span style="font-size:0.65rem;background:#2a2a2a;color:#999;padding:2px 8px;border-radius:10px;">Not in scene</span>';
+
+    header.innerHTML = `
+      <button onclick="toggleAllPods('${fx.id}')"
+              title="${allActive ? 'Remove fixture from scene' : 'Include fixture in scene'}"
+              style="width:24px;height:24px;background:${checkBg};color:${checkColor};border:2px solid var(--border);border-radius:5px;cursor:pointer;font-size:14px;font-weight:700;line-height:1;padding:0;flex-shrink:0;">
+        ${checkLabel}
+      </button>
+      <span style="flex:1;font-weight:600;">${fx.name}</span>
+      ${badge}`;
+    sec.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.className = 'pod-grid ' + (podCount > 4 ? 'pod-grid-8' : 'pod-grid-1');
+
+    fxData.pods.slice(0, podCount).forEach((color, pi) => {
+      const podNum   = pi + 1;
+      const isSinger = singers.includes(podNum);
+      const inactive = color === null;
+      const pod      = document.createElement('div');
+      pod.className = 'pod' + (isSinger ? ' singer' : '') + (inactive ? ' inactive' : '');
+      pod.style.background = inactive ? 'transparent' : podCssColor(color);
+      if (inactive) {
+        // Non-participating pod — shows dashed outline, "+ Include" hint
+        pod.style.border = '2px dashed var(--border)';
+        pod.style.color  = 'var(--sub)';
+        pod.innerHTML = podCount === 1
+          ? '<span style="font-size:11px;">+ Include in scene</span>'
+          : `<span class="pod-num">${podNum}</span><span style="font-size:10px;color:var(--sub);">+</span>`;
+      } else {
+        pod.style.border = '';
+        if (podCount === 1) {
+          pod.style.minHeight = '54px';
+          pod.innerHTML = `<span style="font-size:11px;color:rgba(255,255,255,.7)">Tap to set color</span>`;
+        } else {
+          pod.innerHTML = `<span class="pod-num">${podNum}</span>`;
+        }
+      }
+      pod.onclick = () => {
+        if (inactive) {
+          includePod(fx.id, pi);
+        } else {
+          openPicker(fx.id, pi, isSinger);
+        }
+      };
+      // Long-press / right-click → exclude this pod from scene
+      pod.oncontextmenu = (e) => {
+        e.preventDefault();
+        if (!inactive) excludePod(fx.id, pi);
+      };
+      let pressT = null;
+      pod.ontouchstart = () => {
+        pressT = setTimeout(() => {
+          pressT = null;
+          if (!inactive) excludePod(fx.id, pi);
+        }, 600);
+      };
+      pod.ontouchend = () => { if (pressT) { clearTimeout(pressT); pressT = null; } };
+      pod.ontouchcancel = pod.ontouchend;
+      grid.appendChild(pod);
+    });
+    sec.appendChild(grid);
+
+    // Helper text under grid
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:0.65rem;color:var(--sub);margin-top:4px;text-align:center;';
+    if (allActive) {
+      hint.textContent = 'Long-press or right-click a pod to exclude it from this scene';
+    } else if (someActive) {
+      hint.innerHTML = `<strong>${totalPods - activePods}</strong> pod${totalPods-activePods===1?'':'s'} excluded — tap them to include, or use the ☐ above to toggle the whole fixture`;
+    } else {
+      hint.textContent = 'Not in this scene — tap a pod to include it, or the ☐ above to include the whole fixture';
+    }
+    sec.appendChild(hint);
+
+    container.appendChild(sec);
+  }
+}
+
+function includePod(fxId, podIdx) {
+  // Restore a pod to active state with a default color (off, but participating)
+  const fx = SHOW.fixtures.find(f => f.id === fxId);
+  if (!fx) return;
+  const colors = fx.pod_color_offsets || {r:0,g:1,b:2};
+  const newPod = {};
+  Object.keys(colors).forEach(c => newPod[c] = 0);
+  steps[currentStep].fixtures[fxId].pods[podIdx] = newPod;
+  renderFixtures();
+  sendLivePreview();
+}
+
+function excludePod(fxId, podIdx) {
+  steps[currentStep].fixtures[fxId].pods[podIdx] = null;
+  renderFixtures();
+  sendLivePreview();
+}
+
+function toggleAllPods(fxId) {
+  const fx = SHOW.fixtures.find(f => f.id === fxId);
+  if (!fx) return;
+  const podCount = fx.pods || 1;
+  const fxData = steps[currentStep].fixtures[fxId];
+  const colors = fx.pod_color_offsets || {r:0,g:1,b:2};
+  const activeCount = fxData.pods.slice(0, podCount).filter(p => p !== null).length;
+  if (activeCount === podCount) {
+    // All active → drop all
+    for (let i = 0; i < podCount; i++) fxData.pods[i] = null;
+  } else {
+    // Some or none active → include all
+    for (let i = 0; i < podCount; i++) {
+      if (fxData.pods[i] === null) {
+        const newPod = {};
+        Object.keys(colors).forEach(c => newPod[c] = 0);
+        fxData.pods[i] = newPod;
+      }
+    }
+  }
+  renderFixtures();
+  sendLivePreview();
+}
+
+function podCssColor(c) {
+  if (!c) return 'var(--surface2)';
+  // Linear additive emitter mix -> sRGB. Each LED colour contributes its own
+  // chromaticity in linear light; we sum, then gamma-encode for the screen.
+  // Far closer to real RGBAWUV fixture blending than adding 0-255 values.
+  // UV is shown as a deep violet (it's near-invisible to the eye in reality).
+  const E = {r:[1,0,0],g:[0,1,0],b:[0,0,1],a:[1,0.45,0],
+             w:[1,0.92,0.78],uv:[0.40,0,0.72],l:[0.72,1,0]};
+  let R=0,G=0,B=0,any=false;
+  for (const k in E){ const v=(c[k]||0)/255; if(v>0)any=true;
+    R+=v*E[k][0]; G+=v*E[k][1]; B+=v*E[k][2]; }
+  if (!any) return 'var(--surface2)';
+  const enc=x=>{ x=x<0?0:(x>1?1:x);
+    return Math.round((x<=0.0031308?12.92*x:1.055*Math.pow(x,1/2.4)-0.055)*255); };
+  return `rgb(${enc(R)},${enc(G)},${enc(B)})`;
+}
+
+// ── Color picker ───────────────────────────────────────────────────────
+let pickerFxId = null;
+let pickerPodIdx = null;
+let pickerIsSinger = false;
+let pickerColor = {r:0,g:0,b:0,a:0,w:0,uv:0};
+
+// Store the full-brightness color separately so brightness slider
+// can scale without losing the original values
+let pickerBaseColor = {r:0,g:0,b:0,a:0,w:0,uv:0};
+let pickerBrightness = 100;  // 1–100 %
+
+function openPicker(fxId, podIdx, isSinger) {
+  pickerFxId    = fxId;
+  pickerPodIdx  = podIdx;
+  pickerIsSinger = isSinger;
+
+  const step   = steps[currentStep];
+  const fxData = step.fixtures[fxId];
+  if (podIdx !== null) {
+    pickerColor = Object.assign({}, fxData.pods[podIdx]);
+  } else {
+    pickerColor = Object.assign({}, fxData.color || {r:0,g:0,b:0,a:0,w:0,uv:0});
+  }
+
+  // Reset brightness to 100% when opening — sliders show the stored values
+  pickerBrightness = 100;
+  pickerBaseColor  = Object.assign({}, pickerColor);
+  document.getElementById('brightness-slider').value = 100;
+  document.getElementById('brightness-val').textContent = '100%';
+
+  const fx    = SHOW.fixtures.find(f => f.id === fxId);
+  const title = podIdx !== null
+    ? `${fx.name} — Pod ${podIdx+1}${isSinger ? ' 🎤' : ''}`
+    : fx.name;
+  document.getElementById('picker-title').textContent = title;
+
+  if (isSinger) {
+    document.getElementById('picker-title').innerHTML =
+      title + '<br><small style="color:var(--amber);font-size:11px;">🎤 Shows warm white when Singer Mode is ON</small>';
+  }
+
+  buildPresets();
+  buildSliders();
+  updateSwatch();
+  document.getElementById('picker-overlay').classList.add('open');
+}
+
+function onBrightnessChange(val) {
+  pickerBrightness = parseInt(val);
+  document.getElementById('brightness-val').textContent = val + '%';
+  // Scale the base color by brightness and update pickerColor + sliders
+  const scale = pickerBrightness / 100;
+  ['r','g','b','a','w','uv','l'].forEach(k => {
+    pickerColor[k] = Math.round((pickerBaseColor[k] || 0) * scale);
+  });
+  buildSliders();
+  updateSwatch();
+}
+
+function applyColorAll() {
+  const step = steps[currentStep];
+  let totalSet = 0;
+  let totalSkipped = 0;
+  SHOW.fixtures.forEach(fx => {
+    const fxData = step.fixtures[fx.id];
+    if (!fxData) return;
+    if (fxData.pods) {
+      // Apply only to participating pods (not nulls). Don't activate
+      // pods that the user explicitly excluded from the scene.
+      fxData.pods.forEach((pod, i) => {
+        if (pod === null) { totalSkipped++; return; }
+        step.fixtures[fx.id].pods[i] = Object.assign({}, pickerColor);
+        totalSet++;
+      });
+    } else if (fxData.color !== undefined) {
+      fxData.color = Object.assign({}, pickerColor);
+      totalSet++;
+    }
+  });
+  closePicker();
+  renderFixtures();
+  sendLivePreview();
+  // Briefly highlight singer pods so it's clear they updated
+  document.querySelectorAll('.pod.singer').forEach(el => {
+    el.style.outline = '2px solid var(--singer, #ffb347)';
+    setTimeout(() => el.style.outline = '', 800);
+  });
+  const msg = totalSkipped > 0
+    ? `Applied to ${totalSet} pods (skipped ${totalSkipped} excluded)`
+    : `Applied to all ${totalSet} pods`;
+  toast(msg);
+}
+
+function closePicker() {
+  document.getElementById('picker-overlay').classList.remove('open');
+}
+
+function applyColor() {
+  const step   = steps[currentStep];
+  const fxData = step.fixtures[pickerFxId];
+  if (pickerPodIdx !== null) {
+    fxData.pods[pickerPodIdx] = Object.assign({}, pickerColor);
+  } else {
+    fxData.color = Object.assign({}, pickerColor);
+  }
+  closePicker();
+  renderFixtures();
+  sendLivePreview();
+}
+
+// Shared double-tap state for the color picker. Lives at module scope so
+// it survives buildPresets() DOM rebuilds.
+let _presetTapTimer  = null;
+const PRESET_TAP_DELAY = 350;  // ms
+
+function buildPresets() {
+  const container = document.getElementById('presets');
+  container.innerHTML = '';
+  const fx = SHOW.fixtures.find(f => f.id === pickerFxId);
+  const bank = presetsForFixture(fx);
+  bank.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'preset';
+    div.style.background = podCssColor(p);
+    div.innerHTML = `<span>${p.name}</span>`;
+    const isMatch = ['r','g','b','a','w','uv','l'].every(k => (p[k]||0) === (pickerColor[k]||0));
+    if (isMatch) div.classList.add('sel');
+
+    const selectPreset = () => {
+      // Reset all 6 channels (so switching from a UV preset to an RGB preset
+      // properly zeroes the unused channels)
+      ['r','g','b','a','w','uv','l'].forEach(k => {
+        pickerColor[k]     = p[k] || 0;
+        pickerBaseColor[k] = p[k] || 0;
+      });
+      pickerBrightness = 100;
+      document.getElementById('brightness-slider').value = 100;
+      document.getElementById('brightness-val').textContent = '100%';
+      buildSliders();
+      buildPresets();
+      updateSwatch();
+    };
+
+    div.onclick = (e) => {
+      if (_presetTapTimer) {
+        // Second tap within window → select + apply
+        clearTimeout(_presetTapTimer);
+        _presetTapTimer = null;
+        selectPreset();
+        applyColor();
+      } else {
+        // First tap → just select
+        selectPreset();
+        _presetTapTimer = setTimeout(() => { _presetTapTimer = null; }, PRESET_TAP_DELAY);
+      }
+    };
+    container.appendChild(div);
+  });
+}
+
+function buildSliders() {
+  const container = document.getElementById('channel-sliders');
+  container.innerHTML = '';
+
+  // Find which colors this fixture actually supports, in DMX channel order
+  const fx = SHOW.fixtures.find(f => f.id === pickerFxId);
+  const offsets = fx?.pod_color_offsets || {r:0,g:1,b:2,a:3,w:4,uv:5};
+  // Sort by offset value to match fixture's actual channel ordering
+  const availColors = Object.entries(offsets)
+    .sort((a,b) => a[1] - b[1])
+    .map(([c]) => c);
+
+  const colorMeta = {
+    r:  {label:'R', cls:'R'},
+    g:  {label:'G', cls:'G'},
+    b:  {label:'B', cls:'B'},
+    a:  {label:'A', cls:'A'},
+    w:  {label:'W', cls:'W'},
+    uv: {label:'UV',cls:'UV'},
+    l:  {label:'L', cls:'L'},   // Lime — LPC1818 and similar fixtures
+  };
+  const channels = availColors.map(k => ({k, ...colorMeta[k]}));
+
+  channels.forEach(({k, label, cls}) => {
+    const row   = document.createElement('div');
+    row.className = 'ch-row';
+    const lbl   = document.createElement('div');
+    lbl.className = `ch-label ${cls}`;
+    lbl.textContent = label;
+    const slider = document.createElement('input');
+    slider.type  = 'range';
+    slider.className = 'ch-slider';
+    slider.min   = 0;
+    slider.max   = 255;
+    slider.value = pickerColor[k] || 0;
+    const val    = document.createElement('div');
+    val.className = 'ch-val';
+    val.textContent = pickerColor[k] || 0;
+    slider.oninput = () => {
+      pickerColor[k]     = parseInt(slider.value);
+      pickerBaseColor[k] = Math.round(parseInt(slider.value) / (pickerBrightness / 100)) || parseInt(slider.value);
+      val.textContent    = slider.value;
+      updateSwatch();
+    };
+    row.appendChild(lbl); row.appendChild(slider); row.appendChild(val);
+    container.appendChild(row);
+  });
+}
+
+function updateSwatch() {
+  const swatch = document.getElementById('picker-swatch');
+  swatch.style.background = podCssColor(pickerColor);
+  const {r,g,b,a,w,uv} = pickerColor;
+  document.getElementById('picker-hex').textContent =
+    `R:${r} G:${g} B:${b} A:${a} W:${w} UV:${uv}`;
+}
+
+// ── Save ───────────────────────────────────────────────────────────────
+function saveScene() {
+  const name = document.getElementById('scene-name').value.trim();
+  if (!name) {
+    alert('Please give the scene a name first.');
+    document.getElementById('scene-name').focus();
+    return;
+  }
+  const folder = document.getElementById('scene-folder').value.trim();
+  const launchFade = parseInt(document.getElementById('scene-launch-fade').value);
+  const payload = {
+    name,
+    folder,
+    scene_type: SCENE_TYPE,
+    launch_fade: isNaN(launchFade) ? (SHOW.default_launch_fade || 1000) : Math.max(0, launchFade),
+    steps,
+  };
+  if (SCENE_TYPE === 'main') {
+    payload.tempo_sync   = tempoSync;
+    payload.beat_division = beatDivision;
+  }
+  // Edit existing scene? POST to /api/library/scene/<id>
+  // New scene? POST to /api/library/scene (server assigns ID)
+  const url = EXISTING_ID
+    ? `/api/library/scene/${EXISTING_ID}`
+    : '/api/library/scene';
+  fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload),
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      // If this is a new scene, auto-enable it in the current show
+      if (!EXISTING_ID && d.id) {
+        autoEnableAndExit(d.id);
+      } else {
+        location.href = RETURN_PATH;
+      }
+    } else {
+      alert('Save failed: ' + d.error);
+    }
+  }).catch(e => alert('Save failed: ' + e));
+}
+
+async function autoEnableAndExit(newId) {
+  // Get current enabled scenes
+  try {
+    const state = await fetch('/api/state').then(r => r.json());
+    const enabled = (state.enabled_scenes || state.scenes || []).map(s => s.id);
+    if (!enabled.includes(newId)) enabled.push(newId);
+    await fetch('/api/show/enabled-scenes', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ scenes: enabled }),
+    });
+  } catch (e) { /* ignore */ }
+  location.href = RETURN_PATH;
+}
+
+function deleteScene() {
+  if (!EXISTING_ID) return;
+  const name = document.getElementById('scene-name').value || 'this scene';
+  if (!confirm(`Delete "${name}" from the library? This cannot be undone.`)) return;
+  fetch(`/api/library/scene/${EXISTING_ID}`, { method: 'DELETE' })
+    .then(r => r.json()).then(d => {
+      if (d.ok) location.href = RETURN_PATH;
+      else alert('Delete failed: ' + d.error);
+    });
+}
+
+function cancelEdit() {
+  if (confirm('Discard changes?')) location.href = RETURN_PATH;
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Lightboard Touch</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Share+Tech+Mono&display=swap');
+  :root {
+    --bg:       #0a0a0f;
+    --surface:  #13131c;
+    --border:   #1e1e2e;
+    --accent:   #e8630a;
+    --accent2:  #f0a500;
+    --text:     #d4d4e8;
+    --dim:      #555570;
+    --blackout: #c0392b;
+    --singer:   #8e44ad;
+    --master:   #1a6a3a;
+    --step:     #1a3a6a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 6px;
+    gap: 5px;
+  }
+  /* ── Header ── */
+  #header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  #show-name {
+    font-size: 11px;
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  #status-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  #status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--dim);
+    transition: background 0.3s;
+  }
+  #status-dot.ok    { background: #27ae60; box-shadow: 0 0 5px #27ae60; }
+  #status-dot.error { background: var(--blackout); box-shadow: 0 0 6px var(--blackout); }
+  #scene-status {
+    font-size: 9px;
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--dim);
+    letter-spacing: 0.06em;
+  }
+  /* ── Scene grid ── */
+  #scene-grid {
+    display: grid;
+    gap: 5px;
+    flex: 1;
+    align-content: start;
+  }
+  .scene-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0 6px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s, box-shadow 0.1s;
+    user-select: none;
+    position: relative;
+    overflow: hidden;
+  }
+  .scene-btn::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .scene-btn:active { opacity: 0.75; }
+  .scene-btn.active {
+    background: #1a1a2e;
+    border-color: var(--accent);
+    box-shadow: 0 0 10px rgba(232,99,10,0.45);
+    color: #fff;
+  }
+  .scene-btn.active::before { opacity: 1; }
+
+  /* Action button variants */
+  .scene-btn.type-blackout {
+    background: #2a0a0a;
+    border-color: #5a1a1a;
+    color: #ff8888;
+  }
+  .scene-btn.type-blackout.active {
+    background: var(--blackout);
+    border-color: #e74c3c;
+    color: #fff;
+    box-shadow: 0 0 12px rgba(192,57,43,0.6);
+    animation: pulse-red 1.2s ease-in-out infinite;
+  }
+  .scene-btn.type-singer {
+    background: #1a0a2a;
+    border-color: #4a1a6a;
+    color: #cc88ff;
+  }
+  .scene-btn.type-singer.active {
+    background: var(--singer);
+    border-color: #aa55dd;
+    color: #fff;
+    box-shadow: 0 0 10px rgba(142,68,173,0.5);
+  }
+  .scene-btn.type-master-up,
+  .scene-btn.type-master-down {
+    background: #0a1a0a;
+    border-color: #1a4a1a;
+    color: #88cc88;
+  }
+  .scene-btn.type-singer-up,
+  .scene-btn.type-singer-down {
+    background: #1a0a2a;
+    border-color: #4a1a6a;
+    color: #cc88ff;
+  }
+  .scene-btn.type-tempo {
+    background: #0a1a2a;
+    border-color: #1a3a6a;
+    color: #88bbff;
+  }
+  .scene-btn.type-tempo.active {
+    background: var(--step);
+    border-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 10px rgba(232,99,10,0.45);
+  }
+  .scene-btn.type-tempo-cancel {
+    background: #2a0a0a;
+    border-color: #5a1a1a;
+    color: #ff8888;
+  }
+  .scene-btn.type-cycler {
+    background: #0a2a1a;
+    border-color: #1a5a3a;
+    color: #88ddaa;
+  }
+  .scene-btn.type-cycler.active {
+    background: var(--master);
+    border-color: #2a9a5a;
+    color: #fff;
+    box-shadow: 0 0 10px rgba(26,106,58,0.55);
+    animation: pulse-green 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-green {
+    0%,100% { box-shadow: 0 0 9px rgba(39,174,96,0.4); }
+    50%      { box-shadow: 0 0 20px rgba(39,174,96,0.8); }
+  }
+
+  @keyframes pulse-red {
+    0%,100% { box-shadow: 0 0 10px rgba(231,76,60,0.4); }
+    50%      { box-shadow: 0 0 22px rgba(231,76,60,0.85); }
+  }
+
+  /* ── Footer / IP ── */
+  #footer {
+    flex-shrink: 0;
+    text-align: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: 0.06em;
+  }
+</style>
+</head>
+<body>
+<div id="header">
+  <div id="show-name">…</div>
+  <div id="status-row">
+    <div id="scene-status">— no scene active —</div>
+    <div id="status-dot"></div>
+  </div>
+</div>
+
+<div id="scene-grid"></div>
+<div id="footer">…</div>
+
+<script>
+  let blackoutOn   = false;
+  let singerOn     = false;
+  let masterLevel  = 1.0;
+  let singerLevel  = 1.0;
+  let activeScenes = new Set();
+  let gridConfig   = null;
+
+  const STEP = 0.1;
+
+  // ── Boot ─────────────────────────────────────────────────────────────
+  async function boot() {
+    try {
+      const res  = await fetch('/api/touch/config');
+      gridConfig = await res.json();
+      buildGrid();
+      await fetchState();
+      document.getElementById('status-dot').className = 'ok';
+    } catch(e) {
+      document.getElementById('status-dot').className = 'error';
+    }
+    refreshInfo();
+  }
+
+  // ── Footer info (IP + show name) — self-scheduling refresh ─────
+  const INFO_REFRESH_MS = 15000;
+  async function refreshInfo() {
+    try {
+      const r = await fetch('/api/touch/info');
+      const d = await r.json();
+      const ipParts = [];
+      if (d.ips && d.ips.wlan0) ipParts.push('WiFi: ' + d.ips.wlan0);
+      if (d.ips && d.ips.eth0)  ipParts.push('ETH: ' + d.ips.eth0);
+      if (!ipParts.length)      ipParts.push('IP: ' + (d.ip || 'unknown'));
+      document.getElementById('footer').textContent =
+        ipParts.join('  ·  ') + '  ·  ' + d.show_name;
+      document.getElementById('show-name').textContent = d.show_name;
+    } catch(e) {}
+    finally {
+      setTimeout(refreshInfo, INFO_REFRESH_MS);
+    }
+  }
+
+  // ── Build grid from config ────────────────────────────────────────────
+  function buildGrid() {
+    const grid = document.getElementById('scene-grid');
+    grid.innerHTML = '';
+    const cols  = gridConfig.cols || 2;
+    const cells = (gridConfig.cells || []).filter(c => c && (c.scene_id || c.action));
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+    cells.forEach(cell => {
+      const btn = document.createElement('button');
+      btn.className = 'scene-btn';
+      btn.id = cell.scene_id ? 'scene-' + cell.scene_id : 'action-' + cell.action;
+
+      if (cell.action) {
+        btn.classList.add('type-' + cell.action);
+        btn.textContent = cell.label || actionLabel(cell.action);
+        btn.dataset.baseLabel = btn.textContent;
+        btn.onclick = () => doAction(cell.action, btn);
+      } else {
+        btn.textContent = cell.label || cell.name || cell.scene_id;
+        btn.onclick = () => toggleScene(cell.scene_id);
+      }
+      grid.appendChild(btn);
+    });
+  }
+
+  function actionLabel(action) {
+    const labels = {
+      'blackout':    '⬛ Blackout',
+      'singer':      '🎤 Singer',
+      'master-up':   '🔆 Brighter',
+      'master-down': '🔅 Dimmer',
+      'singer-up':   '🎤 + Level',
+      'singer-down': '🎤 - Level',
+      'tempo':        '👆 Tap',
+      'tempo-cancel': '✕ Tempo',
+      'cycler':       '🔁 Cycler',
+    };
+    return labels[action] || action;
+  }
+
+  // ── Actions ───────────────────────────────────────────────────────────
+  async function doAction(action, btn) {
+    try {
+      if (action === 'blackout') {
+        await fetch('/api/blackout', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({mode: 'full'})
+        });
+        blackoutOn = !blackoutOn;
+        btn.classList.toggle('active', blackoutOn);
+
+      } else if (action === 'singer') {
+        singerOn = !singerOn;
+        await fetch('/api/singer/mode', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({enabled: singerOn})
+        });
+        btn.classList.toggle('active', singerOn);
+
+      } else if (action === 'master-up') {
+        masterLevel = Math.min(1.0, Math.round((masterLevel + STEP) * 10) / 10);
+        await fetch('/api/master', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({level: masterLevel})
+        });
+        flashBtn(btn);
+
+      } else if (action === 'master-down') {
+        masterLevel = Math.max(0.0, Math.round((masterLevel - STEP) * 10) / 10);
+        await fetch('/api/master', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({level: masterLevel})
+        });
+        flashBtn(btn);
+
+      } else if (action === 'singer-up') {
+        singerLevel = Math.min(1.0, Math.round((singerLevel + STEP) * 10) / 10);
+        await fetch('/api/singer/level', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({level: singerLevel})
+        });
+        flashBtn(btn);
+
+      } else if (action === 'singer-down') {
+        singerLevel = Math.max(0.0, Math.round((singerLevel - STEP) * 10) / 10);
+        await fetch('/api/singer/level', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({level: singerLevel})
+        });
+        flashBtn(btn);
+
+      } else if (action === 'tempo') {
+        await fetch('/api/tempo/tap', { method: 'POST' });
+        flashBtn(btn);
+
+      } else if (action === 'tempo-cancel') {
+        await fetch('/api/tempo/cancel', { method: 'POST' });
+        flashBtn(btn);
+
+      } else if (action === 'cycler') {
+        await fetch('/api/cycler/toggle', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({})
+        });
+        fetchState();   // reflect new active state promptly
+      }
+    } catch(e) {}
+  }
+
+  function flashBtn(btn) {
+    btn.classList.add('active');
+    setTimeout(() => btn.classList.remove('active'), 200);
+  }
+
+  // ── Toggle scene ──────────────────────────────────────────────────────
+  async function toggleScene(id) {
+    try {
+      if (activeScenes.has(id)) {
+        await fetch('/api/stop/' + id, { method: 'POST' });
+        activeScenes.delete(id);
+      } else {
+        await fetch('/api/scene/' + id, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({})
+        });
+        activeScenes.add(id);
+      }
+      updateSceneButtons();
+    } catch(e) {}
+  }
+
+  function updateSceneButtons() {
+    document.querySelectorAll('.scene-btn[id^="scene-"]').forEach(btn => {
+      const id = btn.id.replace('scene-', '');
+      btn.classList.toggle('active', activeScenes.has(id));
+    });
+    const status = document.getElementById('scene-status');
+    status.textContent = activeScenes.size
+      ? Array.from(activeScenes).length + ' active'
+      : '— no scene active —';
+  }
+
+  // ── Poll state ────────────────────────────────────────────────────────
+  async function fetchState() {
+    try {
+      const res  = await fetch('/api/state');
+      const data = await res.json();
+      activeScenes = new Set(
+        (data.scenes || []).filter(s => s && s.id).map(s => s.id)
+      );
+      blackoutOn  = !!(data.blackout_mode && data.blackout_blend > 0.5);
+      masterLevel = data.master_level !== undefined ? data.master_level : masterLevel;
+      singerLevel = data.singer_level  !== undefined ? data.singer_level  : singerLevel;
+      singerOn    = data.singer_mode === true;
+      updateSceneButtons();
+      // Sync action button states
+      const bo = document.querySelector('.type-blackout');
+      if (bo) bo.classList.toggle('active', blackoutOn);
+      const so = document.querySelector('.type-singer');
+      if (so) so.classList.toggle('active', singerOn);
+
+      // Tempo button: show BPM and light up when a tempo is live
+      const t   = data.tempo || {};
+      const tEl = document.getElementById('action-tempo');
+      if (tEl) {
+        const base = tEl.dataset.baseLabel || '👆 Tap';
+        if (t.active && t.bpm) {
+          tEl.classList.add('active');
+          tEl.textContent = '👆 ' + Math.round(t.bpm);
+        } else if (t.tapping && t.preview_bpm) {
+          tEl.classList.remove('active');
+          tEl.textContent = '👆 ' + Math.round(t.preview_bpm) + '…';
+        } else {
+          tEl.classList.remove('active');
+          tEl.textContent = base;
+        }
+      }
+      // Cycler button: active while running
+      const cEl = document.getElementById('action-cycler');
+      if (cEl) cEl.classList.toggle('active', !!(data.cycler && data.cycler.active));
+    } catch(e) {}
+  }
+
+  setInterval(fetchState, 2000);
+
+  // Poll for config reload signal
+  let lastReloadTs = 0;
+  async function checkReload() {
+    try {
+      const r = await fetch('/api/touch/reload');
+      const d = await r.json();
+      if (d.ts && d.ts !== lastReloadTs && lastReloadTs !== 0) {
+        location.reload();
+      }
+      lastReloadTs = d.ts || 0;
+    } catch(e) {}
+  }
+  setInterval(checkReload, 3000);
+  boot();
+</script>
+</body>
+</html>

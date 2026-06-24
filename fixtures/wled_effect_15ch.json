@@ -1,0 +1,23 @@
+{
+  "id": "wled_effect_15ch",
+  "name": "WLED Effect Mode (15ch)",
+  "type": "mover",
+  "channels": 15,
+  "channel_roles": {
+    "dimmer":        1,
+    "effect":        2,
+    "speed":         3,
+    "intensity":     4,
+    "palette":       5,
+    "effect_option": 6,
+    "r":             7,
+    "g":             8,
+    "b":             9,
+    "r2":            10,
+    "g2":            11,
+    "b2":            12,
+    "r3":            13,
+    "g3":            14,
+    "b3":            15
+  }
+}

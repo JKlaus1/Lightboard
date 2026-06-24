@@ -1,0 +1,21 @@
+{
+  "id": "wled_tube_3side_rgbw_pixels",
+  "name": "WLED Tube 3-Sided Pixels (189 RGBW)",
+  "type": "pixel_strip",
+  "channels": 756,
+  "pixel_count": 189,
+  "dimmer_channel": 0,
+  "first_pixel_channel": 1,
+  "channels_per_pixel": 4,
+  "pixel_color_offsets": {
+    "r": 0,
+    "g": 1,
+    "b": 2,
+    "w": 3
+  },
+  "segments": [
+    {"name": "Side 1", "start": 0,   "length": 63, "reversed": false},
+    {"name": "Side 2", "start": 63,  "length": 63, "reversed": false},
+    {"name": "Side 3", "start": 126, "length": 63, "reversed": false}
+  ]
+}

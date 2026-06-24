@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Stage · {{ show_name }}</title>
+<style>
+  *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+  :root {
+    --bg:#0d0d0d; --surface:#1a1a1a; --surface2:#252525; --surface3:#2e2e2e;
+    --border:#333; --text:#e0e0e0; --sub:#888;
+    --accent:#3b82f6; --green:#22c55e; --red:#ef4444; --amber:#f59e0b;
+    --stage:#0a0a0a;
+  }
+  html,body { height:100%; background:var(--bg); color:var(--text);
+              font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+              font-size:15px; -webkit-tap-highlight-color:transparent;
+              overflow:hidden; touch-action:none; }
+  button,input,select { font-family:inherit; }
+
+  /* Header */
+  header { display:flex; align-items:center; gap:8px; padding:8px 12px;
+           background:var(--surface); border-bottom:1px solid var(--border);
+           position:relative; z-index:30; }
+  header h1 { font-size:14px; font-weight:700; flex:1; white-space:nowrap;
+              overflow:hidden; text-overflow:ellipsis; }
+  .seg { display:flex; background:var(--surface2); border:1px solid var(--border);
+         border-radius:8px; overflow:hidden; }
+  .seg button { border:none; background:transparent; color:var(--sub);
+                padding:7px 14px; font-size:13px; font-weight:700; cursor:pointer; }
+  .seg button.on { background:var(--accent); color:#fff; }
+  .hbtn { padding:7px 12px; border-radius:8px; border:1px solid var(--border);
+          background:var(--surface2); color:var(--text); font-size:13px;
+          font-weight:600; cursor:pointer; }
+  .hbtn.save { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .hbtn.icon { padding:7px 10px; }
+  .hbtn.active { background:rgba(59,130,246,.18); border-color:var(--accent); color:#9cc4ff; }
+  .hbtn:active { opacity:.75; }
+
+  /* Stage */
+  #stage-wrap { position:absolute; inset:0; top:49px; bottom:0; }
+  #stage { position:absolute; inset:0; background:
+             radial-gradient(120% 80% at 50% 0%, #131313 0%, var(--stage) 70%);
+           overflow:hidden; }
+  #stage.grid { background-image:
+      linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);
+      background-size:40px 40px; }
+  /* faint stage floor line */
+  #stage::after { content:''; position:absolute; left:0; right:0; bottom:14%;
+                  height:1px; background:linear-gradient(90deg,transparent,
+                  rgba(255,255,255,.08) 20%, rgba(255,255,255,.08) 80%, transparent); }
+
+  /* Fixture token */
+  .fx { position:absolute; transform-origin:center center;
+        will-change:left,top,transform; user-select:none; }
+  .fx-inner { display:flex; gap:2px; align-items:center; padding:3px;
+              border-radius:7px; background:rgba(0,0,0,.35);
+              outline:1px solid transparent; }
+  .fx.mover .fx-inner { background:transparent; padding:0; }
+  .fx.selected .fx-inner { outline:1px solid var(--accent);
+                           box-shadow:0 0 0 3px rgba(59,130,246,.18); }
+  .design .fx { cursor:grab; }
+  .design .fx:active { cursor:grabbing; }
+
+  .cell { position:relative; border-radius:3px;
+          box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);
+          transition:background-color .05s linear; }
+  .fx.mover .cell { border-radius:50%;
+          box-shadow:inset 0 0 0 1px rgba(255,255,255,.12); }
+  .cell .pid { position:absolute; top:50%; left:50%;
+               transform:translate(-50%,-50%); font-size:9px; font-weight:800;
+               color:rgba(255,255,255,.85); text-shadow:0 1px 2px #000;
+               pointer-events:none; }
+  .fx-name { position:absolute; top:100%; left:50%; transform:translateX(-50%);
+             margin-top:3px; font-size:9px; color:var(--sub); white-space:nowrap;
+             pointer-events:none; max-width:140px; overflow:hidden;
+             text-overflow:ellipsis; }
+  .design .fx-name { color:#aaa; }
+
+  /* Selected-fixture toolbar */
+  #fxbar { position:absolute; z-index:25; display:none;
+           background:var(--surface); border:1px solid var(--border);
+           border-radius:10px; padding:8px; gap:8px; flex-direction:column;
+           box-shadow:0 8px 24px rgba(0,0,0,.5); width:200px; }
+  #fxbar.show { display:flex; }
+  #fxbar .row { display:flex; align-items:center; gap:8px; }
+  #fxbar .label { font-size:10px; color:var(--sub); width:42px; flex-shrink:0;
+                  text-transform:uppercase; letter-spacing:.05em; }
+  #fxbar input[type=range] { flex:1; height:4px; }
+  .tbtn { flex:1; background:var(--surface2); border:1px solid var(--border);
+          color:var(--text); border-radius:7px; padding:8px 0; font-size:12px;
+          font-weight:600; cursor:pointer; }
+  .tbtn.on { background:rgba(59,130,246,.2); border-color:var(--accent); color:#9cc4ff; }
+  .tbtn.danger { color:#ff8a8a; border-color:#5a1818; background:#2a1313; }
+  .tbtn:active { opacity:.7; }
+
+  /* Bottom drawer (fixture tray in design / scene rail in live) */
+  #drawer { position:absolute; left:0; right:0; bottom:0; z-index:20;
+            background:var(--surface); border-top:1px solid var(--border);
+            transform:translateY(calc(100% - 34px)); transition:transform .22s ease;
+            max-height:46%; display:flex; flex-direction:column; }
+  #drawer.open { transform:translateY(0); }
+  #drawer-handle { height:34px; flex-shrink:0; display:flex; align-items:center;
+                   justify-content:center; gap:8px; cursor:pointer; font-size:12px;
+                   color:var(--sub); font-weight:700; letter-spacing:.04em; }
+  #drawer-handle .chev { transition:transform .22s; }
+  #drawer.open #drawer-handle .chev { transform:rotate(180deg); }
+  #drawer-body { overflow-y:auto; padding:4px 12px 14px; }
+
+  .tray { display:flex; flex-wrap:wrap; gap:8px; }
+  .tray-chip { background:var(--surface2); border:1px solid var(--border);
+               border-radius:8px; padding:8px 12px; font-size:12px; cursor:pointer;
+               display:flex; align-items:center; gap:6px; }
+  .tray-chip:active { background:var(--surface3); }
+  .tray-chip .dot { width:8px; height:8px; border-radius:2px; background:var(--accent); }
+  .tray-empty { color:var(--sub); font-size:12px; padding:10px 2px; }
+
+  .rail { display:flex; flex-wrap:wrap; gap:8px; }
+  .scene-btn { background:var(--surface2); border:1px solid var(--border);
+               border-radius:9px; padding:10px 14px; font-size:13px; font-weight:600;
+               cursor:pointer; color:var(--text); }
+  .scene-btn:active { background:var(--surface3); }
+  .scene-btn.effect { border-color:#6d28d9; color:#c4b5fd; }
+  .scene-btn.stop { border-color:#5a1818; color:#ff9a9a; background:#241313; }
+  .scene-btn.black { border-color:#444; color:#ddd; background:#000; }
+
+  /* live status dot */
+  #live-dot { width:9px; height:9px; border-radius:50%; background:var(--sub);
+              flex-shrink:0; }
+  #live-dot.on { background:var(--green); box-shadow:0 0 8px var(--green); }
+  #live-dot.err { background:var(--red); }
+
+  /* toast */
+  #toast { position:absolute; left:50%; bottom:54px; transform:translateX(-50%) translateY(20px);
+           background:var(--surface3); border:1px solid var(--border); color:var(--text);
+           padding:9px 16px; border-radius:10px; font-size:13px; font-weight:600;
+           opacity:0; pointer-events:none; transition:all .25s; z-index:40; }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* reverse-output button: distinct amber when active */
+  .tbtn.rev-on { background:rgba(245,158,11,.18); border-color:var(--amber); color:#f5c168; }
+
+  /* Groups modal */
+  #groups-overlay { display:none; position:fixed; inset:0; z-index:60;
+                    background:rgba(0,0,0,.7); align-items:center; justify-content:center; }
+  #groups-overlay.open { display:flex; }
+  #groups-sheet { background:var(--surface); border:1px solid var(--border);
+                  border-radius:14px; width:min(440px,94vw); max-height:88vh;
+                  display:flex; flex-direction:column; overflow:hidden; }
+  .gm-head { display:flex; align-items:center; justify-content:space-between;
+             padding:14px 16px; border-bottom:1px solid var(--border);
+             font-size:15px; font-weight:700; }
+  .gm-x { background:var(--surface2); border:1px solid var(--border); color:var(--sub);
+          border-radius:7px; width:30px; height:30px; cursor:pointer; font-size:14px; }
+  .gm-body { padding:14px 16px; overflow-y:auto; }
+  .gm-list { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+  .gm-chip { display:flex; align-items:center; justify-content:space-between;
+             background:var(--surface2); border:1px solid var(--border);
+             border-radius:8px; padding:10px 12px; font-size:13px; cursor:pointer; }
+  .gm-chip.sel { border-color:var(--accent); background:rgba(59,130,246,.12); }
+  .gm-chip .cnt { color:var(--sub); font-size:11px; }
+  .gm-new { width:100%; background:var(--surface2); border:1px dashed var(--border);
+            color:var(--sub); border-radius:8px; padding:10px; font-size:13px;
+            cursor:pointer; margin-bottom:14px; }
+  .gm-sub { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+            color:var(--sub); margin:12px 0 6px; font-weight:700; }
+  .gm-name { width:100%; background:var(--surface2); border:1px solid var(--border);
+             color:var(--text); border-radius:8px; padding:10px 12px; font-size:15px; }
+  .gm-members { display:flex; flex-direction:column; gap:6px; }
+  .gm-mem { display:flex; align-items:center; gap:8px; background:var(--surface2);
+            border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:13px; }
+  .gm-mem .idx { width:18px; color:var(--accent); font-weight:700; font-size:12px; }
+  .gm-mem .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .gm-mem button { background:var(--surface3); border:1px solid var(--border); color:var(--text);
+                   border-radius:6px; width:30px; height:28px; cursor:pointer; font-size:13px; }
+  .gm-mem button:disabled { opacity:.3; }
+  .gm-mem .rm { color:#ff8a8a; border-color:#5a1818; }
+  .gm-empty { color:var(--sub); font-size:12px; padding:6px 2px; }
+  .gm-avail { display:flex; flex-wrap:wrap; gap:6px; }
+  .gm-add { background:var(--surface2); border:1px solid var(--border); color:var(--text);
+            border-radius:7px; padding:7px 11px; font-size:12px; cursor:pointer; }
+  .gm-actions { display:flex; gap:8px; margin-top:18px; }
+
+  .hint { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+          color:var(--sub); font-size:13px; text-align:center; line-height:1.6;
+          max-width:260px; pointer-events:none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>{{ show_name }} · Stage</h1>
+  <div id="live-dot"></div>
+  <div class="seg">
+    <button id="mode-design" class="on" onclick="setMode('design')">Design</button>
+    <button id="mode-live" onclick="setMode('live')">Live</button>
+  </div>
+  <button class="hbtn icon" id="btn-grid" title="Grid" onclick="toggleGrid()">▦</button>
+  <button class="hbtn icon active" id="btn-ids" title="Pod IDs" onclick="toggleIds()">①</button>
+  <button class="hbtn" id="btn-groups" title="Fixture groups" onclick="openGroups()">Groups</button>
+  <button class="hbtn save" id="btn-save" onclick="saveLayout()">Save</button>
+</header>
+
+<div id="stage-wrap">
+  <div id="stage" class="grid">
+    <div class="hint" id="stage-hint">Loading fixtures…</div>
+  </div>
+
+  <div id="fxbar">
+    <div class="row"><span class="label">Size</span>
+      <input id="bar-scale" type="range" min="40" max="400" value="100"
+             oninput="onScale(this.value)">
+    </div>
+    <div class="row">
+      <button class="tbtn" onclick="nudgeRot(-15)">⟲ 15°</button>
+      <button class="tbtn" onclick="snapRot()">0°/90°</button>
+      <button class="tbtn" onclick="nudgeRot(15)">15° ⟳</button>
+    </div>
+    <div class="row">
+      <button class="tbtn" id="bar-flipH" onclick="toggleFlip('H')">⇋ Mirror H</button>
+      <button class="tbtn" id="bar-flipV" onclick="toggleFlip('V')">⇅ Mirror V</button>
+    </div>
+    <div class="row">
+      <button class="tbtn" id="bar-reverse" onclick="toggleReverse()">⇄ Reverse output</button>
+    </div>
+    <div style="font-size:9px;color:var(--sub);line-height:1.4;">
+      Mirror = view only. Reverse output flips the real pod order for effects &amp; scenes.
+    </div>
+    <div class="row">
+      <button class="tbtn danger" onclick="removeSelected()">Remove from stage</button>
+    </div>
+  </div>
+
+  <div id="drawer">
+    <div id="drawer-handle" onclick="toggleDrawer()">
+      <span id="drawer-title">FIXTURES</span><span class="chev">▴</span>
+    </div>
+    <div id="drawer-body">
+      <div id="tray" class="tray"></div>
+      <div id="rail" class="rail" style="display:none;"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <!-- Groups modal -->
+  <div id="groups-overlay">
+    <div id="groups-sheet">
+      <div class="gm-head">
+        <span>Fixture Groups</span>
+        <button class="gm-x" onclick="closeGroups()">✕</button>
+      </div>
+      <div class="gm-body">
+        <div class="gm-list" id="gm-list"></div>
+        <button class="gm-new" onclick="newGroup()">+ New group</button>
+        <div id="gm-editor" style="display:none;">
+          <div class="gm-sub">Name</div>
+          <input id="gm-name" class="gm-name" placeholder="e.g. Tower L" oninput="onGroupName(this.value)">
+          <div class="gm-sub">Members <span style="color:var(--sub);font-weight:400;">· order = render order</span></div>
+          <div id="gm-members" class="gm-members"></div>
+          <div class="gm-sub">Add a fixture</div>
+          <div id="gm-available" class="gm-avail"></div>
+          <div class="gm-actions">
+            <button class="tbtn danger" onclick="deleteGroup()">Delete</button>
+            <button class="tbtn" style="flex:2;background:var(--accent);border-color:var(--accent);color:#fff;" onclick="saveGroups()">Save groups</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const CELL = 22;            // base px per cell at scale 1.0
+const MOVER = 30;           // base px for a mover head at scale 1.0
+const POLL_MS = 40;         // ~25 Hz live refresh
+
+// Emitter primaries in *linear* sRGB. Channels sum in linear light, then we
+// gamma-encode for the screen — far closer to real additive LED mixing than
+// adding 0–255 values directly. Tuned so each emitter's on-screen hue reads
+// like the real diode. UV is near-invisible to the eye in reality; we show it
+// as a deep-violet glow so you can see where/how much UV is in a look.
+const EMIT = {
+  r:  [1.00, 0.00, 0.00],
+  g:  [0.00, 1.00, 0.00],
+  b:  [0.00, 0.00, 1.00],
+  a:  [1.00, 0.45, 0.00],   // amber ~590nm
+  w:  [1.00, 0.92, 0.78],   // warm white
+  uv: [0.40, 0.00, 0.72],   // deep violet stand-in
+  l:  [0.72, 1.00, 0.00],   // lime ~565nm
+};
+function lin2srgb(c){ c = c<0?0:(c>1?1:c);
+  return c<=0.0031308 ? 12.92*c : 1.055*Math.pow(c,1/2.4)-0.055; }
+
+// ── State ──────────────────────────────────────────────────────────────────
+let FIX   = [];             // fixture geometry from server
+let FXMAP = {};             // id -> geometry
+let L     = { fixtures:{}, showIds:true, grid:true };  // layout
+let mode  = 'design';
+let selId = null;
+let pollTimer = null;
+let dirty = false;
+let GROUPS = [];            // fixture groups [{id,name,members:[...]}]
+let gEditIdx = -1;          // index into GROUPS currently being edited (-1 = none)
+
+const $ = id => document.getElementById(id);
+const stage = $('stage');
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+async function init(){
+  try {
+    const [fx, lay, grp] = await Promise.all([
+      fetch('/api/stage/fixtures').then(r=>r.json()),
+      fetch('/api/stage/layout').then(r=>r.json()),
+      fetch('/api/groups').then(r=>r.json()).catch(()=>[]),
+    ]);
+    FIX = fx;
+    GROUPS = Array.isArray(grp) ? grp : [];
+    FIX.forEach(f => FXMAP[f.id] = f);
+    if (lay && lay.fixtures) L = Object.assign(L, lay);
+    // default layout entries for any fixture missing one
+    let col = 0;
+    FIX.forEach(f => {
+      if (!L.fixtures[f.id]) {
+        L.fixtures[f.id] = { x:0.5, y:0.4, scale:1, rot:0, flipH:false, flipV:false,
+                             placed:false };
+      }
+    });
+    L.showIds = (L.showIds !== false);
+    L.grid    = (L.grid !== false);
+    applyGlobalToggles();
+    render();
+  } catch(e){
+    $('stage-hint').textContent = 'Could not load fixtures: ' + e;
+  }
+}
+
+function applyGlobalToggles(){
+  stage.classList.toggle('grid', L.grid);
+  $('btn-grid').classList.toggle('active', L.grid);
+  $('btn-ids').classList.toggle('active', L.showIds);
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render(){
+  // remove old tokens (keep hint)
+  [...stage.querySelectorAll('.fx')].forEach(n=>n.remove());
+  const placed = FIX.filter(f => L.fixtures[f.id] && L.fixtures[f.id].placed);
+  $('stage-hint').style.display = placed.length ? 'none' : 'block';
+  if (!placed.length && mode==='design')
+    $('stage-hint').innerHTML = 'Tap a fixture in the tray below<br>to place it on the stage.';
+  if (!placed.length && mode==='live')
+    $('stage-hint').innerHTML = 'No fixtures placed yet.<br>Switch to Design to build your layout.';
+
+  placed.forEach(f => stage.appendChild(buildToken(f)));
+  renderTray();
+  positionFxBar();
+}
+
+function buildToken(f){
+  const ly = L.fixtures[f.id];
+  const el = document.createElement('div');
+  el.className = 'fx' + (f.is_mover?' mover':'') + (f.id===selId?' selected':'');
+  el.dataset.id = f.id;
+
+  const inner = document.createElement('div');
+  inner.className = 'fx-inner';
+  inner.style.transform =
+    `scaleX(${ly.flipH?-1:1}) scaleY(${ly.flipV?-1:1})`;
+
+  const n   = Math.max(1, f.cell_count);
+  const sz  = (f.is_mover?MOVER:CELL) * ly.scale;
+  // cells in physical order 0..n-1; flip handled by inner transform.
+  for (let i=0;i<n;i++){
+    const c = document.createElement('div');
+    c.className = 'cell';
+    c.style.width = sz+'px'; c.style.height = sz+'px';
+    c.style.background = mode==='design' ? '#262626' : '#161616';
+    c.dataset.cell = i;
+    // first / last pod badges (multi-cell only)
+    if (L.showIds && n>1 && (i===0 || i===n-1)){
+      const p = document.createElement('div');
+      p.className = 'pid';
+      p.textContent = (i===0)?'1':String(n);
+      // counter-flip so the number stays upright/readable
+      p.style.transform =
+        `translate(-50%,-50%) scaleX(${ly.flipH?-1:1}) scaleY(${ly.flipV?-1:1})`;
+      c.appendChild(p);
+    }
+    inner.appendChild(c);
+  }
+
+  const name = document.createElement('div');
+  name.className = 'fx-name';
+  name.textContent = f.name;
+  // counter the inner flip so the label text stays readable
+  name.style.transform =
+    `translateX(-50%) scaleX(${ly.flipH?-1:1}) scaleY(${ly.flipV?-1:1})`;
+  inner.appendChild(name);
+
+  el.appendChild(inner);
+  placeEl(el, ly);
+  attachDrag(el, f);
+  return el;
+}
+
+function placeEl(el, ly){
+  const r = stage.getBoundingClientRect();
+  el.style.left = (ly.x * r.width)  + 'px';
+  el.style.top  = (ly.y * r.height) + 'px';
+  // center the token on its point AND apply rotation in one transform
+  el.style.transform = `translate(-50%,-50%) rotate(${ly.rot}deg)`;
+}
+
+// ── Tray (design) ──────────────────────────────────────────────────────────
+function renderTray(){
+  const tray = $('tray');
+  tray.innerHTML = '';
+  const unplaced = FIX.filter(f => !L.fixtures[f.id].placed);
+  if (!unplaced.length){
+    tray.innerHTML = '<div class="tray-empty">All fixtures are on the stage. '
+      + 'Tap one on the stage to move, scale, flip, or remove it.</div>';
+    return;
+  }
+  unplaced.forEach(f => {
+    const chip = document.createElement('div');
+    chip.className = 'tray-chip';
+    chip.innerHTML = `<span class="dot"></span>${f.name}`
+      + (f.cell_count>1?` <span style="color:var(--sub)">·${f.cell_count}</span>`:'');
+    chip.onclick = () => placeFixture(f.id);
+    tray.appendChild(chip);
+  });
+}
+
+function placeFixture(id){
+  const ly = L.fixtures[id];
+  ly.placed = true;
+  ly.x = 0.5; ly.y = 0.4;
+  dirty = true;
+  selId = id;
+  render();
+  openDrawerForMode(false);
+}
+
+function removeSelected(){
+  if (!selId) return;
+  L.fixtures[selId].placed = false;
+  selId = null; dirty = true;
+  hideFxBar();
+  render();
+}
+
+// ── Drag / select ──────────────────────────────────────────────────────────
+function attachDrag(el, f){
+  let startX, startY, baseX, baseY, moved;
+  el.addEventListener('pointerdown', e => {
+    if (mode!=='design') return;
+    e.preventDefault();
+    selId = f.id; moved = false;
+    [...stage.querySelectorAll('.fx')].forEach(n=>
+      n.classList.toggle('selected', n.dataset.id===selId));
+    const r = stage.getBoundingClientRect();
+    const ly = L.fixtures[f.id];
+    startX = e.clientX; startY = e.clientY;
+    baseX = ly.x * r.width; baseY = ly.y * r.height;
+    el.setPointerCapture(e.pointerId);
+    hideFxBar();
+
+    const move = ev => {
+      const dx = ev.clientX-startX, dy = ev.clientY-startY;
+      if (Math.abs(dx)>2||Math.abs(dy)>2) moved = true;
+      let nx = baseX+dx, ny = baseY+dy;
+      nx = Math.max(0, Math.min(r.width,  nx));
+      ny = Math.max(0, Math.min(r.height, ny));
+      ly.x = nx/r.width; ly.y = ny/r.height;
+      el.style.left = nx+'px'; el.style.top = ny+'px';
+    };
+    const up = ev => {
+      el.releasePointerCapture(e.pointerId);
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      if (moved) dirty = true;
+      syncBarToSel(); positionFxBar(); showFxBar();
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+  });
+}
+
+// ── Selected-fixture toolbar ────────────────────────────────────────────────
+function showFxBar(){ if(selId && mode==='design') $('fxbar').classList.add('show'); }
+function hideFxBar(){ $('fxbar').classList.remove('show'); }
+
+function syncBarToSel(){
+  if (!selId) return;
+  const ly = L.fixtures[selId];
+  $('bar-scale').value = Math.round(ly.scale*100);
+  $('bar-flipH').classList.toggle('on', !!ly.flipH);
+  $('bar-flipV').classList.toggle('on', !!ly.flipV);
+  const f = FXMAP[selId];
+  const revBtn = $('bar-reverse');
+  // reverse only applies to multi-pod / multi-cell fixtures
+  const canReverse = f && !f.is_mover && f.cell_count > 1;
+  revBtn.style.display = canReverse ? '' : 'none';
+  revBtn.classList.toggle('rev-on', !!(f && f.reverse));
+}
+
+function positionFxBar(){
+  const bar = $('fxbar');
+  if (!selId || mode!=='design'){ hideFxBar(); return; }
+  const el = stage.querySelector(`.fx[data-id="${selId}"]`);
+  if (!el){ hideFxBar(); return; }
+  const er = el.getBoundingClientRect();
+  const wr = $('stage-wrap').getBoundingClientRect();
+  let left = er.left - wr.left + er.width/2 - 100;
+  left = Math.max(8, Math.min(wr.width-208, left));
+  let top = er.bottom - wr.top + 10;
+  if (top > wr.height-210) top = er.top - wr.top - 200;
+  bar.style.left = left+'px'; bar.style.top = Math.max(8,top)+'px';
+}
+
+function onScale(v){
+  if (!selId) return;
+  L.fixtures[selId].scale = v/100; dirty = true;
+  reRenderToken(selId); positionFxBar();
+}
+function nudgeRot(d){
+  if (!selId) return;
+  const ly = L.fixtures[selId];
+  ly.rot = ((ly.rot + d) % 360 + 360) % 360; dirty = true;
+  reRenderToken(selId); positionFxBar();
+}
+function snapRot(){
+  if (!selId) return;
+  const ly = L.fixtures[selId];
+  ly.rot = (ly.rot < 45 || ly.rot>=315) ? 90 : 0; dirty = true;
+  reRenderToken(selId); positionFxBar();
+}
+function toggleFlip(axis){
+  if (!selId) return;
+  const ly = L.fixtures[selId];
+  if (axis==='H') ly.flipH = !ly.flipH; else ly.flipV = !ly.flipV;
+  dirty = true; syncBarToSel(); reRenderToken(selId);
+}
+function reRenderToken(id){
+  const old = stage.querySelector(`.fx[data-id="${id}"]`);
+  if (old){ const fresh = buildToken(FXMAP[id]); old.replaceWith(fresh); }
+}
+
+// tap empty stage = deselect
+stage.addEventListener('pointerdown', e => {
+  if (e.target===stage || e.target.classList.contains('hint')){
+    selId = null;
+    [...stage.querySelectorAll('.fx')].forEach(n=>n.classList.remove('selected'));
+    hideFxBar();
+  }
+});
+
+// ── Global toggles ──────────────────────────────────────────────────────────
+function toggleGrid(){ L.grid=!L.grid; dirty=true; applyGlobalToggles(); }
+function toggleIds(){  L.showIds=!L.showIds; dirty=true; applyGlobalToggles(); render(); }
+
+// ── Mode switch ─────────────────────────────────────────────────────────────
+function setMode(m){
+  mode = m;
+  $('mode-design').classList.toggle('on', m==='design');
+  $('mode-live').classList.toggle('on', m==='live');
+  $('btn-save').style.display = (m==='design')?'':'none';
+  document.body.classList.toggle('design', m==='design');
+  selId = null; hideFxBar();
+  stopPoll();
+  render();
+  if (m==='live'){ buildRail(); startPoll(); }
+  else { $('live-dot').className=''; }
+  openDrawerForMode(true);
+}
+function openDrawerForMode(forceClose){
+  const tray=$('tray'), rail=$('rail'), title=$('drawer-title');
+  if (mode==='design'){ tray.style.display='flex'; rail.style.display='none';
+    title.textContent='FIXTURES'; }
+  else { tray.style.display='none'; rail.style.display='flex';
+    title.textContent='SCENES'; }
+  if (forceClose) $('drawer').classList.remove('open');
+}
+function toggleDrawer(){ $('drawer').classList.toggle('open'); }
+
+// ── Live: poll DMX and paint ────────────────────────────────────────────────
+// Self-scheduling poll + rAF paint. The fetch loop only schedules the next
+// request after the current one resolves, so a slow response over WiFi can't
+// pile up overlapping requests (the cause of burst-then-gap stutter). Painting
+// runs on requestAnimationFrame off the latest snapshot, so the canvas repaints
+// smoothly at display rate and never stalls waiting on a slow fetch.
+let latestSnap  = null;
+let pollRunning = false;
+let fetchTimer  = null;
+let rafId       = null;
+
+function startPoll(){
+  stopPoll();
+  pollRunning = true;
+  fetchLoop();
+  rafId = requestAnimationFrame(paintLoop);
+}
+function stopPoll(){
+  pollRunning = false;
+  if (fetchTimer){ clearTimeout(fetchTimer); fetchTimer = null; }
+  if (rafId){ cancelAnimationFrame(rafId); rafId = null; }
+}
+
+async function fetchLoop(){
+  if (!pollRunning) return;
+  const t0 = performance.now();
+  try {
+    latestSnap = await fetch('/api/dmx').then(r=>r.json());
+    $('live-dot').className = 'on';
+  } catch(e){ $('live-dot').className = 'err'; }
+  if (!pollRunning) return;
+  // Pace to ~POLL_MS but never overlap: wait the remainder of the budget.
+  const wait = Math.max(0, POLL_MS - (performance.now() - t0));
+  fetchTimer = setTimeout(fetchLoop, wait);
+}
+
+function paintLoop(){
+  if (!pollRunning) return;
+  if (latestSnap) paint(latestSnap);
+  rafId = requestAnimationFrame(paintLoop);
+}
+
+function chVal(snap, u, c){
+  const arr = snap[u] || snap[String(u)];
+  if (!arr) return 0;
+  return arr[c-1] || 0;
+}
+
+function paint(snap){
+  const placed = FIX.filter(f => L.fixtures[f.id].placed);
+  placed.forEach(f => {
+    const el = stage.querySelector(`.fx[data-id="${f.id}"]`);
+    if (!el) return;
+    const cellEls = el.querySelectorAll('.cell');
+    const dim = f.dimmer_ch ? (chVal(snap, f.dimmer_ch[0], f.dimmer_ch[1])/255) : 1;
+    f.cells.forEach((writes, i) => {
+      const ce = cellEls[i]; if (!ce) return;
+      // collect channel values for this cell
+      const col = {};
+      let uvAmt = 0;
+      for (const [u,c,key] of writes){
+        const v = chVal(snap, u, c);
+        col[key] = v;
+        if (key==='uv') uvAmt = v;
+      }
+      // linear additive mix * dimmer
+      let R=0,G=0,B=0;
+      for (const k in col){
+        const e = EMIT[k]; if (!e) continue;
+        const v = (col[k]/255) * dim;
+        R += v*e[0]; G += v*e[1]; B += v*e[2];
+      }
+      const r = Math.round(lin2srgb(R)*255);
+      const g = Math.round(lin2srgb(G)*255);
+      const b = Math.round(lin2srgb(B)*255);
+      ce.style.background = (r+g+b < 8) ? '#161616' : `rgb(${r},${g},${b})`;
+      // UV glow hint (fluorescence stand-in)
+      const uv = (uvAmt/255)*dim;
+      ce.style.boxShadow = uv>0.12
+        ? `inset 0 0 0 1px rgba(255,255,255,.07), 0 0 ${Math.round(6+uv*14)}px rgba(150,40,255,${(uv*0.7).toFixed(2)})`
+        : 'inset 0 0 0 1px rgba(255,255,255,.07)';
+    });
+  });
+}
+
+// ── Live: scene rail ────────────────────────────────────────────────────────
+async function buildRail(){
+  const rail = $('rail');
+  rail.innerHTML = '<span class="tray-empty">Loading scenes…</span>';
+  try {
+    const st = await fetch('/api/state').then(r=>r.json());
+    const scenes = st.enabled_scenes || st.scenes || [];
+    rail.innerHTML = '';
+    const black = mkBtn('⬛ Blackout', 'scene-btn black',
+      ()=>post('/api/blackout', {mode:'full'}));
+    const stop = mkBtn('■ Stop All', 'scene-btn stop',
+      ()=>post('/api/stop-all', {}));
+    rail.appendChild(black); rail.appendChild(stop);
+    scenes.forEach(s => {
+      const isFx = (s.scene_type==='effect');
+      rail.appendChild(mkBtn(s.name, 'scene-btn'+(isFx?' effect':''),
+        ()=> post('/api/scene/'+s.id, {})));
+    });
+    if (!scenes.length){
+      const note = document.createElement('span');
+      note.className='tray-empty';
+      note.textContent='No scenes enabled in this show — trigger from the main control page; the stage mirrors it live.';
+      rail.appendChild(note);
+    }
+  } catch(e){ rail.innerHTML='<span class="tray-empty">Could not load scenes.</span>'; }
+}
+function mkBtn(label, cls, fn){
+  const b=document.createElement('button'); b.className=cls; b.textContent=label;
+  b.onclick=fn; return b;
+}
+function post(url, body){
+  fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+              body:JSON.stringify(body)}).catch(()=>{});
+}
+
+// ── Save ─────────────────────────────────────────────────────────────────────
+async function saveLayout(){
+  try {
+    await fetch('/api/stage/layout', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(L),
+    });
+    dirty = false;
+    toast('Layout saved');
+  } catch(e){ toast('Save failed'); }
+}
+let toastT;
+function toast(msg){
+  const t=$('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), 1600);
+}
+
+// warn on leave with unsaved changes
+window.addEventListener('beforeunload', e => {
+  if (dirty){ e.preventDefault(); e.returnValue=''; }
+});
+// reposition tokens on resize/orientation change
+window.addEventListener('resize', () => {
+  [...stage.querySelectorAll('.fx')].forEach(el=>{
+    placeEl(el, L.fixtures[el.dataset.id]);
+  });
+  positionFxBar();
+});
+
+// ── Reverse output ──────────────────────────────────────────────────────────
+async function toggleReverse(){
+  if (!selId) return;
+  const f = FXMAP[selId];
+  if (!f || f.is_mover || f.cell_count <= 1) return;
+  const next = !f.reverse;
+  try {
+    await fetch('/api/fixtures/' + encodeURIComponent(selId) + '/reverse', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({value: next}),
+    });
+  } catch(e){ toast('Reverse failed'); return; }
+  // cell order changed server-side — re-fetch geometry and re-render
+  try {
+    FIX = await fetch('/api/stage/fixtures').then(r=>r.json());
+    FXMAP = {}; FIX.forEach(x => FXMAP[x.id] = x);
+  } catch(e){}
+  syncBarToSel(); reRenderToken(selId); positionFxBar();
+  toast(next ? 'Output reversed' : 'Output normal');
+}
+
+// ── Groups modal ────────────────────────────────────────────────────────────
+function openGroups(){
+  gEditIdx = -1;
+  renderGroupsList();
+  $('gm-editor').style.display = 'none';
+  $('groups-overlay').classList.add('open');
+}
+function closeGroups(){ $('groups-overlay').classList.remove('open'); }
+
+function renderGroupsList(){
+  const list = $('gm-list'); list.innerHTML = '';
+  if (!GROUPS.length)
+    list.innerHTML = '<div class="gm-empty">No groups yet. Create one below.</div>';
+  GROUPS.forEach((g, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'gm-chip' + (i===gEditIdx ? ' sel' : '');
+    chip.innerHTML = `<span>${escapeHtml(g.name || g.id)}</span>`
+      + `<span class="cnt">${(g.members||[]).length} fixtures</span>`;
+    chip.onclick = () => editGroup(i);
+    list.appendChild(chip);
+  });
+}
+
+function newGroup(){
+  const id = 'g' + Math.random().toString(36).slice(2, 8);
+  GROUPS.push({ id, name:'', members:[] });
+  editGroup(GROUPS.length - 1);
+}
+
+function editGroup(i){
+  gEditIdx = i;
+  renderGroupsList();
+  $('gm-editor').style.display = '';
+  $('gm-name').value = GROUPS[i].name || '';
+  renderMembers();
+}
+
+function onGroupName(v){ if (gEditIdx>=0){ GROUPS[gEditIdx].name = v; renderGroupsList(); } }
+
+function renderMembers(){
+  const g = GROUPS[gEditIdx];
+  const box = $('gm-members'); box.innerHTML = '';
+  if (!g.members.length)
+    box.innerHTML = '<div class="gm-empty">No fixtures yet — add some below.</div>';
+  g.members.forEach((fid, idx) => {
+    const f = FXMAP[fid];
+    const row = document.createElement('div');
+    row.className = 'gm-mem';
+    row.innerHTML = `<span class="idx">${idx+1}</span>`
+      + `<span class="nm">${escapeHtml(f ? f.name : fid)}</span>`;
+    const up = document.createElement('button'); up.textContent='▲';
+    up.disabled = idx===0; up.onclick = () => moveMember(idx,-1);
+    const dn = document.createElement('button'); dn.textContent='▼';
+    dn.disabled = idx===g.members.length-1; dn.onclick = () => moveMember(idx,1);
+    const rm = document.createElement('button'); rm.textContent='✕'; rm.className='rm';
+    rm.onclick = () => { g.members.splice(idx,1); renderMembers(); };
+    row.appendChild(up); row.appendChild(dn); row.appendChild(rm);
+    box.appendChild(row);
+  });
+  renderAvailable();
+}
+
+function renderAvailable(){
+  const g = GROUPS[gEditIdx];
+  const box = $('gm-available'); box.innerHTML = '';
+  const avail = FIX.filter(f => !f.is_mover && !g.members.includes(f.id));
+  if (!avail.length){
+    box.innerHTML = '<div class="gm-empty">All fixtures added.</div>';
+    return;
+  }
+  avail.forEach(f => {
+    const b = document.createElement('button');
+    b.className = 'gm-add';
+    b.textContent = '+ ' + f.name;
+    b.onclick = () => { g.members.push(f.id); renderMembers(); };
+    box.appendChild(b);
+  });
+}
+
+function moveMember(idx, dir){
+  const m = GROUPS[gEditIdx].members;
+  const j = idx + dir;
+  if (j<0 || j>=m.length) return;
+  [m[idx], m[j]] = [m[j], m[idx]];
+  renderMembers();
+}
+
+function deleteGroup(){
+  if (gEditIdx<0) return;
+  const g = GROUPS[gEditIdx];
+  if (!confirm(`Delete group "${g.name || g.id}"?`)) return;
+  GROUPS.splice(gEditIdx,1);
+  gEditIdx = -1;
+  $('gm-editor').style.display = 'none';
+  saveGroups();
+}
+
+async function saveGroups(){
+  // keep only named, non-empty groups
+  const clean = GROUPS.filter(g => (g.name||'').trim() && g.members.length);
+  try {
+    await fetch('/api/groups', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ groups: clean }),
+    });
+    GROUPS = clean;
+    if (gEditIdx >= GROUPS.length) gEditIdx = -1;
+    renderGroupsList();
+    toast('Groups saved');
+  } catch(e){ toast('Save failed'); }
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ── Live refresh when returning to this tab ──────────────────────────────────
+// Reverse / group changes made on another tab (e.g. Settings) update the server
+// immediately; re-pull fixture geometry + groups when this tab regains focus so
+// the visualizer reflects them without a manual page refresh.
+async function refreshFixtures(){
+  try {
+    const [fx, grp] = await Promise.all([
+      fetch('/api/stage/fixtures').then(r=>r.json()),
+      fetch('/api/groups').then(r=>r.json()).catch(()=>GROUPS),
+    ]);
+    if (Array.isArray(fx)){ FIX = fx; FXMAP = {}; FIX.forEach(f => FXMAP[f.id] = f); }
+    if (Array.isArray(grp)) GROUPS = grp;
+    render();
+    if (selId && FXMAP[selId]){ syncBarToSel(); positionFxBar(); showFxBar(); }
+    else { selId = null; hideFxBar(); }
+  } catch(e){}
+}
+
+let _lastRefresh = 0;
+function maybeRefresh(){
+  const now = Date.now();
+  if (now - _lastRefresh < 800) return;   // throttle rapid focus events
+  _lastRefresh = now;
+  refreshFixtures();
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) maybeRefresh(); });
+window.addEventListener('focus', maybeRefresh);
+
+document.body.classList.add('design');
+init();
+</script>
+</body>
+</html>
