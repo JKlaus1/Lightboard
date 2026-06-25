@@ -74,10 +74,29 @@ try:
     eng.play_motion_scene(gen_motion("g", "circle", 100), scene_id="g")
     time.sleep(0.12)
     ok(eng._dmx.last_frame.get((0, 1)) == 100, "generator center_pan = 100")
+    th_before = eng._active_motions[0]["thread"]
+    c_before = eng._active_motions[0].get("gen_cycles", 0)
     eng.refresh_active_motion("g", gen_motion("g", "circle", 210))
     time.sleep(0.12)
     ok(eng._dmx.last_frame.get((0, 1)) == 210, "generator center hot-swapped to 210")
     ok(len(eng._active_motions) == 1, "single generator entry after swap")
+    # Seamless: the player thread is NOT replaced, so the cycle clock keeps
+    # running (orbit continues from where it was, no jump to the start).
+    ok(eng._active_motions[0]["thread"] is th_before, "gen→gen keeps the same thread (clock preserved)")
+    ok(eng._active_motions[0].get("gen_cycles", 0) >= c_before > 0, "cycle clock kept advancing (not reset)")
+finally:
+    eng.shutdown()
+
+print("\n[mode change restarts in place]")
+eng = LightingEngine(StubDMX(), SHOW)
+try:
+    eng.play_motion_scene(gen_motion("g", "circle", 100), scene_id="g")
+    time.sleep(0.12)
+    th_gen = eng._active_motions[0]["thread"]
+    eng.refresh_active_motion("g", step_motion("g", 60, 70))   # generator -> steps
+    time.sleep(0.12)
+    ok(eng._active_motions[0]["thread"] is not th_gen, "gen→step restarts (new thread)")
+    ok(eng._dmx.last_frame.get((0, 1)) == 60, "step data applied after mode change")
 finally:
     eng.shutdown()
 

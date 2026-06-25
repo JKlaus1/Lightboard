@@ -1324,16 +1324,27 @@ class LightingEngine:
 
     def refresh_active_motion(self, scene_id, scene):
         """If `scene_id` is a currently-active mover_motion (step OR generator),
-        restart it in place with the updated data so an edit-and-save applies
-        immediately — no toggle off/on. Returns False (no-op) when it isn't
-        currently playing. Re-playing the same id stops the old player thread
-        and starts a fresh one (see play_motion_scene)."""
+        apply the updated data live so an edit-and-save lands immediately — no
+        toggle off/on. Returns False (no-op) when it isn't currently playing.
+
+        Generator→generator: the scene is swapped in place on the running player
+        thread, so its cycle clock keeps running and the orbit continues from
+        where it was (only the edited parameters change — no jump to the start).
+        Any other transition (step motion, or a Steps↔Generator mode change)
+        restarts the entry in place via play_motion_scene."""
         if scene_id is None:
             return False
         with self._lock:
-            active = any(e["id"] == scene_id for e in self._active_motions)
-        if not active:
+            old = next((e for e in self._active_motions if e["id"] == scene_id), None)
+        if old is None:
             return False
+        old_is_gen = (old["scene"].get("motion_mode") == "generator")
+        new_is_gen = (scene.get("motion_mode") == "generator")
+        if old_is_gen and new_is_gen and not self._is_frozen_for("motion"):
+            with self._lock:
+                old["scene"] = scene            # loop re-reads this each tick
+                old["name"]  = scene.get("name")
+            return True
         self.play_motion_scene(scene, scene_id=scene_id)
         return True
 
@@ -2150,27 +2161,39 @@ class LightingEngine:
         """Continuous procedural mover motion. Evaluates the scene's shape once
         per output tick and writes the resulting pan/tilt frame to entry['dmx'].
 
-        Speed follows the same musical/wall-clock split the effect renderer
-        uses: when the scene is tempo-synced and a tap tempo is live, t_eff is
-        beats-since-anchor / beat_division (1 cycle per `division` beats);
-        otherwise it's wall-clock seconds * the generator's `speed` (cycles/s).
+        The scene is re-read from the entry every tick, so a generator→generator
+        hot-swap can replace entry['scene'] in place WITHOUT restarting this
+        thread — the cycle accumulator below keeps running, so the orbit
+        continues from where it was (shape/center/size/speed edits apply
+        smoothly, with no jump back to the loop's start).
+
+        Timing follows the same musical/wall-clock split the effect renderer
+        uses. Cycles are accumulated incrementally (dt * speed) rather than
+        derived from a fixed anchor, so changing Seconds/loop mid-run changes
+        the rate smoothly instead of snapping the phase. When tempo-synced and a
+        tap tempo is live, the accumulator is slaved to beats / beat_division.
         """
-        scene = entry["scene"]
         stop_event = entry["stop_event"]
-        gen = scene.get("generator") or {}
-        try:
-            speed = float(gen.get("speed", 0.25))
-        except (TypeError, ValueError):
-            speed = 0.25
         interval = 1.0 / self.OUTPUT_HZ
-        t0 = time.time()
+        cycles = 0.0
+        last = time.time()
         while not stop_event.is_set():
+            scene = entry["scene"]               # re-read: picks up a live swap
+            gen = scene.get("generator") or {}
+            try:
+                speed = float(gen.get("speed", 0.25))
+            except (TypeError, ValueError):
+                speed = 0.25
+            now = time.time()
+            dt = now - last
+            last = now
             if scene.get("tempo_sync") and self._tempo_active:
                 division = float(scene.get("beat_division", 1.0)) or 1.0
-                t_eff = self.beat_time() / division
+                cycles = self.beat_time() / division     # slave to the beat clock
             else:
-                t_eff = (time.time() - t0) * speed
-            role_frame = mover_gen.evaluate_motion_generator(scene, t_eff)
+                cycles += dt * speed                      # accumulate wall-clock
+            entry["gen_cycles"] = cycles                  # exposed for diagnostics
+            role_frame = mover_gen.evaluate_motion_generator(scene, cycles)
             target = self.resolve_step(role_frame, scene_type="mover_motion")
             with self._lock:
                 entry["dmx"] = target
