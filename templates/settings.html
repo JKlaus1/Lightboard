@@ -286,6 +286,18 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
   </div>
 
   <div class="card">
+    <div class="card-head"><h2>Presets</h2><button class="smbtn accent" onclick="openPresetEditor(null)">+ New Preset</button></div>
+    <div style="font-size:0.78rem;color:var(--sub);margin-bottom:10px;">
+      Recall bundles for the home-page trigger row. A preset plays the scenes,
+      motions, looks and effects you pick (plus optional dimmer / singer levels),
+      limited to the subsystems you scope in. <strong>Exclusive</strong> sets
+      exactly those items per scoped category (clearing others); <strong>additive</strong>
+      adds them on top. Order here = button order on the home page.
+    </div>
+    <div id="presets-list"></div>
+  </div>
+
+  <div class="card">
     <div class="card-head"><h2>Fixture Library</h2><button class="smbtn accent" onclick="openBuilder(null)">+ Build New</button></div>
     <div id="library-list"></div>
   </div>
@@ -324,6 +336,38 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
               style="background:transparent;border:1px solid var(--danger);color:var(--danger);flex:0 0 auto;padding:11px 14px;">Delete</button>
       <button type="button" onclick="closeColorEditor()" style="background:var(--surface2);color:var(--text);">Cancel</button>
       <button type="button" onclick="saveColor()" style="background:var(--accent);color:#fff;">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- preset editor modal -->
+<div class="modal-bg" id="preset-modal-bg">
+  <div class="modal">
+    <h2 id="preset-modal-title">New Preset</h2>
+    <label class="pal-hint">Name</label>
+    <input type="text" id="preset-name" placeholder="e.g. Verse 1" maxlength="40"
+           style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px;font-size:0.9rem;outline:none;margin:4px 0 14px;">
+    <div class="pal-hint" style="margin-bottom:6px;">Mode</div>
+    <div style="display:flex;gap:14px;margin-bottom:4px;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.84rem;cursor:pointer;">
+        <input type="radio" name="preset-mode" value="exclusive" onchange="setMode(true)"> Exclusive</label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.84rem;cursor:pointer;">
+        <input type="radio" name="preset-mode" value="additive" onchange="setMode(false)"> Additive</label>
+    </div>
+    <div class="pal-hint" style="margin-bottom:12px;">Exclusive recalls exactly these items in each scoped category (clears others). Additive adds them on top and leaves the rest.</div>
+
+    <div class="pal-hint" style="margin-bottom:6px;">Scope &amp; items — tick a subsystem to let this preset control it.</div>
+    <div id="preset-scope-items"></div>
+
+    <div style="margin-top:12px;">
+      <button type="button" class="smbtn" onclick="presetFillFromLive()">⟲ Fill from live</button>
+    </div>
+
+    <div class="modal-btns">
+      <button id="preset-delete" type="button" onclick="deletePresetFromEditor()"
+              style="background:transparent;border:1px solid var(--danger);color:var(--danger);flex:0 0 auto;padding:11px 14px;">Delete</button>
+      <button type="button" onclick="closePresetEditor()" style="background:var(--surface2);color:var(--text);">Cancel</button>
+      <button type="button" onclick="savePreset()" style="background:var(--accent);color:#fff;">Save</button>
     </div>
   </div>
 </div>
@@ -451,12 +495,38 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
       <div style="font-size:0.7rem;color:var(--sub);margin-top:8px;">
         <strong>Tip:</strong> "pan" and "tilt" are the motion channels. Everything else (dimmer, gobo, prism, color, strobe, etc.) becomes part of "Look" scenes.
       </div>
+      <div id="fb-slots-section" style="margin-top:14px;"></div>
+    </div>
+
+    <!-- Channel test panel: live DMX probe for unknown fixtures -->
+    <div id="fb-test" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer;" onclick="tpToggle()">
+        <span style="flex:1;font-size:0.82rem;font-weight:700;color:var(--accent);">&#128481; Test channels (live DMX)</span>
+        <span id="tp-caret" style="font-size:0.8rem;color:var(--sub);">&#9656;</span>
+      </div>
+      <div id="tp-body" style="display:none;margin-top:10px;">
+        <div style="font-size:0.7rem;color:var(--sub);line-height:1.4;margin-bottom:8px;">
+          Patch the fixture to a temporary address, then drag faders and watch the light to learn what each channel does. Raw output &mdash; no profile needed. Use &ldquo;assign&rdquo; to drop a channel straight into the map above.
+        </div>
+        <div class="mrow"><label>Universe</label><input type="number" id="tp-universe" min="0" max="32767" value="0"></div>
+        <div class="mrow"><label>Start address</label><input type="number" id="tp-start" min="1" max="512" value="1"></div>
+        <div class="mrow"><label>Channels</label><input type="number" id="tp-count" min="1" max="64" value="12"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.78rem;margin:6px 0;">
+          <input type="checkbox" id="tp-solo" onchange="tpSoloChange()"> Solo &mdash; black out the rest of the rig while testing
+        </label>
+        <div style="display:flex;gap:8px;margin:8px 0;">
+          <button type="button" class="btn-ok" id="tp-startbtn" onclick="tpStart()" style="flex:1;">Start test</button>
+          <button type="button" class="btn-cancel2" id="tp-stopbtn" onclick="tpStop()" style="flex:1;display:none;">Stop test</button>
+        </div>
+        <div id="tp-faders"></div>
+        <div id="tp-status" style="font-size:0.72rem;color:var(--sub);margin-top:6px;"></div>
+      </div>
     </div>
 
     <div id="fb-validate" style="font-size:0.72rem;margin-top:8px;"></div>
 
     <div class="modal-btns">
-      <button class="btn-cancel2" onclick="closeModal('builder-modal')">Cancel</button>
+      <button class="btn-cancel2" onclick="tpStop();closeModal('builder-modal')">Cancel</button>
       <button class="btn-ok" onclick="saveToLibrary()">Save to Library</button>
     </div>
   </div>
@@ -524,6 +594,7 @@ function renderFreezeIncludes() {
   try { library = await fetch('/api/fixtures').then(r=>r.json()); }
   catch(e){ library = []; }
   renderShows(); renderLibrary(); renderFixtures(); renderFreezeIncludes(); updateDot();
+  loadPresetsList();
   const sel=document.getElementById('ns-source');
   allShows.forEach(s=>sel.innerHTML+=`<option value="${s.id}">Copy of "${s.name}"</option>`);
   loadDmxConfig();
@@ -864,6 +935,8 @@ function addFromLibrary(){
     if (def.type === 'mover') {
       inst.type = 'mover';
       inst.channel_roles = def.channel_roles || {};
+      inst.channel_slots = JSON.parse(JSON.stringify(def.channel_slots || {}));
+      inst.def_id = def.id;
     } else if (def.type === 'pixel_strip') {
       inst.type                = 'pixel_strip';
       inst.pixel_count         = def.pixel_count;
@@ -920,6 +993,9 @@ function openBuilder(existing){
   renderSegments(existing?.segments || []);
   updateBuilderMode();
   fbValidate();
+  fbSlots = (existing && existing.channel_slots) ? JSON.parse(JSON.stringify(existing.channel_slots)) : {};
+  renderSlots();
+  tpResetPanel();
   openModal('builder-modal');
 }
 
@@ -939,6 +1015,7 @@ function updateBuilderMode(){
   if (isPixelStrip) { recomputePixelTotalChannels(); rebuildChannelMap(); }
   if (isPod) rebuildChannelMap();
   fbValidate();
+  renderSlots();
 }
 
 function recomputePixelTotalChannels(){
@@ -1025,7 +1102,7 @@ function rebuildRoleRows(){
     // Secondary / tertiary colors (WLED Effect mode uses these)
     'r2','g2','b2','r3','g3','b3',
     // Mover wheels
-    'color_wheel','gobo','gobo_rot','prism','prism_rot',
+    'color_wheel','gobo','gobo_rot','gobo2','gobo2_rot','prism','prism_rot','prism2','prism2_rot',
     // Optics
     'focus','zoom','iris',
     // Common parameters
@@ -1042,7 +1119,7 @@ function rebuildRoleRows(){
     row.innerHTML = `
       <label style="flex:1;font-size:0.78rem;color:var(--text);">${role.replace('_',' ')}</label>
       <input type="number" min="1" max="512" value="${val}" placeholder="—"
-             oninput="fbValidate()" data-role="${role}"
+             oninput="fbValidate();renderSlots()" data-role="${role}"
              style="width:75px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 8px;">`;
     wrap.appendChild(row);
   });
@@ -1193,7 +1270,7 @@ async function saveToLibrary(){
       if (v >= 1 && v <= channels) roles[inp.dataset.role] = v;
     });
     if (Object.keys(roles).length === 0) { toast('Map at least one channel role','err'); return; }
-    def = { id, name, type:'mover', channels, channel_roles: roles };
+    def = { id, name, type:'mover', channels, channel_roles: roles, channel_slots: fbSlots };
   } else if (type === 'pixel_strip') {
     const pxCount = parseInt(document.getElementById('fb-pixel-count').value)    || 1;
     const dim     = parseInt(document.getElementById('fb-pixel-dimmer-ch').value) || 0;
@@ -1221,7 +1298,7 @@ async function saveToLibrary(){
   if(d.ok){
     const i=library.findIndex(f=>f.id===id);
     if(i>=0)library[i]=def;else library.push(def);
-    renderLibrary(); closeModal('builder-modal'); toast('Saved to library ✓','ok');
+    tpStop(); renderLibrary(); closeModal('builder-modal'); toast('Saved to library ✓','ok');
   }else toast('Error: '+(d.error||'save failed'),'err');
 }
 
@@ -1368,6 +1445,376 @@ function resolveCollision(id,action){
 }
 function closeCollision(){ closeModal('collision-modal'); }
 function exportAll(){ window.location='/api/library/export_all'; }
+
+// ── Channel test (live DMX probe for unknown fixtures) ────────────
+let tpRunning = false;
+let tpPostTimer = null;
+
+function tpToggle(){
+  const body = document.getElementById('tp-body');
+  const caret = document.getElementById('tp-caret');
+  const open = body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  caret.innerHTML = open ? '▾' : '▸';
+  if (open && !tpRunning){
+    const ch = parseInt(document.getElementById('fb-channels').value) || 12;
+    document.getElementById('tp-count').value = Math.min(64, Math.max(1, ch));
+  }
+}
+
+function tpAssignOptions(){
+  const type = document.getElementById('fb-type').value;
+  if (type === 'mover'){
+    const roles = ['pan','pan_fine','tilt','tilt_fine','dimmer','shutter','strobe',
+      'r','g','b','w','color_wheel','gobo','gobo_rot','gobo2','gobo2_rot','prism','prism_rot','prism2','prism2_rot',
+      'focus','zoom','iris','speed'];
+    return roles.map(r => ({value:'role:'+r, label:r.replace('_',' ')}));
+  }
+  return [
+    {value:'col:r',label:'Red'},{value:'col:g',label:'Green'},{value:'col:b',label:'Blue'},
+    {value:'col:l',label:'Lime'},{value:'col:a',label:'Amber'},{value:'col:w',label:'White'},
+    {value:'col:uv',label:'UV'},
+  ];
+}
+
+function tpStart(){
+  const start = parseInt(document.getElementById('tp-start').value) || 1;
+  const count = parseInt(document.getElementById('tp-count').value) || 1;
+  const uni   = parseInt(document.getElementById('tp-universe').value) || 0;
+  tpBuildFaders(uni, start, count);
+  tpRunning = true;
+  document.getElementById('tp-startbtn').style.display = 'none';
+  document.getElementById('tp-stopbtn').style.display = '';
+  document.getElementById('tp-status').textContent =
+    'Testing universe ' + uni + ', addr ' + start + '–' + (start + count - 1) +
+    (document.getElementById('tp-solo').checked ? '  · SOLO' : '');
+  tpPost();
+}
+
+function tpStop(){
+  tpRunning = false;
+  const sb = document.getElementById('tp-startbtn'); if (sb) sb.style.display = '';
+  const stb = document.getElementById('tp-stopbtn'); if (stb) stb.style.display = 'none';
+  const st = document.getElementById('tp-status'); if (st) st.textContent = 'Stopped — output released.';
+  fetch('/api/dmx/raw/clear', {method:'POST'}).catch(()=>{});
+}
+
+function tpSoloChange(){
+  if (!tpRunning) return;
+  tpPost();
+  document.getElementById('tp-status').textContent =
+    document.getElementById('tp-solo').checked
+      ? 'SOLO on — rest of rig blacked out'
+      : 'Solo off — testing over live output';
+}
+
+function tpBuildFaders(uni, start, count){
+  const wrap = document.getElementById('tp-faders');
+  wrap.innerHTML = '';
+  const opts = tpAssignOptions();
+  const optsHtml = opts.map(o => '<option value="' + o.value + '">' + o.label + '</option>').join('');
+  const ST = "background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);width:26px;height:26px;font-size:0.95rem;line-height:1;cursor:pointer;padding:0;";
+  for (let i = 0; i < count; i++){
+    const addr = start + i;
+    const entry = document.createElement('div');
+    entry.className = 'tp-entry';
+    entry.dataset.off = (i + 1);
+    entry.innerHTML =
+      '<div style="display:flex;align-items:center;gap:5px;margin:5px 0;">' +
+        '<span style="width:36px;font-size:0.72rem;color:var(--sub);font-variant-numeric:tabular-nums;">#' + addr + '</span>' +
+        '<input type="range" min="0" max="255" value="0" data-uni="' + uni + '" data-ch="' + addr + '" ' +
+          'oninput="tpFaderInput(this)" style="flex:1;">' +
+        '<button type="button" onclick="tpNudge(this,-1)" style="' + ST + '">\u2212</button>' +
+        '<span class="tp-val" style="width:26px;text-align:center;font-size:0.72rem;font-variant-numeric:tabular-nums;">0</span>' +
+        '<button type="button" onclick="tpNudge(this,1)" style="' + ST + '">+</button>' +
+        '<select onchange="tpAssign(' + (i + 1) + ', this.value, this); this.selectedIndex=0;" ' +
+          'style="width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:3px 4px;font-size:0.7rem;">' +
+          '<option value="">assign…</option>' + optsHtml + '</select>' +
+        '<button type="button" class="tp-slotbtn" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--accent);padding:3px 6px;font-size:0.7rem;cursor:pointer;" onclick="tpSlotToggle(this)">+slot</button>' +
+      '</div>' +
+      '<div class="tp-capture" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;margin:0 0 6px 44px;"></div>';
+    wrap.appendChild(entry);
+  }
+}
+function tpFaderInput(slider){
+  const entry = slider.closest('.tp-entry');
+  const val = entry.querySelector('.tp-val');
+  if (val) val.textContent = slider.value;
+  tpQueuePost();
+}
+function tpNudge(btn, delta){
+  const slider = btn.closest('.tp-entry').querySelector('input[type=range]');
+  let v = parseInt(slider.value) || 0;
+  v = Math.max(0, Math.min(255, v + delta));
+  slider.value = v;
+  tpFaderInput(slider);
+}
+
+function tpQueuePost(){
+  if (tpPostTimer) return;
+  tpPostTimer = setTimeout(() => { tpPostTimer = null; tpPost(); }, 40);
+}
+
+function tpPost(){
+  if (!tpRunning) return;
+  const channels = [];
+  document.querySelectorAll('#tp-faders input[type=range]').forEach(s => {
+    channels.push([parseInt(s.dataset.uni), parseInt(s.dataset.ch), parseInt(s.value)]);
+  });
+  fetch('/api/dmx/raw', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({channels: channels, solo: document.getElementById('tp-solo').checked})
+  }).catch(()=>{});
+}
+
+function tpAssign(offset, value, el){
+  const entry = el ? el.closest('.tp-entry') : null;
+  if (entry){
+    const btn = entry.querySelector('.tp-slotbtn');
+    const cap = entry.querySelector('.tp-capture');
+    if (value.indexOf('role:') === 0 && SLOT_ROLES.indexOf(value.slice(5)) >= 0){
+      entry.dataset.slotrole = value.slice(5);
+      if (btn) btn.style.display = '';
+    } else {
+      delete entry.dataset.slotrole;
+      if (btn) btn.style.display = 'none';
+      if (cap){ cap.style.display = 'none'; cap.innerHTML = ''; }
+    }
+  }
+  if (!value) return;
+  const type = document.getElementById('fb-type').value;
+  if (value.indexOf('role:') === 0){
+    const role = value.slice(5);
+    const inp = document.querySelector('#fb-role-rows input[data-role="' + role + '"]');
+    if (inp){ inp.value = offset; fbValidate(); renderSlots(); toast(role.replace('_',' ') + ' → ch ' + offset, 'ok'); }
+  } else if (value.indexOf('col:') === 0){
+    const color = value.slice(4);
+    const firstId = type === 'pixel_strip' ? 'fb-pixel-first-ch' : 'fb-first-pod';
+    const first = parseInt(document.getElementById(firstId).value) || 1;
+    const pos = offset - first;
+    const mapId = type === 'pixel_strip' ? 'fb-pixel-channel-map' : 'fb-channel-map';
+    const sel = document.querySelector('#' + mapId + ' select[data-pos="' + pos + '"]');
+    if (sel){ sel.value = color; onChannelMapChange(sel); toast(color.toUpperCase() + ' → ch ' + (pos + 1), 'ok'); }
+    else { toast('Addr ' + offset + ' is outside the channel-map range', 'err'); }
+  }
+}
+
+function tpResetPanel(){
+  tpRunning = false;
+  const body = document.getElementById('tp-body'); if (body) body.style.display = 'none';
+  const caret = document.getElementById('tp-caret'); if (caret) caret.innerHTML = '▸';
+  const f = document.getElementById('tp-faders'); if (f) f.innerHTML = '';
+  const sb = document.getElementById('tp-startbtn'); if (sb) sb.style.display = '';
+  const stb = document.getElementById('tp-stopbtn'); if (stb) stb.style.display = 'none';
+  const st = document.getElementById('tp-status'); if (st) st.textContent = '';
+  fetch('/api/dmx/raw/clear', {method:'POST'}).catch(()=>{});
+}
+
+function tpCleanup(){
+  if (tpRunning){ tpRunning = false; navigator.sendBeacon('/api/dmx/raw/clear'); }
+}
+window.addEventListener('pagehide', tpCleanup);
+
+// ── Wheel slots (gobo / colour / prism photo presets) ──────────────────
+const SLOT_ROLES = ['color_wheel','gobo','gobo2','prism','prism2'];
+const SLOT_LABELS = {color_wheel:'Colour wheel', gobo:'Gobo wheel 1', gobo2:'Gobo wheel 2', prism:'Prism', prism2:'Prism 2'};
+let fbSlots = {};
+let tpPhotoFile = {};
+
+function fbFixtureId(){
+  const name = (document.getElementById('fb-name').value || '').trim();
+  return editFxId || name.toLowerCase().replace(/[^a-z0-9]+/g,'_');
+}
+function newUid(){ return 's' + Date.now().toString(36) + Math.floor(Math.random()*1296).toString(36); }
+function slotImgUrl(role, s){
+  if (!s.img) return null;
+  return '/static/slots/' + fbFixtureId() + '/' + s.img + '?v=' + (s._v || 1);
+}
+function mappedSlotRoles(){
+  const out = [];
+  SLOT_ROLES.forEach(role => {
+    const inp = document.querySelector(`#fb-role-rows input[data-role="${role}"]`);
+    const mapped = inp && parseInt(inp.value) >= 1;
+    if (mapped || (fbSlots[role] && fbSlots[role].length)) out.push(role);
+  });
+  return out;
+}
+function renderSlots(){
+  const sec = document.getElementById('fb-slots-section');
+  if (!sec) return;
+  const roles = mappedSlotRoles();
+  if (!roles.length){
+    sec.innerHTML = '<div style="font-size:0.72rem;color:var(--sub);">Map a colour wheel, gobo or prism channel above to define photo presets for it.</div>';
+    return;
+  }
+  sec.innerHTML = '<div style="font-size:0.72rem;color:var(--sub);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Wheel slots</div>';
+  roles.forEach(role => {
+    const grp = document.createElement('div');
+    grp.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;';
+    const rows = (fbSlots[role] || []).map((s, i) => {
+      const url = slotImgUrl(role, s);
+      const thumb = url
+        ? `<div style="width:40px;height:40px;border-radius:6px;background:#000 center/cover no-repeat;background-image:url('${url}');flex-shrink:0;"></div>`
+        : `<div style="width:40px;height:40px;border-radius:6px;background:var(--surface2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:0.55rem;color:var(--sub);">no&nbsp;img</div>`;
+      const mid = Math.round((s.lo + s.hi) / 2);
+      return `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">${thumb}` +
+        `<span style="flex:1;font-size:0.8rem;">${escapeHtml(s.label || '(unnamed)')}</span>` +
+        `<span style="font-size:0.72rem;color:var(--sub);font-variant-numeric:tabular-nums;">${s.lo}–${s.hi} → ${mid}</span>` +
+        `<button type="button" onclick="slotSetPhoto('${role}',${i})" style="background:none;border:none;cursor:pointer;font-size:0.95rem;">📷</button>` +
+        `<button type="button" onclick="slotDelete('${role}',${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:0.95rem;">✕</button>` +
+        `</div>`;
+    }).join('') || '<div style="font-size:0.72rem;color:var(--sub);">No slots yet.</div>';
+    grp.innerHTML =
+      `<div style="font-size:0.78rem;font-weight:600;margin-bottom:4px;">${SLOT_LABELS[role] || role}</div>` +
+      rows +
+      `<button type="button" onclick="slotAddManual('${role}')" style="margin-top:6px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:0.74rem;cursor:pointer;">+ Add slot</button>`;
+    sec.appendChild(grp);
+  });
+}
+function slotDelete(role, idx){
+  const s = (fbSlots[role] || [])[idx];
+  if (!s) return;
+  if (!confirm('Delete slot "' + (s.label || '') + '"?')) return;
+  if (s.img){
+    fetch('/api/fixtures/' + fbFixtureId() + '/slot-image', {method:'DELETE',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({role: role, uid: s.uid})}).catch(()=>{});
+  }
+  fbSlots[role].splice(idx, 1);
+  renderSlots();
+}
+function slotDownscale(file, max){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      const scale = Math.min(1, max / Math.max(w, h));
+      w = Math.round(w * scale); h = Math.round(h * scale);
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = reject;
+    const fr = new FileReader();
+    fr.onload = () => { img.src = fr.result; };
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
+}
+async function slotUploadImage(role, uid, file){
+  const fxId = fbFixtureId();
+  if (!fxId){ toast('Name the fixture first','err'); return null; }
+  try {
+    const durl = await slotDownscale(file, 512);
+    const r = await fetch('/api/fixtures/' + fxId + '/slot-image', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({role: role, uid: uid, dataurl: durl})});
+    const d = await r.json();
+    if (!d.ok){ toast('Upload failed: ' + (d.error || ''),'err'); return null; }
+    return d.img;
+  } catch(e){ toast('Upload failed','err'); return null; }
+}
+async function slotCommit(role, opts){
+  if (!fbFixtureId()){ toast('Name the fixture first','err'); return false; }
+  let lo = parseInt(opts.lo), hi = parseInt(opts.hi);
+  if (isNaN(lo) || isNaN(hi)){ toast('Enter a value range','err'); return false; }
+  lo = Math.max(0, Math.min(255, lo)); hi = Math.max(0, Math.min(255, hi));
+  if (hi < lo){ const t = lo; lo = hi; hi = t; }
+  const uid = opts.uid || newUid();
+  let img = null;
+  if (opts.file){ img = await slotUploadImage(role, uid, opts.file); }
+  fbSlots[role] = fbSlots[role] || [];
+  fbSlots[role].push({uid: uid, label: opts.label || '', lo: lo, hi: hi, img: img, _v: Date.now()});
+  renderSlots();
+  return true;
+}
+function slotAddManual(role){
+  const label = prompt('Slot label (e.g. Stars):', '');
+  if (label === null) return;
+  const lo = prompt('Range low (0–255):', '0'); if (lo === null) return;
+  const hi = prompt('Range high (0–255):', lo); if (hi === null) return;
+  slotCommit(role, {label: label, lo: lo, hi: hi, file: null});
+}
+function slotSetPhoto(role, idx){
+  const s = (fbSlots[role] || [])[idx];
+  if (!s) return;
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = async () => {
+    if (!inp.files[0]) return;
+    const img = await slotUploadImage(role, s.uid, inp.files[0]);
+    if (img){ s.img = img; s._v = Date.now(); renderSlots(); toast('Photo set','ok'); }
+  };
+  inp.click();
+}
+function tpSlotToggle(btn){
+  const entry = btn.closest('.tp-entry');
+  const role = entry.dataset.slotrole;
+  const cap = entry.querySelector('.tp-capture');
+  if (!role || !cap) return;
+  if (cap.style.display !== 'none'){ cap.style.display = 'none'; cap.innerHTML = ''; return; }
+  const v = parseInt(entry.querySelector('input[type=range]').value) || 0;
+  cap.dataset.lo = v; cap.dataset.hi = v;
+  cap.style.display = '';
+  const ST = "background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);width:26px;height:26px;font-size:0.95rem;line-height:1;cursor:pointer;padding:0;";
+  const stp = (which, d) => `<button type="button" onclick="tpCapNudge(this,'${which}',${d})" style="${ST}">${d > 0 ? '+' : '\u2212'}</button>`;
+  cap.innerHTML =
+    `<div style="font-size:0.72rem;color:var(--sub);margin-bottom:6px;">New ${SLOT_LABELS[role] || role} slot</div>` +
+    `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">` +
+      `<button type="button" onclick="tpMark(this,'lo')" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px;font-size:0.72rem;cursor:pointer;">Mark low</button>` +
+      `<button type="button" onclick="tpMark(this,'hi')" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px;font-size:0.72rem;cursor:pointer;">Mark high</button>` +
+    `</div>` +
+    `<div style="display:flex;align-items:center;gap:5px;margin-bottom:6px;font-size:0.72rem;color:var(--sub);">` +
+      `<span>Lo</span>${stp('lo', -1)}<span class="cap-lo" style="min-width:24px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums;">${v}</span>${stp('lo', 1)}` +
+      `<span style="margin-left:6px;">Hi</span>${stp('hi', -1)}<span class="cap-hi" style="min-width:24px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums;">${v}</span>${stp('hi', 1)}` +
+      `<span style="margin-left:auto;color:var(--accent);">\u2192 <span class="cap-mid">${v}</span></span>` +
+    `</div>` +
+    `<input type="text" class="tp-label" placeholder="Label (e.g. Stars)" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:6px 8px;font-size:0.78rem;margin-bottom:6px;">` +
+    `<div style="display:flex;gap:6px;align-items:center;">` +
+      `<label style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:6px;font-size:0.72rem;text-align:center;cursor:pointer;">📷 Photo<input type="file" accept="image/*" capture="environment" style="display:none;" onchange="tpPhoto(this)"></label>` +
+      `<span class="tp-photo-ok" style="font-size:0.8rem;color:var(--success);width:16px;"></span>` +
+      `<button type="button" class="btn-ok" onclick="tpSlotAdd(this)" style="padding:6px 12px;font-size:0.76rem;">Add</button>` +
+    `</div>`;
+}
+function tpCapRender(cap){
+  const lo = parseInt(cap.dataset.lo) || 0, hi = parseInt(cap.dataset.hi) || 0;
+  const e = cap.querySelector('.cap-lo'); if (e) e.textContent = lo;
+  const f = cap.querySelector('.cap-hi'); if (f) f.textContent = hi;
+  const m = cap.querySelector('.cap-mid'); if (m) m.textContent = Math.round((lo + hi) / 2);
+}
+function tpMark(btn, which){
+  const cap = btn.closest('.tp-capture');
+  const v = parseInt(cap.closest('.tp-entry').querySelector('input[type=range]').value) || 0;
+  cap.dataset[which] = v;
+  let lo = parseInt(cap.dataset.lo), hi = parseInt(cap.dataset.hi);
+  if (hi < lo){ cap.dataset.lo = hi; cap.dataset.hi = lo; }
+  tpCapRender(cap);
+}
+function tpCapNudge(btn, which, delta){
+  const cap = btn.closest('.tp-capture');
+  let lo = parseInt(cap.dataset.lo) || 0, hi = parseInt(cap.dataset.hi) || 0;
+  if (which === 'lo'){ lo = Math.max(0, Math.min(255, lo + delta)); if (lo > hi) hi = lo; }
+  else { hi = Math.max(0, Math.min(255, hi + delta)); if (hi < lo) lo = hi; }
+  cap.dataset.lo = lo; cap.dataset.hi = hi;
+  tpCapRender(cap);
+  const fader = cap.closest('.tp-entry').querySelector('input[type=range]');
+  fader.value = (which === 'lo') ? lo : hi;   // drive the light to the tuned bound
+  tpFaderInput(fader);
+}
+function tpPhoto(input){
+  const cap = input.closest('.tp-capture');
+  if (!input.files[0]) return;
+  const key = cap.closest('.tp-entry').dataset.off;
+  tpPhotoFile[key] = input.files[0];
+  cap.querySelector('.tp-photo-ok').textContent = '✓';
+}
+async function tpSlotAdd(btn){
+  const entry = btn.closest('.tp-entry');
+  const cap = entry.querySelector('.tp-capture');
+  const role = entry.dataset.slotrole;
+  const key = entry.dataset.off;
+  const label = cap.querySelector('.tp-label').value.trim();
+  const ok = await slotCommit(role, {label: label, lo: cap.dataset.lo, hi: cap.dataset.hi, file: tpPhotoFile[key] || null});
+  if (ok){ delete tpPhotoFile[key]; cap.style.display = 'none'; cap.innerHTML = ''; toast('Slot added','ok'); }
+}
 
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
@@ -1540,6 +1987,219 @@ function deleteColor(){
   if(!confirm(`Delete "${c?c.name:'this color'}" from the palette?`)) return;
   PALETTE.colors=(PALETTE.colors||[]).filter(x=>x.id!==editingColorId);
   persistPalette('Color deleted').then(ok=>{ if(ok) closeColorEditor(); });
+}
+
+// ── Presets (Task A — builder) ─────────────────────────────────────────────
+const PRESET_CATS = [
+  { key:'main',   label:'Main scenes', type:'main' },
+  { key:'motion', label:'Motion',      type:'mover_motion' },
+  { key:'look',   label:'Look',        type:'mover_look' },
+  { key:'effect', label:'Effects',     type:'effect' },
+];
+const PRESET_SCALARS = [
+  { key:'master',       label:'Color dimmer' },
+  { key:'singer_mode',  label:'Singer mode' },
+  { key:'singer_level', label:'Singer dimmer' },
+];
+const ALL_SCENES = {{ scenes | tojson }};
+function scenesOfType(t){ return ALL_SCENES.filter(s => (s.scene_type||'main')===t); }
+function sceneName(id){ const s=ALL_SCENES.find(x=>x.id===id); return s?s.name:id; }
+function presetEscape(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+let presetsList = [];
+let editingPresetId = null;
+let editorState = null;
+
+function loadPresetsList(){
+  fetch('/api/presets').then(r=>r.json()).then(d=>{
+    presetsList = (d&&d.presets)||[];
+    renderPresetsList();
+  }).catch(()=>{});
+}
+
+function presetScopeSummary(p){
+  const sc=p.scope||{}, it=p.items||{}, parts=[];
+  PRESET_CATS.forEach(c=>{ if(sc[c.key] && (it[c.key]||[]).length) parts.push(it[c.key].length+' '+c.key); });
+  PRESET_SCALARS.forEach(s=>{ if(sc[s.key]) parts.push(s.label.toLowerCase()); });
+  return (p.exclusive===false?'additive':'exclusive') + (parts.length?' · '+parts.join(', '):'');
+}
+
+function mkArrowBtn(ch,fn,disabled){
+  const b=document.createElement('button'); b.textContent=ch; b.className='smbtn';
+  b.style.cssText='padding:6px 9px;'+(disabled?'opacity:.3;pointer-events:none;':'');
+  b.onclick=fn; return b;
+}
+
+function renderPresetsList(){
+  const box=document.getElementById('presets-list'); if(!box) return;
+  if(!presetsList.length){ box.innerHTML='<div style="font-size:0.8rem;color:var(--sub);padding:6px 0;">No presets yet. Tap <strong>+ New Preset</strong>, or capture one from the home page.</div>'; return; }
+  box.innerHTML='';
+  presetsList.forEach((p,i)=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:8px;padding:9px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:7px;margin-bottom:6px;';
+    const info=document.createElement('div'); info.style.cssText='flex:1;min-width:0;cursor:pointer;';
+    info.onclick=()=>openPresetEditor(p.id);
+    info.innerHTML='<div style="font-size:0.86rem;font-weight:600;">'+presetEscape(p.name||'Preset')+'</div>'
+      +'<div style="font-size:0.66rem;color:var(--sub);">'+presetEscape(presetScopeSummary(p))+'</div>';
+    row.appendChild(info);
+    row.appendChild(mkArrowBtn('▲',()=>movePreset(i,-1),i===0));
+    row.appendChild(mkArrowBtn('▼',()=>movePreset(i,1),i===presetsList.length-1));
+    box.appendChild(row);
+  });
+}
+
+function movePreset(i,delta){
+  const j=i+delta; if(j<0||j>=presetsList.length) return;
+  const arr=presetsList.slice(); const t=arr[i]; arr[i]=arr[j]; arr[j]=t;
+  presetsList=arr; renderPresetsList();
+  fetch('/api/presets/reorder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:arr.map(p=>p.id)})})
+    .then(r=>r.json()).then(d=>{ if(!d.ok) toast('Reorder failed','err'); }).catch(()=>{});
+}
+
+function blankPreset(){
+  return { name:'', exclusive:true,
+    scope:{main:true,motion:false,look:false,effect:false,master:false,singer_mode:false,singer_level:false},
+    items:{main:[],motion:[],look:[],effect:[]},
+    levels:{master:1.0,singer_mode:false,singer_level:1.0} };
+}
+
+function openPresetEditor(id){
+  editingPresetId=id||null;
+  const src = id ? (presetsList.find(x=>x.id===id)||blankPreset()) : blankPreset();
+  editorState = {
+    name: src.name||'',
+    exclusive: src.exclusive!==false,
+    scope: Object.assign({main:false,motion:false,look:false,effect:false,master:false,singer_mode:false,singer_level:false}, src.scope||{}),
+    items: { main:[...(src.items&&src.items.main||[])], motion:[...(src.items&&src.items.motion||[])], look:[...(src.items&&src.items.look||[])], effect:[...(src.items&&src.items.effect||[])] },
+    levels: Object.assign({master:1.0,singer_mode:false,singer_level:1.0}, src.levels||{}),
+  };
+  document.getElementById('preset-modal-title').textContent = id ? 'Edit Preset' : 'New Preset';
+  document.getElementById('preset-delete').style.display = id ? '' : 'none';
+  document.getElementById('preset-name').value = editorState.name;
+  setMode(editorState.exclusive);
+  renderScopeItems();
+  document.getElementById('preset-modal-bg').classList.add('open');
+}
+function closePresetEditor(){ document.getElementById('preset-modal-bg').classList.remove('open'); }
+function setMode(excl){
+  if(editorState) editorState.exclusive=excl;
+  document.querySelectorAll('input[name="preset-mode"]').forEach(r=>{ r.checked=(r.value===(excl?'exclusive':'additive')); });
+}
+
+function renderScopeItems(){
+  const box=document.getElementById('preset-scope-items'); box.innerHTML='';
+  PRESET_CATS.forEach(c=>{
+    box.appendChild(scopeRow(c.key, c.label, ()=>renderCatItems(c)));
+    const h=document.createElement('div'); h.id='catitems-'+c.key;
+    h.style.cssText='margin:0 0 8px 26px;'+(editorState.scope[c.key]?'':'display:none;');
+    box.appendChild(h);
+    if(editorState.scope[c.key]) renderCatItems(c);
+  });
+  PRESET_SCALARS.forEach(s=>{
+    box.appendChild(scopeRow(s.key, s.label, ()=>renderScalar(s)));
+    const h=document.createElement('div'); h.id='scalar-'+s.key;
+    h.style.cssText='margin:0 0 8px 26px;'+(editorState.scope[s.key]?'':'display:none;');
+    box.appendChild(h);
+    if(editorState.scope[s.key]) renderScalar(s);
+  });
+}
+
+function scopeRow(key,label,onShow){
+  const row=document.createElement('label');
+  row.style.cssText='display:flex;align-items:center;gap:8px;padding:7px 0;cursor:pointer;';
+  const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!editorState.scope[key];
+  cb.onchange=()=>{
+    editorState.scope[key]=cb.checked;
+    const h=document.getElementById('catitems-'+key)||document.getElementById('scalar-'+key);
+    if(h){ h.style.display=cb.checked?'':'none'; if(cb.checked) onShow(); }
+  };
+  const lab=document.createElement('span'); lab.textContent=label; lab.style.cssText='font-size:0.84rem;font-weight:600;';
+  row.appendChild(cb); row.appendChild(lab);
+  return row;
+}
+
+function renderCatItems(c){
+  const holder=document.getElementById('catitems-'+c.key); if(!holder) return;
+  holder.innerHTML='';
+  const sel=editorState.items[c.key];
+  sel.forEach((id,idx)=>{
+    const r=document.createElement('div');
+    r.style.cssText='display:flex;align-items:center;gap:6px;padding:5px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;margin-bottom:4px;';
+    const nm=document.createElement('div'); nm.style.cssText='flex:1;font-size:0.78rem;min-width:0;'; nm.textContent=sceneName(id);
+    r.appendChild(nm);
+    r.appendChild(mkArrowBtn('▲',()=>{ if(idx>0){ const tmp=sel[idx-1]; sel[idx-1]=sel[idx]; sel[idx]=tmp; renderCatItems(c);} }, idx===0));
+    r.appendChild(mkArrowBtn('▼',()=>{ if(idx<sel.length-1){ const tmp=sel[idx+1]; sel[idx+1]=sel[idx]; sel[idx]=tmp; renderCatItems(c);} }, idx===sel.length-1));
+    const rm=document.createElement('button'); rm.textContent='✕'; rm.className='smbtn'; rm.style.cssText='padding:5px 8px;';
+    rm.onclick=()=>{ editorState.items[c.key]=sel.filter(x=>x!==id); renderCatItems(c); };
+    r.appendChild(rm);
+    holder.appendChild(r);
+  });
+  const avail=scenesOfType(c.type).filter(s=>!sel.includes(s.id));
+  if(avail.length){
+    const addRow=document.createElement('div'); addRow.style.cssText='display:flex;gap:6px;margin-top:2px;';
+    const dd=document.createElement('select');
+    dd.style.cssText='flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px;font-size:0.78rem;';
+    dd.innerHTML='<option value="">+ add '+presetEscape(c.label.toLowerCase())+'…</option>'+avail.map(s=>'<option value="'+s.id+'">'+presetEscape(s.name)+'</option>').join('');
+    dd.onchange=()=>{ if(dd.value){ sel.push(dd.value); renderCatItems(c);} };
+    addRow.appendChild(dd); holder.appendChild(addRow);
+  } else if(!sel.length){
+    const e=document.createElement('div'); e.style.cssText='font-size:0.72rem;color:var(--sub);'; e.textContent='No '+c.label.toLowerCase()+' scenes in the library.';
+    holder.appendChild(e);
+  }
+}
+
+function renderScalar(s){
+  const holder=document.getElementById('scalar-'+s.key); if(!holder) return;
+  holder.innerHTML='';
+  if(s.key==='singer_mode'){
+    const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:8px;font-size:0.78rem;cursor:pointer;';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!editorState.levels.singer_mode;
+    cb.onchange=()=>{ editorState.levels.singer_mode=cb.checked; };
+    lab.appendChild(cb); lab.appendChild(document.createTextNode('Singer mode ON when recalled'));
+    holder.appendChild(lab);
+  } else {
+    const key=s.key;
+    const wrap=document.createElement('div'); wrap.style.cssText='display:flex;align-items:center;gap:8px;';
+    const cur=Math.round((editorState.levels[key]!=null?editorState.levels[key]:1.0)*100);
+    const val=document.createElement('span'); val.style.cssText='font-size:0.78rem;width:42px;'; val.textContent=cur+'%';
+    const rng=document.createElement('input'); rng.type='range'; rng.min=0; rng.max=100; rng.value=cur; rng.style.flex='1';
+    rng.oninput=()=>{ editorState.levels[key]=rng.value/100; val.textContent=rng.value+'%'; };
+    wrap.appendChild(val); wrap.appendChild(rng);
+    holder.appendChild(wrap);
+  }
+}
+
+function presetFillFromLive(){
+  fetch('/api/state').then(r=>r.json()).then(s=>{
+    editorState.items.main   = (s.scenes||[]).filter(x=>!x.stopping).map(x=>x.id);
+    editorState.items.motion = (s.motions||[]).map(x=>x.id);
+    editorState.items.look   = (s.looks||[]).map(x=>x.id);
+    editorState.items.effect = (s.effects||[]).filter(x=>!x.stopping).map(x=>x.id);
+    editorState.levels.master       = s.master_level!=null?s.master_level:1.0;
+    editorState.levels.singer_mode  = !!s.singer_mode;
+    editorState.levels.singer_level = s.singer_level!=null?s.singer_level:1.0;
+    PRESET_CATS.forEach(c=>{ if(editorState.items[c.key].length) editorState.scope[c.key]=true; });
+    renderScopeItems();
+    toast('Filled from live','ok');
+  }).catch(()=>toast('Could not read live state','err'));
+}
+
+function savePreset(){
+  editorState.name=document.getElementById('preset-name').value.trim()||'Preset';
+  const body={ name:editorState.name, exclusive:editorState.exclusive, scope:editorState.scope, items:editorState.items, levels:editorState.levels };
+  const url=editingPresetId?('/api/presets/'+editingPresetId):'/api/presets';
+  const method=editingPresetId?'PUT':'POST';
+  fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(d=>{ if(!d.ok){toast('Save failed: '+(d.error||''),'err');return;} closePresetEditor(); loadPresetsList(); toast('Preset saved','ok'); })
+    .catch(()=>toast('Save failed','err'));
+}
+
+function deletePresetFromEditor(){
+  if(!editingPresetId) return;
+  if(!confirm('Delete this preset?')) return;
+  fetch('/api/presets/'+editingPresetId,{method:'DELETE',headers:{'Content-Type':'application/json'}})
+    .then(r=>r.json()).then(d=>{ if(!d.ok){toast('Delete failed','err');return;} closePresetEditor(); loadPresetsList(); })
+    .catch(()=>{});
 }
 
 renderPalette();
