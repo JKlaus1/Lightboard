@@ -522,6 +522,74 @@ def api_clear_all():
     engine.clear_all()
     return jsonify({"ok": True})
 
+# ── Presets (Task A) ───────────────────────────────────────────────────────
+import presets as presets_mod
+
+@app.route("/api/presets", methods=["GET"])
+def api_presets_list():
+    return jsonify({"ok": True, "presets": presets_mod.load_presets()})
+
+@app.route("/api/presets", methods=["POST"])
+def api_presets_create():
+    """Create a preset. Body either {capture:true, name} to snapshot the live
+    rig, or a full preset dict from the builder."""
+    data = request.json or {}
+    if data.get("capture"):
+        p = presets_mod.capture_preset(engine, name=data.get("name") or "Captured")
+    else:
+        p = presets_mod.normalize_preset(data)
+        p["id"] = presets_mod.new_preset_id()   # always assign a fresh id on create
+    lst = presets_mod.load_presets()
+    lst.append(p)
+    presets_mod.save_presets(lst)
+    return jsonify({"ok": True, "preset": p})
+
+@app.route("/api/presets/reorder", methods=["POST"])
+def api_presets_reorder():
+    """Reorder the trigger row. Body {order:[id,...]}."""
+    order = (request.json or {}).get("order", [])
+    lst = presets_mod.load_presets()
+    by_id = {p.get("id"): p for p in lst}
+    new = [by_id[i] for i in order if i in by_id]
+    for p in lst:                                  # keep any not mentioned
+        if p.get("id") not in order:
+            new.append(p)
+    presets_mod.save_presets(new)
+    return jsonify({"ok": True, "presets": new})
+
+@app.route("/api/presets/<preset_id>", methods=["PUT"])
+def api_presets_update(preset_id):
+    data = request.json or {}
+    lst = presets_mod.load_presets()
+    existing = presets_mod.find_preset(lst, preset_id)
+    if existing is None:
+        return jsonify({"ok": False, "error": "Preset not found"}), 404
+    updated = presets_mod.normalize_preset({**existing, **data, "id": preset_id})
+    for i, x in enumerate(lst):
+        if x.get("id") == preset_id:
+            lst[i] = updated
+            break
+    presets_mod.save_presets(lst)
+    return jsonify({"ok": True, "preset": updated})
+
+@app.route("/api/presets/<preset_id>", methods=["DELETE"])
+def api_presets_delete(preset_id):
+    lst = presets_mod.load_presets()
+    new = [p for p in lst if p.get("id") != preset_id]
+    if len(new) == len(lst):
+        return jsonify({"ok": False, "error": "Preset not found"}), 404
+    presets_mod.save_presets(new)
+    return jsonify({"ok": True})
+
+@app.route("/api/preset/<preset_id>/recall", methods=["POST"])
+def api_preset_recall(preset_id):
+    lst = presets_mod.load_presets()
+    p = presets_mod.find_preset(lst, preset_id)
+    if p is None:
+        return jsonify({"ok": False, "error": "Preset not found"}), 404
+    summary = presets_mod.apply_preset(p, engine, load_library_scene)
+    return jsonify({"ok": True, "applied": summary})
+
 @app.route("/api/freeze", methods=["POST"])
 def api_freeze():
     """Toggle freeze on/off. Body: {enable: bool}."""

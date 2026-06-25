@@ -322,6 +322,20 @@
     <span id="freeze-banner-text">FROZEN</span>
   </div>
 
+  <!-- Presets (Task A) -->
+  <div class="card">
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">⭐ Presets</span>
+      <button id="preset-capture-btn" onclick="capturePreset()"
+              style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;font-weight:600;white-space:nowrap;">＋ Capture</button>
+    </div>
+    <div class="scene-grid" id="preset-row">
+      <div style="grid-column:1/-1;text-align:center;color:var(--sub);padding:14px;font-size:12px;">
+        No presets yet. Set up a look on the rig, then tap <strong>＋ Capture</strong> to save it.
+      </div>
+    </div>
+  </div>
+
   <!-- Tap Tempo -->
   <div class="card" id="tempo-card">
     <div class="card-title">Tap Tempo</div>
@@ -987,6 +1001,109 @@ function clearAll() {
     })
     .catch(() => {});
 }
+
+// ── Presets (Task A) ──────────────────────────────────────────────────────
+// MVP: capture the live look into a named preset; tap to recall; delete via
+// the ✕ on each tile. The full scope/exclusive/reorder builder lives in
+// Settings. Captured presets are exclusive + fully scoped, so recalling one
+// reproduces exactly the saved look.
+let presets = [];
+
+function loadPresets() {
+  fetch('/api/presets').then(r => r.json()).then(d => {
+    presets = (d && d.presets) || [];
+    renderPresets();
+  }).catch(() => {});
+}
+
+function presetSummary(p) {
+  const it = p.items || {};
+  const n  = a => (a || []).length;
+  const parts = [];
+  if (n(it.main))   parts.push(n(it.main) + ' scene' + (n(it.main) > 1 ? 's' : ''));
+  if (n(it.motion)) parts.push(n(it.motion) + ' motion');
+  if (n(it.look))   parts.push(n(it.look) + ' look');
+  if (n(it.effect)) parts.push(n(it.effect) + ' fx');
+  return parts.join(' · ') || 'controls only';
+}
+
+function renderPresets() {
+  const row = document.getElementById('preset-row');
+  if (!row) return;
+  if (!presets.length) {
+    row.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--sub);'
+      + 'padding:14px;font-size:12px;">No presets yet. Set up a look on the rig, then tap '
+      + '<strong>＋ Capture</strong> to save it.</div>';
+    return;
+  }
+  row.innerHTML = '';
+  presets.forEach(p => {
+    const b = document.createElement('div');
+    b.className = 'scene-btn preset-btn';
+    b.setAttribute('data-id', p.id);
+    b.style.position = 'relative';
+    b.onclick = () => recallPreset(p.id);
+
+    const name = document.createElement('div');
+    name.className = 'scene-name';
+    name.textContent = p.name || 'Preset';
+
+    const meta = document.createElement('div');
+    meta.className = 'scene-meta';
+    meta.textContent = presetSummary(p);
+
+    const del = document.createElement('button');
+    del.textContent = '✕';
+    del.title = 'Delete preset';
+    del.style.cssText = 'position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.4);'
+      + 'border:none;color:#bbb;width:22px;height:22px;border-radius:4px;cursor:pointer;'
+      + 'font-size:12px;line-height:1;padding:0;';
+    del.onclick = e => { e.stopPropagation(); deletePreset(p.id, p.name); };
+
+    b.appendChild(name);
+    b.appendChild(meta);
+    b.appendChild(del);
+    row.appendChild(b);
+  });
+}
+
+function recallPreset(id) {
+  // .preset-btn carries .scene-btn so the global pointerdown handler flashes it.
+  fetch('/api/preset/' + id + '/recall', { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { toast('Recall failed: ' + (d.error || '')); return; }
+      pollState();
+    })
+    .catch(() => {});
+}
+
+function capturePreset() {
+  const name = prompt('Name this preset (saves the current live look):', '');
+  if (name === null) return;   // cancelled
+  fetch('/api/presets', { method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ capture: true, name: name || 'Preset' }) })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { toast('Capture failed: ' + (d.error || '')); return; }
+      loadPresets();
+      toast('Preset saved');
+    })
+    .catch(() => {});
+}
+
+function deletePreset(id, name) {
+  if (!confirm('Delete preset "' + (name || '') + '"?')) return;
+  fetch('/api/presets/' + id, { method:'DELETE',
+    headers:{'Content-Type':'application/json'} })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { toast('Delete failed: ' + (d.error || '')); return; }
+      loadPresets();
+    })
+    .catch(() => {});
+}
+
+loadPresets();
 
 // ── Stacked layer optimistic state (motion / look / effect) ───────────────
 // Mirrors the main-scene grid: set-membership multi-select. Each category
