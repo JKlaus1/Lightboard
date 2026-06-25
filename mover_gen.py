@@ -123,6 +123,7 @@ def evaluate_motion_generator(scene, t_eff):
     gen = scene.get("generator") or {}
     fixtures = scene.get("fixtures") or []
     phase_cfg = scene.get("phase") or {}
+    center_offsets = scene.get("center_offsets") or {}
 
     shape = gen.get("shape", "circle")
     direction = -1.0 if str(gen.get("direction", 1)) in ("-1", "-1.0") else 1.0
@@ -134,11 +135,16 @@ def evaluate_motion_generator(scene, t_eff):
     n = len(fixtures)
     out = {}
     for i, fxid in enumerate(fixtures):
+        # Per-fixture center trim: each mover orbits its OWN center (group
+        # center + this fixture's offset), so movers hung apart can converge.
+        off = center_offsets.get(fxid) or {}
+        cpan = center_pan + _f(off, "dp", 0.0)
+        ctilt = center_tilt + _f(off, "dt", 0.0)
         ph = phase_for(i, n, phase_cfg, fxid)
         theta = direction * t_eff + ph
         x, y = unit_shape(shape, theta, gen)
-        pan_coarse, pan_fine = _split16(center_pan + size_pan * x)
-        tilt_coarse, tilt_fine = _split16(center_tilt + size_tilt * y)
+        pan_coarse, pan_fine = _split16(cpan + size_pan * x)
+        tilt_coarse, tilt_fine = _split16(ctilt + size_tilt * y)
         out[fxid] = {
             "pan": pan_coarse,
             "pan_fine": pan_fine,

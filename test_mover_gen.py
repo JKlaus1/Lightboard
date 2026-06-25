@@ -141,11 +141,35 @@ def test_evaluate_empty():
           "missing generator -> all roles in 0..255")
 
 
+def test_evaluate_center_offsets():
+    print("per-fixture center offsets:")
+    scene = {
+        "scene_type": "mover_motion", "motion_mode": "generator",
+        "generator": {"shape": "circle", "center_pan": 128, "center_tilt": 128,
+                      "size_pan": 0, "size_tilt": 0},   # size 0 => sits at center
+        "fixtures": ["m0", "m1"],
+        "phase": {"mode": "even"},
+        "center_offsets": {"m1": {"dp": 40, "dt": -30}},
+    }
+    out = mg.evaluate_motion_generator(scene, 0.0)
+    check(out["m0"]["pan"] == 128 and out["m0"]["tilt"] == 128, "m0 at shared center")
+    check(out["m1"]["pan"] == 168 and out["m1"]["tilt"] == 98,
+          f"m1 trimmed to {out['m1']['pan']}/{out['m1']['tilt']}")
+    # Offset composes with the orbit: m1's circle is centered on its own center.
+    # Pin phase to 0 so circle(0) = (1, 0) and the math is exact.
+    scene["phase"] = {"mode": "manual", "offsets": {"m0": 0.0, "m1": 0.0}}
+    scene["generator"]["size_pan"] = 50
+    scene["generator"]["size_tilt"] = 50
+    out2 = mg.evaluate_motion_generator(scene, 0.0)  # circle(0) = (1,0)
+    check(out2["m1"]["pan"] == 168 + 50 and out2["m1"]["tilt"] == 98,
+          "m1 orbits around its own trimmed center")
+
+
 def main():
     tests = [
         test_unit_shapes, test_phase_even, test_phase_manual, test_split16,
         test_evaluate_circle_phase, test_evaluate_direction_and_time,
-        test_evaluate_empty,
+        test_evaluate_center_offsets, test_evaluate_empty,
     ]
     for t in tests:
         t()

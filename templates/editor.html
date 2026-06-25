@@ -311,6 +311,13 @@
       <button type="button" class="shapeb" data-shape="sweep_tilt" onclick="setGenShape('sweep_tilt',this)">↕ Sweep Tilt</button>
     </div>
 
+    <!-- Aim / centering mode -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+      <button type="button" id="gen-aim-btn" class="ts-toggle off" onclick="toggleAimMode()">🎯 Aim: Off</button>
+      <button type="button" id="gen-reset-trims-btn" class="shapeb" style="padding:7px 11px;" onclick="resetCenterTrims()">Reset trims</button>
+      <span style="font-size:0.62rem;color:var(--sub);flex:1;min-width:120px;text-align:right;">Aim freezes movers at their own centers — drag each dot to converge them on one spot.</span>
+    </div>
+
     <!-- Pan/Tilt placement grid -->
     <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:10px;">
       <div style="width:100%;max-width:300px;position:relative;">
@@ -536,7 +543,7 @@ function toggleLive() {
     btn.style.background = '#2e5e2e';
     btn.style.borderColor = '#4eae4e';
     btn.style.color = '#fff';
-    if (genMode) { startGenAnim(); startGenPreview(); }  // shared clock drives both
+    if (genMode) { if (!aimMode) startGenAnim(); startGenPreview(); }  // shared clock drives both
     else sendLivePreview();           // push the current step immediately
   } else {
     btn.innerHTML = '⚪ LIVE';
@@ -722,6 +729,12 @@ function init() {
       phaseCfg.mode    = ph.mode === 'manual' ? 'manual' : 'even';
       phaseCfg.spread  = (ph.spread !== undefined) ? +ph.spread : 1.0;
       phaseCfg.offsets = Object.assign({}, ph.offsets || {});
+      // Per-fixture center trims (absent = none).
+      centerOffsets = {};
+      const co = EXISTING_SCENE.center_offsets || {};
+      genFixtures.forEach(id => {
+        if (co[id]) centerOffsets[id] = { dp: +co[id].dp || 0, dt: +co[id].dt || 0 };
+      });
     }
   } else {
     steps = SCENE_TYPE === 'main' ? [blankStep()] : [blankMoverStep()];
@@ -1731,6 +1744,14 @@ function saveScene() {
     genFixtures.forEach(id => {
       payload.phase.offsets[id] = +(phaseCfg.offsets[id] || 0);
     });
+    // Per-fixture center trims — only in-pattern fixtures with a non-zero trim.
+    payload.center_offsets = {};
+    genFixtures.forEach(id => {
+      const o = centerOffsets[id];
+      if (o && (o.dp || o.dt)) {
+        payload.center_offsets[id] = { dp: Math.round(o.dp), dt: Math.round(o.dt) };
+      }
+    });
     payload.steps = [];   // generator ignores steps; keep the file clean
   }
   // Edit existing scene? POST to /api/library/scene/<id>
@@ -1803,6 +1824,9 @@ let generator = {
 let genFixtures = MOVERS.map(m => m.id);
 let genLit = new Set(genFixtures);   // which movers are lit during live aiming
 let phaseCfg = { mode: 'even', spread: 1.0, offsets: {} };
+let centerOffsets = {};              // { fxid: {dp, dt} } per-fixture center trim
+let aimMode = false;                 // freeze-at-centers aiming workflow
+let _trimDrag = null;                // fixture id being trimmed on the pad
 
 // On-screen animated preview state (dots orbiting the pad).
 let genAnimDots = [];
@@ -1951,6 +1975,7 @@ function toggleGenFixture(fxid) {
   if (idx >= 0) {
     genFixtures.splice(idx, 1);
     genLit.delete(fxid);
+    delete centerOffsets[fxid];
   } else {
     genFixtures.push(fxid);
     genFixtures.sort((a, b) =>
@@ -1980,6 +2005,7 @@ function renderGenerator() {
   setPhaseMode(phaseCfg.mode);   // sets row visibility + renders phase rows
   syncGenSliders();
   applyGenTempoUI();
+  applyAimUI();
   renderGenFixtures();
   renderGenPad();
 }
@@ -2059,6 +2085,7 @@ function toggleGenLit(fxid) {
   if (genLit.has(fxid)) genLit.delete(fxid);
   else genLit.add(fxid);
   renderGenFixtures();
+  if (aimMode) renderGenPad();   // update the lit halo on the aim grid
   // Live loop picks the change up on its next tick (~40ms); nudge immediately.
   if (liveMode && genMode) genPreviewTick();
 }
@@ -2106,71 +2133,115 @@ function renderGenPad() {
   const cp = generator.center_pan, ct = generator.center_tilt;
   const sp = generator.size_pan, st = generator.size_tilt;
 
-  // Bounding box (dashed)
-  svg.appendChild(mk('rect', {
-    x: cp - sp, y: 255 - (ct + st), width: 2 * sp, height: 2 * st,
-    fill: 'none', stroke: '#3b82f6', 'stroke-width': 0.8,
-    'stroke-dasharray': '4 3', opacity: 0.6}));
+  // Effective center of a fixture = group center + its trim offset.
+  const effCenter = (id) => {
+    const o = centerOffsets[id] || {};
+    return [clamp255(cp + (+o.dp || 0)), clamp255(ct + (+o.dt || 0))];
+  };
 
-  // Traced path (one loop, clamped to travel so clipping is visible)
-  const N = 140;
-  let d = '';
-  for (let i = 0; i <= N; i++) {
-    const uxy = unitShape(generator.shape, i / N);
-    const pan = clamp255(cp + sp * uxy[0]);
-    const tilt = clamp255(ct + st * uxy[1]);
-    const sxy = dmxToSvg(pan, tilt);
-    d += (i === 0 ? 'M' : 'L') + sxy[0].toFixed(1) + ' ' + sxy[1].toFixed(1) + ' ';
+  if (!aimMode) {
+    // ── Orbit view ────────────────────────────────────────────────────────
+    // Bounding box (dashed) — the shape extent around the group center.
+    svg.appendChild(mk('rect', {
+      x: cp - sp, y: 255 - (ct + st), width: 2 * sp, height: 2 * st,
+      fill: 'none', stroke: '#3b82f6', 'stroke-width': 0.8,
+      'stroke-dasharray': '4 3', opacity: 0.6}));
+
+    // Traced path (one loop, clamped to travel so clipping is visible)
+    const N = 140;
+    let d = '';
+    for (let i = 0; i <= N; i++) {
+      const uxy = unitShape(generator.shape, i / N);
+      const pan = clamp255(cp + sp * uxy[0]);
+      const tilt = clamp255(ct + st * uxy[1]);
+      const sxy = dmxToSvg(pan, tilt);
+      d += (i === 0 ? 'M' : 'L') + sxy[0].toFixed(1) + ' ' + sxy[1].toFixed(1) + ' ';
+    }
+    svg.appendChild(mk('path', {d: d, fill: 'none', stroke: '#3b82f6',
+      'stroke-width': 1.6, opacity: 0.85}));
+
+    // Per-fixture dots — orbit the loop in real time (see genAnimTick). Built
+    // here so they survive rebuilds and re-anchor to live phases/offsets.
+    genAnimDots = [];
+    const n = genFixtures.length;
+    genFixtures.forEach((id, i) => {
+      const ph = genPhaseFor(i, n, id);
+      const dot = mk('circle', {cx: 0, cy: 0, r: 5.5,
+        fill: '#22c55e', stroke: '#0d0d0d', 'stroke-width': 1.2});
+      dot.style.pointerEvents = 'none';
+      svg.appendChild(dot);
+      const lbl = mk('text', {x: 0, y: 0, 'text-anchor': 'middle',
+        'font-size': 6, fill: '#0d0d0d', 'font-weight': 700});
+      lbl.style.pointerEvents = 'none';
+      lbl.textContent = (i + 1);
+      svg.appendChild(lbl);
+      genAnimDots.push({dot: dot, label: lbl, phase: ph, fxid: id});
+    });
+    positionAnimDots(genAnimRunning ? genAnimCycles : 0);
+
+    // Group center handle (drag to move the whole pattern)
+    const hc = dmxToSvg(cp, ct);
+    const ch = mk('circle', {cx: hc[0], cy: hc[1], r: 7, fill: '#f59e0b',
+      stroke: '#0d0d0d', 'stroke-width': 1.5});
+    ch.style.cursor = 'move';
+    ch.addEventListener('pointerdown', (e) => startPadDrag(e, 'center'));
+    svg.appendChild(ch);
+
+    // Scale handle (top-right corner of bbox; drag to resize)
+    const sc = dmxToSvg(clamp255(cp + sp), clamp255(ct + st));
+    const sh = mk('rect', {x: sc[0] - 5, y: sc[1] - 5, width: 10, height: 10,
+      fill: '#3b82f6', stroke: '#0d0d0d', 'stroke-width': 1.2});
+    sh.style.cursor = 'nesw-resize';
+    sh.addEventListener('pointerdown', (e) => startPadDrag(e, 'scale'));
+    svg.appendChild(sh);
+  } else {
+    // ── Aim view ─────────────────────────────────────────────────────────
+    // No orbit. Each mover points at its own center; drag a dot to set its
+    // trim. The shared-center ring drags everyone together.
+    genAnimDots = [];
+    // Shared-center ring (hollow so a fixture dot on top stays grabbable).
+    const gc = dmxToSvg(cp, ct);
+    const ring = mk('circle', {cx: gc[0], cy: gc[1], r: 8.5, fill: 'none',
+      stroke: '#f59e0b', 'stroke-width': 1.8});
+    ring.style.cursor = 'move';
+    ring.addEventListener('pointerdown', (e) => startPadDrag(e, 'center'));
+    svg.appendChild(ring);
+    // Per-fixture center dots (draggable). Lit ones get a bright halo so you
+    // can see which beam you're aiming.
+    genFixtures.forEach((id, i) => {
+      const ec = effCenter(id);
+      const sxy = dmxToSvg(ec[0], ec[1]);
+      const lit = genLit.has(id);
+      if (lit) {
+        svg.appendChild(mk('circle', {cx: sxy[0], cy: sxy[1], r: 9,
+          fill: 'none', stroke: '#fde68a', 'stroke-width': 1, opacity: 0.7}));
+      }
+      const dot = mk('circle', {cx: sxy[0], cy: sxy[1], r: 6,
+        fill: '#22c55e', stroke: '#0d0d0d', 'stroke-width': 1.4});
+      dot.style.cursor = 'move';
+      dot.addEventListener('pointerdown', (e) => startCenterTrimDrag(e, id));
+      svg.appendChild(dot);
+      const lbl = mk('text', {x: sxy[0], y: sxy[1] + 2.6, 'text-anchor': 'middle',
+        'font-size': 6.5, fill: '#0d0d0d', 'font-weight': 700});
+      lbl.style.pointerEvents = 'none';
+      lbl.textContent = (i + 1);
+      svg.appendChild(lbl);
+    });
   }
-  svg.appendChild(mk('path', {d: d, fill: 'none', stroke: '#3b82f6',
-    'stroke-width': 1.6, opacity: 0.85}));
-
-  // Per-fixture dots — orbit the loop in real time (see genAnimTick). Built
-  // here so they survive rebuilds (drag/slider) and re-anchor to live phases.
-  genAnimDots = [];
-  const n = genFixtures.length;
-  genFixtures.forEach((id, i) => {
-    const ph = genPhaseFor(i, n, id);
-    const dot = mk('circle', {cx: 0, cy: 0, r: 5.5,
-      fill: '#22c55e', stroke: '#0d0d0d', 'stroke-width': 1.2});
-    dot.style.pointerEvents = 'none';
-    svg.appendChild(dot);
-    const lbl = mk('text', {x: 0, y: 0, 'text-anchor': 'middle',
-      'font-size': 6, fill: '#0d0d0d', 'font-weight': 700});
-    lbl.style.pointerEvents = 'none';
-    lbl.textContent = (i + 1);
-    svg.appendChild(lbl);
-    genAnimDots.push({dot: dot, label: lbl, phase: ph});
-  });
-  positionAnimDots(genAnimRunning ? genAnimCycles : 0);
-
-  // Center handle (drag to move)
-  const hc = dmxToSvg(cp, ct);
-  const ch = mk('circle', {cx: hc[0], cy: hc[1], r: 7, fill: '#f59e0b',
-    stroke: '#0d0d0d', 'stroke-width': 1.5});
-  ch.style.cursor = 'move';
-  ch.addEventListener('pointerdown', (e) => startPadDrag(e, 'center'));
-  svg.appendChild(ch);
-
-  // Scale handle (top-right corner of bbox; drag to resize)
-  const sc = dmxToSvg(clamp255(cp + sp), clamp255(ct + st));
-  const sh = mk('rect', {x: sc[0] - 5, y: sc[1] - 5, width: 10, height: 10,
-    fill: '#3b82f6', stroke: '#0d0d0d', 'stroke-width': 1.2});
-  sh.style.cursor = 'nesw-resize';
-  sh.addEventListener('pointerdown', (e) => startPadDrag(e, 'scale'));
-  svg.appendChild(sh);
 }
 
 // Position the orbiting dots for a given time (in cycles). Cheap: only moves
 // existing elements, no DOM rebuild — safe to call every animation frame.
 function positionAnimDots(tEff) {
-  if (!genAnimDots || !genAnimDots.length) return;
+  if (aimMode || !genAnimDots || !genAnimDots.length) return;
   const dir = (generator.direction == -1) ? -1 : 1;
   const cp = generator.center_pan, ct = generator.center_tilt;
   const sp = generator.size_pan, st = generator.size_tilt;
   genAnimDots.forEach(d => {
+    const o = centerOffsets[d.fxid] || {};
+    const ecp = cp + (+o.dp || 0), ect = ct + (+o.dt || 0);
     const uxy = unitShape(generator.shape, dir * tEff + d.phase);
-    const pan = clamp255(cp + sp * uxy[0]), tilt = clamp255(ct + st * uxy[1]);
+    const pan = clamp255(ecp + sp * uxy[0]), tilt = clamp255(ect + st * uxy[1]);
     const sxy = dmxToSvg(pan, tilt);
     d.dot.setAttribute('cx', sxy[0]); d.dot.setAttribute('cy', sxy[1]);
     d.label.setAttribute('x', sxy[0]); d.label.setAttribute('y', sxy[1] + 2.6);
@@ -2196,7 +2267,7 @@ function genAnimTick(ts) {
   }
 }
 function startGenAnim() {
-  if (!genMode) return;
+  if (!genMode || aimMode) return;   // no orbit while aiming
   genAnimRunning = true;
   genAnimLastTs = null;
   updateGenAnimBtn();
@@ -2259,7 +2330,70 @@ function startPadDrag(e, which) {
   window.addEventListener('pointerup', up);
 }
 
-// ── Generator live preview (streams the moving frame to the rig) ───────────
+// ── Aim mode: freeze at centers, drag each mover's center to converge ───────
+function toggleAimMode() {
+  aimMode = !aimMode;
+  applyAimUI();
+  renderGenPad();
+  // Aiming needs the rig: entering Aim turns Live on so the movers point and
+  // (per the 💡 toggles) light up. Exiting Aim leaves Live as the user had it.
+  if (aimMode && !liveMode) {
+    toggleLive();                 // also starts the aim-frame stream
+  } else if (liveMode && genMode) {
+    genPreviewTick();             // push the aim/orbit frame immediately
+  }
+}
+
+function applyAimUI() {
+  const b = document.getElementById('gen-aim-btn');
+  if (b) {
+    b.textContent = aimMode ? '🎯 Aim: On' : '🎯 Aim: Off';
+    b.classList.toggle('on', aimMode);
+    b.classList.toggle('off', !aimMode);
+  }
+  // The Pause/Play control is meaningless while aiming (orbit is frozen).
+  const pb = document.getElementById('gen-anim-btn');
+  if (pb) { pb.disabled = aimMode; pb.style.opacity = aimMode ? '0.4' : ''; }
+  if (aimMode) {
+    genAnimRunning = false;     // hold the orbit
+    updateGenAnimBtn();
+  } else {
+    genAnimRunning = true;      // resume the orbit
+    genAnimLastTs = null;
+    updateGenAnimBtn();
+    if (!genAnimRAF && genMode) genAnimRAF = requestAnimationFrame(genAnimTick);
+  }
+}
+
+function startCenterTrimDrag(e, fxid) {
+  e.preventDefault();
+  e.stopPropagation();   // don't also grab the shared-center ring
+  _trimDrag = fxid;
+  const move = (ev) => {
+    const pt = padEventToDmx(ev);
+    centerOffsets[fxid] = {
+      dp: Math.round(pt[0] - generator.center_pan),
+      dt: Math.round(pt[1] - generator.center_tilt),
+    };
+    renderGenPad();
+    // Live frame follows automatically via the 40ms stream; nudge for snappiness.
+    if (liveMode && genMode) genPreviewTick();
+  };
+  const up = () => {
+    _trimDrag = null;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+function resetCenterTrims() {
+  centerOffsets = {};
+  renderGenPad();
+  if (liveMode && genMode) genPreviewTick();
+  toast('Center trims reset');
+}
 // When Live is on in generator mode, compute the shape frame in JS and push it
 // to /api/preview ~25x/sec so the actual movers run the pattern. Only pattern
 // fixtures are sent (disabled movers stay put); `lit` controls which are lit
@@ -2275,9 +2409,26 @@ function genFrameAt(tEff) {
   const sp = generator.size_pan, st = generator.size_tilt;
   genFixtures.forEach((id, i) => {
     const ph = genPhaseFor(i, n, id);
+    const o = centerOffsets[id] || {};
+    const ecp = cp + (+o.dp || 0), ect = ct + (+o.dt || 0);
     const uxy = unitShape(generator.shape, dir * tEff + ph);
-    const pan = clamp255(cp + sp * uxy[0]);
-    const tilt = clamp255(ct + st * uxy[1]);
+    const pan = clamp255(ecp + sp * uxy[0]);
+    const tilt = clamp255(ect + st * uxy[1]);
+    const p16 = Math.max(0, Math.min(65535, Math.round(pan * 256)));
+    const t16 = Math.max(0, Math.min(65535, Math.round(tilt * 256)));
+    fixtures[id] = { pan: (p16 >> 8) & 255, pan_fine: p16 & 255,
+                     tilt: (t16 >> 8) & 255, tilt_fine: t16 & 255 };
+  });
+  return fixtures;
+}
+
+// Aim frame: every mover points at its own effective center (no orbit).
+function aimFrame() {
+  const fixtures = {};
+  const cp = generator.center_pan, ct = generator.center_tilt;
+  genFixtures.forEach(id => {
+    const o = centerOffsets[id] || {};
+    const pan = clamp255(cp + (+o.dp || 0)), tilt = clamp255(ct + (+o.dt || 0));
     const p16 = Math.max(0, Math.min(65535, Math.round(pan * 256)));
     const t16 = Math.max(0, Math.min(65535, Math.round(tilt * 256)));
     fixtures[id] = { pan: (p16 >> 8) & 255, pan_fine: p16 & 255,
@@ -2288,7 +2439,8 @@ function genFrameAt(tEff) {
 
 function genPreviewTick() {
   if (!liveMode || !genMode || !genFixtures.length) return;
-  const fixtures = genFrameAt(genAnimCycles);   // same clock as the screen dots
+  // Aim mode holds movers at their centers; otherwise stream the orbit.
+  const fixtures = aimMode ? aimFrame() : genFrameAt(genAnimCycles);
   const lit = genFixtures.filter(id => genLit.has(id));
   fetch('/api/preview', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
