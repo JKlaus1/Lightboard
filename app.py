@@ -986,11 +986,16 @@ def api_library_save(scene_id):
     if not library_path(scene_id).exists():
         return jsonify({"ok": False, "error": "Scene not found"}), 404
     save_library_scene(scene_id, data)
-    # If this scene is currently playing, hot-swap the new look in live so an
-    # edit-and-save updates immediately (no need to toggle it off/on).
+    # If this scene is currently playing, hot-swap the new data in live so an
+    # edit-and-save updates immediately for EVERY scene type (no toggle off/on).
     try:
-        if (data.get("scene_type") or "main") == "effect":
+        stype = data.get("scene_type") or "main"
+        if stype == "effect":
             engine.refresh_active_effect(scene_id, data)
+        elif stype == "mover_motion":
+            engine.refresh_active_motion(scene_id, data)
+        elif stype == "mover_look":
+            engine.refresh_active_look(scene_id, data)
         else:
             engine.refresh_active_scene(scene_id, data)
     except Exception:

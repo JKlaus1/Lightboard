@@ -1322,6 +1322,34 @@ class LightingEngine:
         self.play_effect_scene(scene, scene_id=scene_id)   # hot-swaps the entry
         return True
 
+    def refresh_active_motion(self, scene_id, scene):
+        """If `scene_id` is a currently-active mover_motion (step OR generator),
+        restart it in place with the updated data so an edit-and-save applies
+        immediately — no toggle off/on. Returns False (no-op) when it isn't
+        currently playing. Re-playing the same id stops the old player thread
+        and starts a fresh one (see play_motion_scene)."""
+        if scene_id is None:
+            return False
+        with self._lock:
+            active = any(e["id"] == scene_id for e in self._active_motions)
+        if not active:
+            return False
+        self.play_motion_scene(scene, scene_id=scene_id)
+        return True
+
+    def refresh_active_look(self, scene_id, scene):
+        """If `scene_id` is a currently-active mover_look, restart it in place
+        with the updated data so an edit-and-save applies immediately. Returns
+        False (no-op) when it isn't currently playing."""
+        if scene_id is None:
+            return False
+        with self._lock:
+            active = any(e["id"] == scene_id for e in self._active_looks)
+        if not active:
+            return False
+        self.play_look_scene(scene, scene_id=scene_id)
+        return True
+
     def stop_scene(self, scene_id=None):
         """Stop a scene (or all scenes when scene_id is None). Stopping is a
         graceful fade-out — the scene stays in the layered stack until its
