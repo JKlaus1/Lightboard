@@ -64,9 +64,10 @@ created on the Pi at first capture, not deployed from the repo):
 ```
 { id, name,
   exclusive: bool,
-  scope:  { main, motion, look, effect, master, singer_mode, singer_level },  // subsystems this preset may touch
+  scope:  { main, motion, look, effect, master, singer_mode, singer_level, blackout, overlay, cycler },  // subsystems this preset may touch
   items:  { main:[id,...], motion:[id,...], look:[id,...], effect:[id,...] },  // ORDERED per category (bottom-first apply)
-  levels: { master, singer_mode, singer_level }   // applied only if scoped in
+  levels: { master, singer_mode, singer_level,                  // applied only if scoped in
+            blackout: null|'color'|'full', overlay: bool, cycler: null|<beats/look> }
 }
 ```
 Order only matters *within* a category — the output pipeline fixes precedence
@@ -83,26 +84,41 @@ engine methods, reads live state via `get_state()` ordered lists:
   - *Additive*: play `desired` ids not already live, in order; stop nothing.
 - **Scalars** (master / singer_mode / singer_level): *set-if-scoped*. Exclusive
   is a no-op on a value. Missing scene ids are skipped and reported, not fatal.
+- **Subsystems** (blackout / overlay / cycler): *set-if-scoped*. Blackout via
+  idempotent `engine.set_blackout(None|'color'|'full')` (a real setter, not the
+  toggle). Overlay start/stop using the show's configured overlay scene; cycler
+  start (at the stored beats/look division) / stop using the show's cycler
+  scenes. The recall route resolves those scenes and passes them in. Scoped-on
+  with nothing configured → skipped + reported in `notes`, never fatal.
 - **Capture from live**: snapshot `get_state()` → `items` from the ordered
-  lists, `levels` from current scalars (exclusive + fully scoped by default).
+  lists, `levels` from current scalars + subsystem state (exclusive + fully
+  scoped by default).
 
-**v1 scope:** the four stacks + master + singer mode/level. Overlay / blackout /
-cycler are **deferred from preset scope** (start/stop side effects; need a scene
-or config) — not in the builder; add later if wanted.
+**v1 scope:** the four stacks + master + singer mode/level + blackout / overlay /
+cycler — i.e. everything. (Overlay/cycler/blackout were added after the initial
+MVP for full-snapshot fidelity.) Older presets saved before the subsystem add
+lack those scope keys → normalize defaults them false, so they never touch
+blackout/overlay/cycler (backward-compatible).
 
 **Shipped as:**
-- `presets.py` — storage + `capture_preset` + `apply_preset` (pure, Flask-free).
+- `presets.py` — storage + `capture_preset` + `apply_preset(preset, engine,
+  scene_loader, overlay_scene=None, cycler_scenes=None)` (pure, Flask-free).
+- `engine.py` — `set_blackout(mode)` idempotent setter (None/'color'/'full') for
+  recall, alongside the existing toggle `blackout()`.
 - `app.py` routes: `GET /api/presets`, `POST /api/presets` (body `{capture:true}`
   snapshots live; otherwise a full preset dict), `PUT`/`DELETE /api/presets/<id>`,
-  `POST /api/presets/reorder`, `POST /api/preset/<id>/recall`. (Capture is a flag
+  `POST /api/presets/reorder`, `POST /api/preset/<id>/recall` (resolves the show's
+  overlay + cycler scenes and passes them to `apply_preset`). (Capture is a flag
   on create, not a separate `/capture` route.)
 - Home page (`lightboard_index.html`): ⭐ Presets trigger row — tap to recall,
-  ＋ Capture (names + snapshots live), ✕ to delete.
+  ＋ Capture (names + snapshots live, incl. subsystems), ✕ to delete.
 - Settings (`settings.html`): full builder — name, additive/exclusive, per-
   subsystem scope checkboxes, per-category ordered item pickers (add/▲▼/✕),
-  level controls, ⟲ Fill-from-live, save/delete; reorderable preset list.
-- Tests: `test_presets.py` (18 assertions: capture, additive vs exclusive, scope
-  gating, scalars set-if-scoped, missing-scene tolerance, normalize).
+  level controls, subsystem controls (blackout select / overlay toggle / cycler
+  toggle + beats-per-look), ⟲ Fill-from-live, save/delete; reorderable list.
+- Tests: `test_presets.py` (29 assertions: capture, additive vs exclusive, scope
+  gating, scalars + subsystems set-if-scoped, blackout/overlay/cycler on-off and
+  capture, missing-scene tolerance, normalize).
 
 ## Environment / workflow notes
 - Pi: `pi@192.168.1.34`, dir `/home/pi/lightboard`, restart `sudo systemctl restart lightboard`.
