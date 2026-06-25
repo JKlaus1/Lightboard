@@ -20,6 +20,7 @@ class StubDMX:
 
 SHOW = {
     "name": "Preset Test Show", "default_launch_fade": 0, "effect_fade_ms": 10,
+    "blackout_fade_ms": 10, "overlay_fade_ms": 10,
     "fixtures": [
         {"id": "MA", "type": "mover", "universe": 0, "start_address": 1,
          "channel_roles": {"pan": 1, "tilt": 2, "dimmer": 3, "r": 4, "g": 5, "b": 6}},
@@ -46,6 +47,12 @@ def loader(sid):
     if sid not in LIB:
         raise FileNotFoundError(sid)
     return LIB[sid]
+
+# Overlay scene + cycler scene list (resolved by the route in production; passed
+# straight to apply_preset here).
+OVERLAY = {"scene_type": "main", "name": "Strobe",
+           "steps": [{"hold": 100000, "fade": 0, "fixtures": {"P": {"pods": [{"r": 255}, {"r": 255}]}}}]}
+CYC = [LIB["S1"], LIB["S2"]]
 
 def wait(s): time.sleep(s)
 
@@ -174,9 +181,58 @@ finally:
 # ── 7. normalize fills partial presets ─────────────────────────────────────
 print("\n[normalize]")
 n = P.normalize_preset({"name": "x"})
-ok(set(n["scope"]) == set(P.CATEGORIES) | set(P.SCALARS), "scope filled with all keys")
+ok(set(n["scope"]) == set(P.CATEGORIES) | set(P.SCALARS) | set(P.SUBSYSTEMS), "scope filled with all keys")
 ok(all(n["items"][c] == [] for c in P.CATEGORIES), "items filled per category")
 ok(n["exclusive"] is True, "exclusive defaults true")
 PASSED += 0  # (assertions counted in ok)
+
+
+# ── 8. subsystems: blackout / overlay / cycler ─────────────────────────────
+print("\n[subsystems]")
+eng = LightingEngine(StubDMX(), SHOW)
+try:
+    # blackout — set-if-scoped, idempotent set (not toggle)
+    P.apply_preset({"name": "bo", "scope": {"blackout": True}, "levels": {"blackout": "full"}}, eng, loader)
+    wait(0.05)
+    ok(eng.get_state()["blackout_mode"] == "full", "preset set blackout full")
+    P.apply_preset({"name": "bo2", "scope": {"blackout": True}, "levels": {"blackout": "color"}}, eng, loader)
+    wait(0.05)
+    ok(eng.get_state()["blackout_mode"] == "color", "preset switched blackout to color")
+    # unscoped blackout untouched
+    P.apply_preset({"name": "noop", "exclusive": False, "scope": {"main": True}, "items": {"main": []}}, eng, loader)
+    wait(0.05)
+    ok(eng.get_state()["blackout_mode"] == "color", "unscoped blackout left as color")
+    # clear blackout
+    P.apply_preset({"name": "clr", "scope": {"blackout": True}, "levels": {"blackout": None}}, eng, loader)
+    wait(0.15)
+    ok(eng.get_state()["blackout_mode"] in (None, "off"), "preset cleared blackout")
+
+    # overlay — needs the resolved overlay scene
+    P.apply_preset({"name": "ov", "scope": {"overlay": True}, "levels": {"overlay": True}}, eng, loader, overlay_scene=OVERLAY)
+    wait(0.05)
+    ok(eng.get_state()["overlay_active"] is True, "preset started overlay")
+    P.apply_preset({"name": "ovoff", "scope": {"overlay": True}, "levels": {"overlay": False}}, eng, loader)
+    wait(0.15)
+    ok(eng.get_state()["overlay_active"] is False, "preset stopped overlay")
+    summ = P.apply_preset({"name": "ovnoscene", "scope": {"overlay": True}, "levels": {"overlay": True}}, eng, loader, overlay_scene=None)
+    ok(any("overlay" in n for n in summ["notes"]), "overlay-on with no scene reported as a note, no crash")
+
+    # cycler — needs the resolved cycler scenes; division round-trips
+    P.apply_preset({"name": "cy", "scope": {"cycler": True}, "levels": {"cycler": 2.0}}, eng, loader, cycler_scenes=CYC)
+    wait(0.05)
+    cy = eng.get_state()["cycler"]
+    ok(cy["active"] is True and abs(cy["division"] - 2.0) < 1e-6, "preset started cycler at division 2")
+    P.apply_preset({"name": "cyoff", "scope": {"cycler": True}, "levels": {"cycler": None}}, eng, loader, cycler_scenes=CYC)
+    wait(0.05)
+    ok(eng.get_state()["cycler"]["active"] is False, "preset stopped cycler")
+
+    # capture grabs subsystem state + scopes them
+    eng.set_blackout("full")
+    pre = P.capture_preset(eng, name="snap")
+    ok(pre["levels"]["blackout"] == "full", "capture grabbed blackout mode")
+    ok(pre["scope"]["overlay"] is True and pre["scope"]["cycler"] is True, "capture scopes subsystems")
+finally:
+    eng.shutdown()
+
 
 print("\nALL PRESET TESTS PASSED (%d assertions)" % PASSED)

@@ -2001,6 +2001,11 @@ const PRESET_SCALARS = [
   { key:'singer_mode',  label:'Singer mode' },
   { key:'singer_level', label:'Singer dimmer' },
 ];
+const PRESET_SUBSYSTEMS = [
+  { key:'blackout', label:'Blackout' },
+  { key:'overlay',  label:'Overlay' },
+  { key:'cycler',   label:'Cycler' },
+];
 const ALL_SCENES = {{ scenes | tojson }};
 function scenesOfType(t){ return ALL_SCENES.filter(s => (s.scene_type||'main')===t); }
 function sceneName(id){ const s=ALL_SCENES.find(x=>x.id===id); return s?s.name:id; }
@@ -2021,6 +2026,7 @@ function presetScopeSummary(p){
   const sc=p.scope||{}, it=p.items||{}, parts=[];
   PRESET_CATS.forEach(c=>{ if(sc[c.key] && (it[c.key]||[]).length) parts.push(it[c.key].length+' '+c.key); });
   PRESET_SCALARS.forEach(s=>{ if(sc[s.key]) parts.push(s.label.toLowerCase()); });
+  PRESET_SUBSYSTEMS.forEach(s=>{ if(sc[s.key]) parts.push(s.label.toLowerCase()); });
   return (p.exclusive===false?'additive':'exclusive') + (parts.length?' · '+parts.join(', '):'');
 }
 
@@ -2058,9 +2064,9 @@ function movePreset(i,delta){
 
 function blankPreset(){
   return { name:'', exclusive:true,
-    scope:{main:true,motion:false,look:false,effect:false,master:false,singer_mode:false,singer_level:false},
+    scope:{main:true,motion:false,look:false,effect:false,master:false,singer_mode:false,singer_level:false,blackout:false,overlay:false,cycler:false},
     items:{main:[],motion:[],look:[],effect:[]},
-    levels:{master:1.0,singer_mode:false,singer_level:1.0} };
+    levels:{master:1.0,singer_mode:false,singer_level:1.0,blackout:null,overlay:false,cycler:null} };
 }
 
 function openPresetEditor(id){
@@ -2069,9 +2075,9 @@ function openPresetEditor(id){
   editorState = {
     name: src.name||'',
     exclusive: src.exclusive!==false,
-    scope: Object.assign({main:false,motion:false,look:false,effect:false,master:false,singer_mode:false,singer_level:false}, src.scope||{}),
+    scope: Object.assign({main:false,motion:false,look:false,effect:false,master:false,singer_mode:false,singer_level:false,blackout:false,overlay:false,cycler:false}, src.scope||{}),
     items: { main:[...(src.items&&src.items.main||[])], motion:[...(src.items&&src.items.motion||[])], look:[...(src.items&&src.items.look||[])], effect:[...(src.items&&src.items.effect||[])] },
-    levels: Object.assign({master:1.0,singer_mode:false,singer_level:1.0}, src.levels||{}),
+    levels: Object.assign({master:1.0,singer_mode:false,singer_level:1.0,blackout:null,overlay:false,cycler:null}, src.levels||{}),
   };
   document.getElementById('preset-modal-title').textContent = id ? 'Edit Preset' : 'New Preset';
   document.getElementById('preset-delete').style.display = id ? '' : 'none';
@@ -2102,6 +2108,13 @@ function renderScopeItems(){
     box.appendChild(h);
     if(editorState.scope[s.key]) renderScalar(s);
   });
+  PRESET_SUBSYSTEMS.forEach(s=>{
+    box.appendChild(scopeRow(s.key, s.label, ()=>renderSubsystem(s)));
+    const h=document.createElement('div'); h.id='subsys-'+s.key;
+    h.style.cssText='margin:0 0 8px 26px;'+(editorState.scope[s.key]?'':'display:none;');
+    box.appendChild(h);
+    if(editorState.scope[s.key]) renderSubsystem(s);
+  });
 }
 
 function scopeRow(key,label,onShow){
@@ -2110,7 +2123,7 @@ function scopeRow(key,label,onShow){
   const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!editorState.scope[key];
   cb.onchange=()=>{
     editorState.scope[key]=cb.checked;
-    const h=document.getElementById('catitems-'+key)||document.getElementById('scalar-'+key);
+    const h=document.getElementById('catitems-'+key)||document.getElementById('scalar-'+key)||document.getElementById('subsys-'+key);
     if(h){ h.style.display=cb.checked?'':'none'; if(cb.checked) onShow(); }
   };
   const lab=document.createElement('span'); lab.textContent=label; lab.style.cssText='font-size:0.84rem;font-weight:600;';
@@ -2169,6 +2182,43 @@ function renderScalar(s){
   }
 }
 
+function renderSubsystem(s){
+  const holder=document.getElementById('subsys-'+s.key); if(!holder) return;
+  holder.innerHTML='';
+  if(s.key==='blackout'){
+    const cur = editorState.levels.blackout || 'off';
+    const sel=document.createElement('select');
+    sel.style.cssText='background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px;font-size:0.78rem;';
+    [['off','Off'],['color','Color'],['full','Full']].forEach(([v,lab])=>{
+      const o=document.createElement('option'); o.value=v; o.textContent=lab; if(v===cur)o.selected=true; sel.appendChild(o);
+    });
+    sel.onchange=()=>{ editorState.levels.blackout = (sel.value==='off' ? null : sel.value); };
+    holder.appendChild(sel);
+  } else if(s.key==='overlay'){
+    const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:8px;font-size:0.78rem;cursor:pointer;';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!editorState.levels.overlay;
+    cb.onchange=()=>{ editorState.levels.overlay=cb.checked; };
+    lab.appendChild(cb); lab.appendChild(document.createTextNode('Overlay ON when recalled (uses the show’s overlay scene)'));
+    holder.appendChild(lab);
+  } else if(s.key==='cycler'){
+    const on = !!editorState.levels.cycler;
+    const row=document.createElement('div'); row.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+    const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:8px;font-size:0.78rem;cursor:pointer;';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=on;
+    const divWrap=document.createElement('label'); divWrap.style.cssText='display:flex;align-items:center;gap:6px;font-size:0.78rem;'+(on?'':'opacity:.4;');
+    const div=document.createElement('input'); div.type='number'; div.min='0.25'; div.step='0.25';
+    div.value = (typeof editorState.levels.cycler==='number' ? editorState.levels.cycler : 1);
+    div.style.cssText='width:64px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px;font-size:0.78rem;';
+    div.disabled = !on;
+    const syncCycler=()=>{ editorState.levels.cycler = cb.checked ? (parseFloat(div.value)||1) : null; div.disabled=!cb.checked; divWrap.style.opacity=cb.checked?'1':'.4'; };
+    cb.onchange=syncCycler; div.oninput=syncCycler;
+    lab.appendChild(cb); lab.appendChild(document.createTextNode('Cycler ON (show’s cycler scenes)'));
+    divWrap.appendChild(document.createTextNode('beats/look')); divWrap.appendChild(div);
+    row.appendChild(lab); row.appendChild(divWrap);
+    holder.appendChild(row);
+  }
+}
+
 function presetFillFromLive(){
   fetch('/api/state').then(r=>r.json()).then(s=>{
     editorState.items.main   = (s.scenes||[]).filter(x=>!x.stopping).map(x=>x.id);
@@ -2178,7 +2228,14 @@ function presetFillFromLive(){
     editorState.levels.master       = s.master_level!=null?s.master_level:1.0;
     editorState.levels.singer_mode  = !!s.singer_mode;
     editorState.levels.singer_level = s.singer_level!=null?s.singer_level:1.0;
+    editorState.levels.blackout     = s.blackout_mode || null;
+    editorState.levels.overlay      = !!s.overlay_active;
+    const cyc = s.cycler || {};
+    editorState.levels.cycler       = cyc.active ? (cyc.division!=null?cyc.division:1) : null;
     PRESET_CATS.forEach(c=>{ if(editorState.items[c.key].length) editorState.scope[c.key]=true; });
+    if(editorState.levels.blackout) editorState.scope.blackout=true;
+    if(editorState.levels.overlay)  editorState.scope.overlay=true;
+    if(editorState.levels.cycler)   editorState.scope.cycler=true;
     renderScopeItems();
     toast('Filled from live','ok');
   }).catch(()=>toast('Could not read live state','err'));

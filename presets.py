@@ -27,6 +27,7 @@ PRESETS_FILE = Path(__file__).parent / "presets.json"
 
 CATEGORIES = ("main", "motion", "look", "effect")
 SCALARS    = ("master", "singer_mode", "singer_level")
+SUBSYSTEMS = ("blackout", "overlay", "cycler")   # start/stop side-effect modes
 
 
 def new_preset_id():
@@ -62,6 +63,7 @@ def find_preset(presets, preset_id):
 def _default_scope(value=True):
     d = {c: value for c in CATEGORIES}
     d.update({s: value for s in SCALARS})
+    d.update({s: value for s in SUBSYSTEMS})
     return d
 
 
@@ -73,7 +75,7 @@ def normalize_preset(p):
     p["exclusive"] = bool(p.get("exclusive", True))
     scope = _default_scope(False)
     scope.update(p.get("scope") or {})
-    p["scope"] = {k: bool(scope.get(k)) for k in (*CATEGORIES, *SCALARS)}
+    p["scope"] = {k: bool(scope.get(k)) for k in (*CATEGORIES, *SCALARS, *SUBSYSTEMS)}
     items = p.get("items") or {}
     p["items"] = {c: list(items.get(c) or []) for c in CATEGORIES}
     p["levels"] = dict(p.get("levels") or {})
@@ -95,6 +97,7 @@ def capture_preset(engine, name="Captured"):
     """Snapshot the live rig into a new exclusive, fully-scoped preset."""
     state = engine.get_state()
     live = _live_ids(state)
+    cyc = state.get("cycler") or {}
     return {
         "id":        new_preset_id(),
         "name":      name or "Preset",
@@ -105,21 +108,31 @@ def capture_preset(engine, name="Captured"):
             "master":       state.get("master_level", 1.0),
             "singer_mode":  state.get("singer_mode", False),
             "singer_level": state.get("singer_level", 1.0),
+            # Subsystems: blackout = None/'color'/'full'; overlay = bool;
+            # cycler = beat-division when running, else None (= off).
+            "blackout":     state.get("blackout_mode"),
+            "overlay":      bool(state.get("overlay_active")),
+            "cycler":       (cyc.get("division") if cyc.get("active") else None),
         },
     }
 
 
-def apply_preset(preset, engine, scene_loader):
+def apply_preset(preset, engine, scene_loader, overlay_scene=None, cycler_scenes=None):
     """Recall a preset onto the live engine.
 
     scene_loader(scene_id) -> scene dict (raises FileNotFoundError if missing).
+    overlay_scene: the show's resolved overlay scene dict (or None) — needed to
+        start the overlay when the preset scopes it on.
+    cycler_scenes: the show's resolved cycler scene dicts (list) — needed to
+        start the cycler when the preset scopes it on.
 
     For each SCOPED playback category:
       - exclusive: stop live items not in the preset, then play the preset's
         items that aren't already live, in list order;
       - additive: play the preset's items not already live, in order; stop nothing.
-    Scalars (master / singer_mode / singer_level) are set only if scoped in.
-    Returns a summary dict {started, stopped, missing}.
+    Scalars (master / singer_mode / singer_level) and subsystems (blackout /
+    overlay / cycler) are set only if scoped in. Returns {started, stopped,
+    missing, notes}.
     """
     p = normalize_preset(preset)
     scope, items, exclusive, levels = p["scope"], p["items"], p["exclusive"], p["levels"]
@@ -138,7 +151,7 @@ def apply_preset(preset, engine, scene_loader):
         "effect": lambda sid: engine.stop_effect_scene(scene_id=sid),
     }
 
-    started, stopped, missing = [], [], []
+    started, stopped, missing, notes = [], [], [], []
     for cat in CATEGORIES:
         if not scope.get(cat):
             continue                       # unscoped category is never touched
@@ -168,4 +181,27 @@ def apply_preset(preset, engine, scene_loader):
     if scope.get("singer_level") and levels.get("singer_level") is not None:
         engine.set_singer_level(float(levels["singer_level"]))
 
-    return {"started": started, "stopped": stopped, "missing": missing}
+    # Subsystems: set-if-scoped.
+    if scope.get("blackout"):
+        engine.set_blackout(levels.get("blackout"))     # None/'color'/'full'
+    if scope.get("overlay"):
+        if levels.get("overlay"):
+            if overlay_scene is not None:
+                engine.start_overlay(overlay_scene)
+            else:
+                notes.append("overlay scoped on but no overlay scene configured")
+        else:
+            engine.stop_overlay()
+    if scope.get("cycler"):
+        cyc = levels.get("cycler")
+        if cyc:                                          # truthy = on
+            if cycler_scenes:
+                # bool True -> default division 1.0; a number -> that division.
+                div = float(cyc) if isinstance(cyc, (int, float)) and not isinstance(cyc, bool) else 1.0
+                engine.start_cycler(cycler_scenes, division=div)
+            else:
+                notes.append("cycler scoped on but no cycler scenes configured")
+        else:
+            engine.stop_cycler()
+
+    return {"started": started, "stopped": stopped, "missing": missing, "notes": notes}

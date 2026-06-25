@@ -1827,6 +1827,19 @@ class LightingEngine:
                 self._blackout_mode   = mode
                 self._blackout_target = 1.0
 
+    def set_blackout(self, mode):
+        """Set blackout to a specific target (idempotent — no toggle), for
+        preset recall. mode: None/'off' clears it; 'color' or 'full' applies."""
+        if mode in (None, "off", "none", ""):
+            with self._lock:
+                self._blackout_target = 0.0
+            return
+        if mode not in ("color", "full"):
+            mode = "full"
+        with self._lock:
+            self._blackout_mode   = mode
+            self._blackout_target = 1.0
+
     # ── Overlay scene (e.g. strobe layer) ──────────────────────────────────
 
     def start_overlay(self, scene):

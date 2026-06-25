@@ -587,7 +587,25 @@ def api_preset_recall(preset_id):
     p = presets_mod.find_preset(lst, preset_id)
     if p is None:
         return jsonify({"ok": False, "error": "Preset not found"}), 404
-    summary = presets_mod.apply_preset(p, engine, load_library_scene)
+    # Resolve the show's overlay + cycler scenes so a preset that scopes them
+    # can start them (they need a scene / scene list, unlike the other subsystems).
+    overlay_scene = None
+    ov_id = show_config.get("overlay_scene")
+    if ov_id:
+        try:
+            overlay_scene = load_library_scene(ov_id)
+        except FileNotFoundError:
+            overlay_scene = None
+    cycler_scenes = []
+    for m in get_show_cycler_scenes(show_config):
+        try:
+            cycler_scenes.append(load_library_scene(m["id"]))
+        except FileNotFoundError:
+            pass
+    summary = presets_mod.apply_preset(
+        p, engine, load_library_scene,
+        overlay_scene=overlay_scene, cycler_scenes=cycler_scenes,
+    )
     return jsonify({"ok": True, "applied": summary})
 
 @app.route("/api/freeze", methods=["POST"])
