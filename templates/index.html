@@ -622,15 +622,20 @@ let effectiveSceneIds = new Set();
 // Freeze state
 let freezeActive = false;
 let pendingMainIds = [];
-let pendingMotionAction = null;     // null | 'play' | 'stop'
-let pendingMotionId     = null;
-let pendingLookAction   = null;
-let pendingLookId       = null;
-let pendingEffectAction = null;     // null | 'play' | 'stop'
-let pendingEffectId     = null;
+let pendingMotionIds = [];           // ids that WILL be active after unfreeze
+let pendingLookIds   = [];
+let pendingEffectIds = [];
 let pendingSinger = null;           // null | bool  — queued singer on/off
 let pendingMaster = null;           // null | float — queued color-dimmer level
 let pendingSingerLevel = null;      // null | float — queued singer-dimmer level
+
+// Stacked motion/look/effect (Task B): live + effective (freeze-aware) id sets,
+// mirroring the main-scene grid. Optimistic per-category maps give instant tap
+// feedback before the poll confirms: { [id]: {action:'starting'|'stopping', time} }.
+let activeMotionIds = new Set(), effMotionIds = new Set();
+let activeLookIds   = new Set(), effLookIds   = new Set();
+let activeEffectIds = new Set(), effEffectIds = new Set();
+const optLayer = { motion: {}, look: {}, effect: {} };
 
 // ── State polling ──────────────────────────────────────────────────────
 
@@ -648,13 +653,10 @@ function pollState() {
     // Freeze state
     const fz = s.freeze || {};
     freezeActive = !!fz.active;
-    pendingMainIds      = fz.pending_main_ids || [];
-    pendingMotionAction = fz.pending_motion_action || null;
-    pendingMotionId     = fz.pending_motion_id     || null;
-    pendingLookAction   = fz.pending_look_action   || null;
-    pendingLookId       = fz.pending_look_id       || null;
-    pendingEffectAction = fz.pending_effect_action || null;
-    pendingEffectId     = fz.pending_effect_id     || null;
+    pendingMainIds      = fz.pending_main_ids   || [];
+    pendingMotionIds    = fz.pending_motion_ids || [];
+    pendingLookIds      = fz.pending_look_ids   || [];
+    pendingEffectIds    = fz.pending_effect_ids || [];
     pendingSinger = (fz.pending_singer === undefined) ? null : fz.pending_singer;
     pendingMaster = (fz.pending_master === undefined) ? null : fz.pending_master;
     pendingSingerLevel = (fz.pending_singer_level === undefined) ? null : fz.pending_singer_level;
@@ -668,7 +670,18 @@ function pollState() {
       ? new Set(pendingMainIds)
       : new Set(activeSceneIds);
 
+    // Stacked motion / look / effect: same live↔effective pattern.
+    activeMotionIds = new Set((s.motions || []).map(m => m.id));
+    activeLookIds   = new Set((s.looks   || []).map(l => l.id));
+    activeEffectIds = new Set((s.effects || []).filter(e => !e.stopping).map(e => e.id));
+    effMotionIds = freezeActive ? new Set(pendingMotionIds) : new Set(activeMotionIds);
+    effLookIds   = freezeActive ? new Set(pendingLookIds)   : new Set(activeLookIds);
+    effEffectIds = freezeActive ? new Set(pendingEffectIds) : new Set(activeEffectIds);
+
     highlightScenes();
+    highlightLayer('motion');
+    highlightLayer('look');
+    highlightLayer('effect');
 
     // Freeze button + banner
     const fbtn = document.getElementById('freeze-btn');
@@ -691,9 +704,12 @@ function pollState() {
         // Count pending changes (diff between effective and live)
         const adds  = [...effectiveSceneIds].filter(id => !activeSceneIds.has(id)).length;
         const drops = [...activeSceneIds].filter(id => !effectiveSceneIds.has(id)).length;
-        let motionChange = pendingMotionAction !== null ? 1 : 0;
-        let lookChange   = pendingLookAction   !== null ? 1 : 0;
-        let effectChange = pendingEffectAction !== null ? 1 : 0;
+        const diffCount = (eff, live) =>
+          [...eff].filter(id => !live.has(id)).length +
+          [...live].filter(id => !eff.has(id)).length;
+        const motionChange = diffCount(effMotionIds, activeMotionIds);
+        const lookChange   = diffCount(effLookIds,   activeLookIds);
+        const effectChange = diffCount(effEffectIds, activeEffectIds);
         const liveSinger = !!s.singer_mode;
         const singerChange = (pendingSinger !== null && pendingSinger !== liveSinger) ? 1 : 0;
         const masterChange = (pendingMaster !== null &&
@@ -709,9 +725,9 @@ function pollState() {
             const parts = [];
             if (adds)         parts.push(adds + ' to start');
             if (drops)        parts.push(drops + ' to stop');
-            if (motionChange) parts.push('motion change');
-            if (lookChange)   parts.push('look change');
-            if (effectChange) parts.push('effect change');
+            if (motionChange) parts.push(motionChange + ' motion');
+            if (lookChange)   parts.push(lookChange + ' look');
+            if (effectChange) parts.push(effectChange + ' effect');
             if (singerChange) parts.push('singer ' + (pendingSinger ? 'on' : 'off'));
             if (masterChange) parts.push('dimmer \u2192 ' + Math.round(pendingMaster*100) + '%');
             if (singerLevelChange) parts.push('singer dimmer \u2192 ' + Math.round(pendingSingerLevel*100) + '%');
@@ -812,35 +828,6 @@ function pollState() {
       ob.style.background = s.overlay_active ? '#8a45cf' : '#5b2a8a';
     }
 
-    // ── Single-select highlight (motion / look / effect) ──────────────────
-    // Record live + effective (freeze-aware) selection per category, expire any
-    // optimistic prediction the poll has now caught up to, then repaint through
-    // highlightSelect(). Painting every poll (rather than only on change) lets
-    // an optimistic prediction settle back to the real state cleanly.
-    liveSel.motion = s.current_motion_id || null;
-    liveSel.look   = s.current_look_id   || null;
-    liveSel.effect = s.current_effect_id || null;
-
-    effSel.motion = liveSel.motion;
-    if (freezeActive && pendingMotionAction !== null)
-      effSel.motion = pendingMotionAction === 'play' ? pendingMotionId : null;
-    effSel.look = liveSel.look;
-    if (freezeActive && pendingLookAction !== null)
-      effSel.look = pendingLookAction === 'play' ? pendingLookId : null;
-    effSel.effect = liveSel.effect;
-    if (freezeActive && pendingEffectAction !== null)
-      effSel.effect = pendingEffectAction === 'play' ? pendingEffectId : null;
-
-    ['motion', 'look', 'effect'].forEach(cat => {
-      const o = optSel[cat];
-      if (o.pred !== undefined) {
-        // Freeze repaints itself via pending indicators; otherwise clear the
-        // prediction once the live state matches it (or the safety TTL lapses).
-        if (freezeActive) o.pred = undefined;
-        else if (liveSel[cat] === o.pred || (Date.now() - o.t) > OPT_TTL) o.pred = undefined;
-      }
-      highlightSelect(cat);
-    });
   }).catch(() => {});
 }
 setInterval(pollState, 1500);
@@ -958,97 +945,77 @@ function stopAllScenes() {
     });
 }
 
-// ── Single-select optimistic state (motion / look / effect) ───────────────
-// Same idea as the main-scene optimistic map, but single-select: for each
-// category pred === undefined means no prediction in flight; pred === null
-// predicts "none active"; pred === <id> predicts that id is active. This makes
-// the indicator appear the instant you tap and lets a quick re-tap reverse the
-// selection before the poll/fade catches up.
-const optSel = {
-  motion: { pred: undefined, t: 0 },
-  look:   { pred: undefined, t: 0 },
-  effect: { pred: undefined, t: 0 },
-};
-// Live + effective (freeze-aware) selected id per category, filled by pollState.
-const liveSel = { motion: null, look: null, effect: null };
-const effSel  = { motion: null, look: null, effect: null };
+// ── Stacked layer optimistic state (motion / look / effect) ───────────────
+// Mirrors the main-scene grid: set-membership multi-select. Each category
+// keeps an optimistic map { [id]: {action:'starting'|'stopping', time} } that
+// gives instant tap feedback before the 1.5s poll confirms, and lets a quick
+// re-tap reverse a mis-tap mid-flight. (optLayer is declared up top.)
+function layerSets(cat) {
+  if (cat === 'motion') return { active: activeMotionIds, eff: effMotionIds };
+  if (cat === 'look')   return { active: activeLookIds,   eff: effLookIds };
+  return { active: activeEffectIds, eff: effEffectIds };
+}
 
-function highlightSelect(cat) {
-  const live = liveSel[cat];
-  const o    = optSel[cat];
-  let displayId  = effSel[cat];
-  let optimistic = false;
-  // In the live (non-frozen) case an in-flight prediction wins until the poll
-  // confirms it. Freeze always paints from the real pending state.
-  if (!freezeActive && o.pred !== undefined && (Date.now() - o.t) < OPT_TTL) {
-    displayId  = o.pred;     // null (none) or an id
-    optimistic = true;
+function highlightLayer(cat) {
+  const { active, eff } = layerSets(cat);
+  const opt = optLayer[cat];
+  // Expire stale optimistic entries (safety net if the poll never confirms).
+  const now = Date.now();
+  for (const id of Object.keys(opt)) {
+    if (now - opt[id].time > OPT_TTL) delete opt[id];
   }
   document.querySelectorAll('.' + cat + '-btn').forEach(b => {
     const id = b.getAttribute('data-id');
     b.classList.remove('active', 'pending-start', 'pending-stop',
                        'optimistic-start', 'optimistic-stop');
-    const isSel = (id === displayId);
-    if (isSel) b.classList.add('active');
-    if (optimistic) {
-      // Immediate tap feedback (white flash on select, instant dim on deselect)
-      if (isSel  && id !== live) b.classList.add('optimistic-start');
-      if (!isSel && id === live) b.classList.add('optimistic-stop');
-    } else if (freezeActive) {
-      if (isSel  && id !== live) b.classList.add('pending-start');
-      if (!isSel && id === live) b.classList.add('pending-stop');
+    if (!id) return;
+
+    const liveActive = active.has(id);
+    const effActive  = eff.has(id);
+    const o          = opt[id];
+
+    // Clear the optimistic entry once the poll has caught up to the prediction.
+    if (o) {
+      if (o.action === 'starting' && effActive)  delete opt[id];
+      if (o.action === 'stopping' && !effActive) delete opt[id];
+    }
+    const stillOpt      = !!opt[id];
+    const displayActive = stillOpt ? (opt[id].action === 'starting') : effActive;
+
+    if (displayActive) b.classList.add('active');
+    if (stillOpt) {
+      b.classList.add(opt[id].action === 'starting' ? 'optimistic-start' : 'optimistic-stop');
+    } else {
+      if (effActive  && !liveActive) b.classList.add('pending-start');
+      if (!effActive && liveActive)  b.classList.add('pending-stop');
     }
   });
 }
 
-function tapSelect(cat, id, playUrl, stopUrl) {
-  const o = optSel[cat];
-  // Baseline = the currently-shown selection, honoring an in-flight prediction.
-  const baseline = (o.pred !== undefined) ? o.pred : effSel[cat];
-  const willStop = (baseline === id);
-  o.pred = willStop ? null : id;
-  o.t    = Date.now();
-  highlightSelect(cat);
-  fetch(willStop ? stopUrl : playUrl, { method:'POST',
+function toggleLayer(cat, id) {
+  // Decide direction from what the button currently shows, honoring any
+  // in-flight optimistic prediction so a quick second tap reverses a mis-tap.
+  const opt          = optLayer[cat];
+  const { eff }      = layerSets(cat);
+  const pending      = opt[id];
+  const currentlyOn  = pending ? (pending.action === 'starting') : eff.has(id);
+  const willStop     = currentlyOn;
+  opt[id] = { action: willStop ? 'stopping' : 'starting', time: Date.now() };
+  highlightLayer(cat);
+  // The play route toggles on the server (live when running, pending when
+  // frozen), so we always POST the same id route regardless of direction.
+  fetch('/api/' + cat + '/' + id, { method:'POST',
     headers:{'Content-Type':'application/json'}, body:'{}' })
     .then(r => r.json()).then(d => {
-      if (!d.ok) { o.pred = undefined; highlightSelect(cat); toast(cat + ' error: ' + (d.error || ''), 'err'); }
+      if (!d.ok) { delete opt[id]; highlightLayer(cat); toast(cat + ' error: ' + (d.error || ''), 'err'); }
+      if (freezeActive) pollState();   // repoll so pending indicators settle
     })
-    .catch(() => { o.pred = undefined; highlightSelect(cat); });
+    .catch(() => { delete opt[id]; highlightLayer(cat); });
 }
 
-function playMotion(id) {
-  if (freezeActive) {
-    // Frozen: the server queues the change; route by the effective (pending)
-    // selection and repoll so the pending indicators update right away.
-    const url = (effSel.motion === id) ? '/api/motion/stop' : '/api/motion/' + id;
-    fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
-      .then(r => r.json()).then(d => { if (!d.ok) toast('Motion error: ' + d.error, 'err'); pollState(); });
-    return;
-  }
-  tapSelect('motion', id, '/api/motion/' + id, '/api/motion/stop');
-}
-
-function playLook(id) {
-  if (freezeActive) {
-    const url = (effSel.look === id) ? '/api/look/stop' : '/api/look/' + id;
-    fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
-      .then(r => r.json()).then(d => { if (!d.ok) toast('Look error: ' + d.error, 'err'); pollState(); });
-    return;
-  }
-  tapSelect('look', id, '/api/look/' + id, '/api/look/stop');
-}
-
-function playEffect(id) {
-  if (freezeActive) {
-    // Frozen: the SERVER does the tap-to-toggle on the pending queue, so we
-    // always hit /api/effect/<id> and let the engine route it correctly.
-    fetch('/api/effect/' + id, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
-      .then(r => r.json()).then(d => { if (!d.ok) toast('Effect error: ' + d.error, 'err'); pollState(); });
-    return;
-  }
-  tapSelect('effect', id, '/api/effect/' + id, '/api/effect/stop');
-}
+function playMotion(id) { toggleLayer('motion', id); }
+function playLook(id)   { toggleLayer('look',   id); }
+function playEffect(id) { toggleLayer('effect', id); }
 
 function moveRow(btn, delta) {
   // Reorder a row within an edit-list modal. Order is committed on Save.
