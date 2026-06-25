@@ -74,6 +74,7 @@
   .genfx .dot { width:13px; height:13px; border-radius:50%;
                 border:2px solid var(--border); flex:none; }
   .genfx.on .dot { border-color:var(--accent); background:var(--accent); }
+  .genfx.aiming { border-color:var(--amber); background:rgba(245,158,11,.14); }
   .litb { flex:none; background:var(--surface3); border:1px solid var(--border);
           color:var(--sub); border-radius:6px; padding:5px 9px; font-size:11px;
           font-weight:700; cursor:pointer; white-space:nowrap; }
@@ -315,7 +316,7 @@
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
       <button type="button" id="gen-aim-btn" class="ts-toggle off" onclick="toggleAimMode()">🎯 Aim: Off</button>
       <button type="button" id="gen-reset-trims-btn" class="shapeb" style="padding:7px 11px;" onclick="resetCenterTrims()">Reset trims</button>
-      <span style="font-size:0.62rem;color:var(--sub);flex:1;min-width:120px;text-align:right;">Aim freezes movers at their own centers — drag each dot to converge them on one spot.</span>
+      <span style="font-size:0.62rem;color:var(--sub);flex:1;min-width:120px;text-align:right;">Aim freezes movers at their centers. Pick one in the list (or tap its dot), then drag to place it — converge them all on one spot.</span>
     </div>
 
     <!-- Pan/Tilt placement grid -->
@@ -1826,6 +1827,7 @@ let genLit = new Set(genFixtures);   // which movers are lit during live aiming
 let phaseCfg = { mode: 'even', spread: 1.0, offsets: {} };
 let centerOffsets = {};              // { fxid: {dp, dt} } per-fixture center trim
 let aimMode = false;                 // freeze-at-centers aiming workflow
+let aimSelFx = null;                 // which mover is currently being aimed
 let _trimDrag = null;                // fixture id being trimmed on the pad
 
 // On-screen animated preview state (dots orbiting the pad).
@@ -2059,14 +2061,19 @@ function renderGenFixtures() {
   MOVERS.forEach(m => {
     const on = genFixtures.includes(m.id);
     const lit = genLit.has(m.id);
+    const sel = aimMode && on && aimSelFx === m.id;
     const row = document.createElement('div');
-    row.className = 'genfx' + (on ? ' on' : '');
+    row.className = 'genfx' + (on ? ' on' : '') + (sel ? ' aiming' : '');
     row.style.cursor = 'default';
     const main = document.createElement('div');
     main.style.cssText = 'display:flex;align-items:center;gap:9px;flex:1;cursor:pointer;min-width:0;';
-    main.onclick = () => toggleGenFixture(m.id);
-    main.innerHTML = `<span class="dot"></span><span style="font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.name}</span>` +
-                     (on ? '<span style="font-size:0.66rem;color:var(--accent);flex:none;">in pattern</span>' : '');
+    // In Aim mode tapping a row picks which mover you're aiming; otherwise it
+    // toggles the mover in/out of the pattern.
+    main.onclick = () => { if (aimMode) { if (on) selectAimFx(m.id); } else toggleGenFixture(m.id); };
+    const tag = sel
+      ? '<span style="font-size:0.66rem;color:var(--amber);flex:none;font-weight:700;">◎ aiming</span>'
+      : (on ? '<span style="font-size:0.66rem;color:var(--accent);flex:none;">in pattern</span>' : '');
+    main.innerHTML = `<span class="dot"></span><span style="font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.name}</span>` + tag;
     row.appendChild(main);
     if (on) {
       const lb = document.createElement('button');
@@ -2079,6 +2086,12 @@ function renderGenFixtures() {
     }
     host.appendChild(row);
   });
+}
+
+function selectAimFx(id) {
+  aimSelFx = id;
+  renderGenFixtures();
+  renderGenPad();
 }
 
 function toggleGenLit(fxid) {
@@ -2206,25 +2219,36 @@ function renderGenPad() {
     ring.style.cursor = 'move';
     ring.addEventListener('pointerdown', (e) => startPadDrag(e, 'center'));
     svg.appendChild(ring);
-    // Per-fixture center dots (draggable). Lit ones get a bright halo so you
-    // can see which beam you're aiming.
-    genFixtures.forEach((id, i) => {
+    // Per-fixture center dots (draggable). The mover being aimed is drawn LAST
+    // (on top) and enlarged/highlighted, so it's always grabbable even when all
+    // movers are stacked on the shared center.
+    genAnimDots = [];
+    const ordered = genFixtures.slice().sort((a, b) =>
+      (a === aimSelFx ? 1 : 0) - (b === aimSelFx ? 1 : 0));   // selected last
+    ordered.forEach((id) => {
+      const idx = genFixtures.indexOf(id);
       const ec = effCenter(id);
       const sxy = dmxToSvg(ec[0], ec[1]);
       const lit = genLit.has(id);
+      const isSel = (id === aimSelFx);
       if (lit) {
-        svg.appendChild(mk('circle', {cx: sxy[0], cy: sxy[1], r: 9,
+        svg.appendChild(mk('circle', {cx: sxy[0], cy: sxy[1], r: isSel ? 11 : 9,
           fill: 'none', stroke: '#fde68a', 'stroke-width': 1, opacity: 0.7}));
       }
-      const dot = mk('circle', {cx: sxy[0], cy: sxy[1], r: 6,
-        fill: '#22c55e', stroke: '#0d0d0d', 'stroke-width': 1.4});
+      if (isSel) {   // selection ring
+        svg.appendChild(mk('circle', {cx: sxy[0], cy: sxy[1], r: 9.5,
+          fill: 'none', stroke: '#ffffff', 'stroke-width': 1.4}));
+      }
+      const dot = mk('circle', {cx: sxy[0], cy: sxy[1], r: isSel ? 7.5 : 5.5,
+        fill: isSel ? '#f59e0b' : '#22c55e', stroke: '#0d0d0d',
+        'stroke-width': 1.4});
       dot.style.cursor = 'move';
       dot.addEventListener('pointerdown', (e) => startCenterTrimDrag(e, id));
       svg.appendChild(dot);
       const lbl = mk('text', {x: sxy[0], y: sxy[1] + 2.6, 'text-anchor': 'middle',
-        'font-size': 6.5, fill: '#0d0d0d', 'font-weight': 700});
+        'font-size': isSel ? 7 : 6.5, fill: '#0d0d0d', 'font-weight': 700});
       lbl.style.pointerEvents = 'none';
-      lbl.textContent = (i + 1);
+      lbl.textContent = (idx + 1);
       svg.appendChild(lbl);
     });
   }
@@ -2355,6 +2379,8 @@ function applyAimUI() {
   const pb = document.getElementById('gen-anim-btn');
   if (pb) { pb.disabled = aimMode; pb.style.opacity = aimMode ? '0.4' : ''; }
   if (aimMode) {
+    // Ensure a valid mover is selected for aiming.
+    if (!aimSelFx || !genFixtures.includes(aimSelFx)) aimSelFx = genFixtures[0] || null;
     genAnimRunning = false;     // hold the orbit
     updateGenAnimBtn();
   } else {
@@ -2368,6 +2394,8 @@ function applyAimUI() {
 function startCenterTrimDrag(e, fxid) {
   e.preventDefault();
   e.stopPropagation();   // don't also grab the shared-center ring
+  aimSelFx = fxid;       // grabbing a mover's dot makes it the aimed one
+  renderGenFixtures();   // reflect selection in the list
   _trimDrag = fxid;
   const move = (ev) => {
     const pt = padEventToDmx(ev);
