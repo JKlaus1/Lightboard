@@ -47,7 +47,14 @@ import math
 
 _TWO_PI = 2.0 * math.pi
 
-SHAPES = ("circle", "figure8", "lissajous", "sweep_pan", "sweep_tilt")
+SHAPES = ("circle", "figure8", "lissajous", "sweep_pan", "sweep_tilt",
+          "spiral", "rose", "bounce")
+
+
+def _tri(u):
+    """Triangle wave, period 1, range [-1, 1]: -1 at u=0, +1 at u=0.5. Used for
+    the bounce shape (straight segments that reflect off the box walls)."""
+    return 2.0 * abs(2.0 * (u - math.floor(u + 0.5))) - 1.0
 
 
 def _f(d, key, default):
@@ -79,6 +86,26 @@ def unit_shape(shape, theta, gen=None):
         return math.sin(a), 0.0
     if shape == "sweep_tilt":
         return 0.0, math.sin(a)
+    if shape == "spiral":
+        # Winds out from center to edge and back over one loop. lissajous_a =
+        # number of turns.
+        turns = _f(gen, "lissajous_a", 3.0) or 3.0
+        frac = theta - math.floor(theta)
+        r = math.sin(math.pi * frac)          # 0 -> 1 -> 0 across the loop
+        ang = _TWO_PI * turns * theta
+        return r * math.cos(ang), r * math.sin(ang)
+    if shape == "rose":
+        # Rose / petal curve. lissajous_a = petal count (odd k -> k petals,
+        # even k -> 2k petals).
+        k = _f(gen, "lissajous_a", 3.0) or 3.0
+        r = math.cos(k * a)
+        return r * math.cos(a), r * math.sin(a)
+    if shape == "bounce":
+        # DVD-logo bounce: independent triangle waves in pan/tilt reflect off
+        # the box walls. lissajous_a / lissajous_b = bounces per loop per axis.
+        bx = _f(gen, "lissajous_a", 3.0) or 3.0
+        by = _f(gen, "lissajous_b", 2.0) or 2.0
+        return _tri(bx * theta), _tri(by * theta)
     # Unknown shape -> hold at center.
     return 0.0, 0.0
 

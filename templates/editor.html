@@ -310,6 +310,9 @@
       <button type="button" class="shapeb" data-shape="lissajous"  onclick="setGenShape('lissajous',this)">〜 Lissajous</button>
       <button type="button" class="shapeb" data-shape="sweep_pan"  onclick="setGenShape('sweep_pan',this)">↔ Sweep Pan</button>
       <button type="button" class="shapeb" data-shape="sweep_tilt" onclick="setGenShape('sweep_tilt',this)">↕ Sweep Tilt</button>
+      <button type="button" class="shapeb" data-shape="spiral"     onclick="setGenShape('spiral',this)">🌀 Spiral</button>
+      <button type="button" class="shapeb" data-shape="rose"       onclick="setGenShape('rose',this)">✿ Rose</button>
+      <button type="button" class="shapeb" data-shape="bounce"     onclick="setGenShape('bounce',this)">📺 Bounce</button>
     </div>
 
     <!-- Aim / centering mode -->
@@ -339,14 +342,20 @@
       <div class="genrow"><label>Size Tilt</label><input type="range" min="0" max="127" id="gen-st" oninput="setGenParam('size_tilt',this.value)"><span id="gen-st-v" class="genval"></span></div>
     </div>
 
-    <!-- Lissajous params (shown only for lissajous) -->
-    <div id="gen-lissajous" style="display:none;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
-      <span style="font-size:0.72rem;color:var(--sub);">Pan lobes</span>
-      <input type="number" id="gen-la" min="1" max="6" step="1" value="1" oninput="setGenParam('lissajous_a',this.value)" style="width:54px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 7px;">
-      <span style="font-size:0.72rem;color:var(--sub);">Tilt lobes</span>
-      <input type="number" id="gen-lb" min="1" max="6" step="1" value="2" oninput="setGenParam('lissajous_b',this.value)" style="width:54px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 7px;">
-      <span style="font-size:0.72rem;color:var(--sub);">Twist</span>
-      <input type="range" id="gen-ld" min="0" max="1" step="0.05" value="0" oninput="setGenParam('lissajous_delta',this.value)" style="flex:1;min-width:90px;">
+    <!-- Shape params (lissajous / spiral / rose / bounce) — labels adapt -->
+    <div id="gen-shapeparams" style="display:none;gap:12px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+      <span id="gen-la-wrap" style="display:inline-flex;align-items:center;gap:6px;">
+        <span id="gen-la-lbl" style="font-size:0.72rem;color:var(--sub);">Pan lobes</span>
+        <input type="number" id="gen-la" min="1" max="8" step="1" value="1" oninput="setGenParam('lissajous_a',this.value)" style="width:54px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 7px;">
+      </span>
+      <span id="gen-lb-wrap" style="display:inline-flex;align-items:center;gap:6px;">
+        <span id="gen-lb-lbl" style="font-size:0.72rem;color:var(--sub);">Tilt lobes</span>
+        <input type="number" id="gen-lb" min="1" max="8" step="1" value="2" oninput="setGenParam('lissajous_b',this.value)" style="width:54px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 7px;">
+      </span>
+      <span id="gen-ld-wrap" style="display:inline-flex;align-items:center;gap:6px;flex:1;min-width:120px;">
+        <span id="gen-ld-lbl" style="font-size:0.72rem;color:var(--sub);">Twist</span>
+        <input type="range" id="gen-ld" min="0" max="1" step="0.05" value="0" oninput="setGenParam('lissajous_delta',this.value)" style="flex:1;min-width:80px;">
+      </span>
     </div>
 
     <!-- Direction + speed -->
@@ -1840,6 +1849,7 @@ let genAnimRAF = null;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 // JS mirror of mover_gen.unit_shape — returns [x,y] in [-1,1].
+function triWave(u) { return 2 * Math.abs(2 * (u - Math.floor(u + 0.5))) - 1; }
 function unitShape(shape, theta) {
   const a = theta * 2 * Math.PI;
   switch (shape) {
@@ -1853,8 +1863,48 @@ function unitShape(shape, theta) {
     }
     case 'sweep_pan':  return [Math.sin(a), 0];
     case 'sweep_tilt': return [0, Math.sin(a)];
+    case 'spiral': {
+      const turns = (+generator.lissajous_a) || 3;
+      const frac = theta - Math.floor(theta);
+      const r = Math.sin(Math.PI * frac);
+      const ang = 2 * Math.PI * turns * theta;
+      return [r * Math.cos(ang), r * Math.sin(ang)];
+    }
+    case 'rose': {
+      const k = (+generator.lissajous_a) || 3;
+      const r = Math.cos(k * a);
+      return [r * Math.cos(a), r * Math.sin(a)];
+    }
+    case 'bounce': {
+      const bx = (+generator.lissajous_a) || 3;
+      const by = (+generator.lissajous_b) || 2;
+      return [triWave(bx * theta), triWave(by * theta)];
+    }
     default:           return [0, 0];
   }
+}
+
+// Show/relabel the shape-param panel for the current shape.
+function updateShapeParamsUI(shape) {
+  const panel = document.getElementById('gen-shapeparams');
+  if (!panel) return;
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? 'inline-flex' : 'none'; };
+  const lbl  = (id, t)  => { const el = document.getElementById(id); if (el) el.textContent = t; };
+  let any = true;
+  if (shape === 'lissajous') {
+    lbl('gen-la-lbl', 'Pan lobes'); lbl('gen-lb-lbl', 'Tilt lobes');
+    show('gen-la-wrap', true); show('gen-lb-wrap', true); show('gen-ld-wrap', true);
+  } else if (shape === 'bounce') {
+    lbl('gen-la-lbl', 'Pan bounces'); lbl('gen-lb-lbl', 'Tilt bounces');
+    show('gen-la-wrap', true); show('gen-lb-wrap', true); show('gen-ld-wrap', false);
+  } else if (shape === 'spiral') {
+    lbl('gen-la-lbl', 'Turns');  show('gen-la-wrap', true); show('gen-lb-wrap', false); show('gen-ld-wrap', false);
+  } else if (shape === 'rose') {
+    lbl('gen-la-lbl', 'Petals'); show('gen-la-wrap', true); show('gen-lb-wrap', false); show('gen-ld-wrap', false);
+  } else {
+    any = false;
+  }
+  panel.style.display = any ? 'flex' : 'none';
 }
 
 function genPhaseFor(i, n, fxid) {
@@ -1896,14 +1946,14 @@ function applyGenModeUI() {
 function setGenShape(shape, el) {
   generator.shape = shape;
   document.querySelectorAll('.shapeb').forEach(b => b.classList.toggle('active', b === el));
-  document.getElementById('gen-lissajous').style.display = (shape === 'lissajous') ? 'flex' : 'none';
+  updateShapeParamsUI(shape);
   renderGenPad();
 }
 
 function setGenParam(key, value) {
   let v = parseFloat(value);
   if (isNaN(v)) return;
-  if (key === 'lissajous_a' || key === 'lissajous_b') v = Math.max(1, Math.min(6, Math.round(v)));
+  if (key === 'lissajous_a' || key === 'lissajous_b') v = Math.max(1, Math.min(8, Math.round(v)));
   generator[key] = v;
   syncGenSliders();
   renderGenPad();
@@ -1993,8 +2043,7 @@ function toggleGenFixture(fxid) {
 function renderGenerator() {
   document.querySelectorAll('.shapeb').forEach(b =>
     b.classList.toggle('active', b.dataset.shape === generator.shape));
-  document.getElementById('gen-lissajous').style.display =
-    (generator.shape === 'lissajous') ? 'flex' : 'none';
+  updateShapeParamsUI(generator.shape);
   document.getElementById('gen-la').value = generator.lissajous_a;
   document.getElementById('gen-lb').value = generator.lissajous_b;
   document.getElementById('gen-ld').value = generator.lissajous_delta;

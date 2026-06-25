@@ -44,6 +44,35 @@ def test_unit_shapes():
     check(mg.unit_shape("nope", 0.5) == (0.0, 0.0), "unknown shape holds center")
 
 
+def test_new_shapes():
+    print("spiral / rose / bounce:")
+    g = {"lissajous_a": 3, "lissajous_b": 2}
+    # All stay within the unit box across a full loop (plus into the next).
+    for shape in ("spiral", "rose", "bounce"):
+        for k in range(0, 240):
+            t = k / 120.0   # 0 .. 2 (two loops)
+            x, y = mg.unit_shape(shape, t, g)
+            check_silent(-1.0001 <= x <= 1.0001 and -1.0001 <= y <= 1.0001,
+                         f"{shape} in box @t={t:.3f} -> ({x:.2f},{y:.2f})")
+    print("  ok: spiral/rose/bounce stay within the unit box")
+    # Spiral returns to center at the loop boundary (r=0).
+    sx, sy = mg.unit_shape("spiral", 0.0, g)
+    check(abs(sx) < 1e-9 and abs(sy) < 1e-9, "spiral starts at center")
+    sx1, sy1 = mg.unit_shape("spiral", 1.0, g)
+    check(abs(sx1) < 1e-9 and abs(sy1) < 1e-9, "spiral returns to center each loop")
+    # Bounce starts in a corner (triangle wave is -1 at 0).
+    bx, by = mg.unit_shape("bounce", 0.0, g)
+    check(bx == -1.0 and by == -1.0, "bounce starts at a corner")
+    # Bounce reflects: at the pan half-period it hits the far wall (+1).
+    bx2, _ = mg.unit_shape("bounce", 1.0 / (2 * 3), g)  # bx=3 -> half period 1/6
+    check(abs(bx2 - 1.0) < 1e-9, "bounce reflects to far pan wall")
+
+
+def check_silent(cond, msg):
+    if not cond:
+        raise AssertionError(msg)
+
+
 def test_phase_even():
     print("phase even distribution:")
     cfg = {"mode": "even", "spread": 1.0}
@@ -167,8 +196,8 @@ def test_evaluate_center_offsets():
 
 def main():
     tests = [
-        test_unit_shapes, test_phase_even, test_phase_manual, test_split16,
-        test_evaluate_circle_phase, test_evaluate_direction_and_time,
+        test_unit_shapes, test_new_shapes, test_phase_even, test_phase_manual,
+        test_split16, test_evaluate_circle_phase, test_evaluate_direction_and_time,
         test_evaluate_center_offsets, test_evaluate_empty,
     ]
     for t in tests:
