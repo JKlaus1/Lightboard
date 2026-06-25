@@ -375,7 +375,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">Scenes</span>
-      <button id="clear-main-btn" class="clear-cat-btn" onclick="clearCategory('main')" style="display:none;">✕ Clear</button>
+      <button id="clear-main-btn" class="clear-cat-btn" onclick="clearCategory('main')">✕ Clear</button>
       <button onclick="location.href='/editor?from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
       <button onclick="openScenesEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
     </div>
@@ -405,7 +405,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">🌀 Effects</span>
-      <button id="clear-effect-btn" class="clear-cat-btn" onclick="clearCategory('effect')" style="display:none;">✕ Clear</button>
+      <button id="clear-effect-btn" class="clear-cat-btn" onclick="clearCategory('effect')">✕ Clear</button>
       <button onclick="location.href='/editor?type=effect&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:#d4b6ff;padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
       <button onclick="openEffectsEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
     </div>
@@ -575,7 +575,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">🎯 Mover Motion</span>
-      <button id="clear-motion-btn" class="clear-cat-btn" onclick="clearCategory('motion')" style="display:none;">✕ Clear</button>
+      <button id="clear-motion-btn" class="clear-cat-btn" onclick="clearCategory('motion')">✕ Clear</button>
       <button onclick="location.href='/editor?type=mover_motion&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
     </div>
     <div class="scene-grid" id="motion-grid">
@@ -601,7 +601,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">💡 Mover Look</span>
-      <button id="clear-look-btn" class="clear-cat-btn" onclick="clearCategory('look')" style="display:none;">✕ Clear</button>
+      <button id="clear-look-btn" class="clear-cat-btn" onclick="clearCategory('look')">✕ Clear</button>
       <button onclick="location.href='/editor?type=mover_look&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
     </div>
     <div class="scene-grid" id="look-grid">
@@ -698,18 +698,6 @@ function pollState() {
     highlightLayer('motion');
     highlightLayer('look');
     highlightLayer('effect');
-
-    // Per-category Clear buttons: visible only when that layer has something
-    // active (mirrors the conditional top "Stop all"). Effective set so a
-    // frozen pending-empty still hides it.
-    const showClear = (btnId, set) => {
-      const b = document.getElementById(btnId);
-      if (b) b.style.display = set.size > 0 ? '' : 'none';
-    };
-    showClear('clear-main-btn',   effectiveSceneIds);
-    showClear('clear-motion-btn', effMotionIds);
-    showClear('clear-look-btn',   effLookIds);
-    showClear('clear-effect-btn', effEffectIds);
 
     // Freeze button + banner
     const fbtn = document.getElementById('freeze-btn');
