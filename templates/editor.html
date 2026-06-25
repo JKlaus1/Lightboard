@@ -13,7 +13,10 @@
   }
   html,body { height:100%; background:var(--bg); color:var(--text);
               font-family:-apple-system,BlinkMacSystemFont,sans-serif;
-              font-size:15px; -webkit-tap-highlight-color:transparent; }
+              font-size:15px; -webkit-tap-highlight-color:transparent;
+              /* Stop Chromium scroll-anchoring from latching onto the moving
+                 generator-preview dots and scrolling the page in sync. */
+              overflow-anchor:none; }
   input,button,select { font-family:inherit; }
 
   /* Header */
@@ -75,6 +78,8 @@
           color:var(--sub); border-radius:6px; padding:5px 9px; font-size:11px;
           font-weight:700; cursor:pointer; white-space:nowrap; }
   .litb.on { background:var(--amber); color:#000; border-color:var(--amber); }
+  /* Exclude the animated preview subtree from scroll-anchor selection too. */
+  #generator-card, #gen-pad { overflow-anchor:none; }
 
   /* Scene name */
   .name-input { width:100%; background:var(--surface2); border:1px solid var(--border);
