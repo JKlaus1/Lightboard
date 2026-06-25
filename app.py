@@ -770,7 +770,8 @@ def api_preview():
     if scene_type not in ("main", "mover_motion", "mover_look"):
         return jsonify({"ok": False, "error": "Invalid scene_type"}), 400
     fixtures = data.get("fixtures") or {}
-    engine.preview_set(scene_type, fixtures)
+    lit = data.get("lit")            # None -> legacy (light all in-frame movers)
+    engine.preview_set(scene_type, fixtures, lit=lit)
     return jsonify({"ok": True})
 
 @app.route("/api/preview/stop", methods=["POST"])

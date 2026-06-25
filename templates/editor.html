@@ -71,6 +71,10 @@
   .genfx .dot { width:13px; height:13px; border-radius:50%;
                 border:2px solid var(--border); flex:none; }
   .genfx.on .dot { border-color:var(--accent); background:var(--accent); }
+  .litb { flex:none; background:var(--surface3); border:1px solid var(--border);
+          color:var(--sub); border-radius:6px; padding:5px 9px; font-size:11px;
+          font-weight:700; cursor:pointer; white-space:nowrap; }
+  .litb.on { background:var(--amber); color:#000; border-color:var(--amber); }
 
   /* Scene name */
   .name-input { width:100%; background:var(--surface2); border:1px solid var(--border);
@@ -346,8 +350,8 @@
       <button type="button" class="gbd-btn" data-div="8"   onclick="setGenBeatDiv(8,this)">8 beats</button>
     </div>
     <div id="gen-freespeed-row" class="genrow" style="margin-bottom:12px;">
-      <label>Loops/sec</label>
-      <input type="range" min="0.02" max="2" step="0.02" id="gen-speed" oninput="setGenParam('speed',this.value)">
+      <label>Seconds/loop</label>
+      <input type="range" min="0" max="1000" step="1" id="gen-speed" oninput="setGenSpeedPos(this.value)">
       <span id="gen-speed-v" class="genval"></span>
     </div>
     <div style="font-size:0.68rem;color:var(--sub);margin-bottom:12px;">
@@ -526,18 +530,20 @@ function toggleLive() {
     btn.style.background = '#2e5e2e';
     btn.style.borderColor = '#4eae4e';
     btn.style.color = '#fff';
-    sendLivePreview();   // push the current step immediately
+    if (genMode) startGenPreview();   // animate the generator on the rig
+    else sendLivePreview();           // push the current step immediately
   } else {
     btn.innerHTML = '⚪ LIVE';
     btn.style.background = '#1f3a1f';
     btn.style.borderColor = '#2e5e2e';
     btn.style.color = '#7fdb7f';
+    stopGenPreview();
     stopLivePreview();
   }
 }
 
 function sendLivePreview() {
-  if (!liveMode) return;
+  if (!liveMode || genMode) return;   // generator drives its own preview loop
   // Throttle: at most one send every 30ms; coalesce additional changes
   clearTimeout(livePreviewT);
   const step = steps[currentStep];
@@ -705,6 +711,7 @@ function init() {
       if (Array.isArray(EXISTING_SCENE.fixtures) && EXISTING_SCENE.fixtures.length) {
         genFixtures = EXISTING_SCENE.fixtures.filter(id => MOVERS.some(m => m.id === id));
       }
+      genLit = new Set(genFixtures);   // default all pattern movers lit for aiming
       const ph = EXISTING_SCENE.phase || {};
       phaseCfg.mode    = ph.mode === 'manual' ? 'manual' : 'even';
       phaseCfg.spread  = (ph.spread !== undefined) ? +ph.spread : 1.0;
@@ -1787,6 +1794,7 @@ let generator = {
   direction: 1,
 };
 let genFixtures = MOVERS.map(m => m.id);
+let genLit = new Set(genFixtures);   // which movers are lit during live aiming
 let phaseCfg = { mode: 'even', spread: 1.0, offsets: {} };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -1837,6 +1845,11 @@ function applyGenModeUI() {
   if (editCard)  editCard.style.display  = genMode ? 'none' : '';
   if (genCard)   genCard.style.display   = genMode ? '' : 'none';
   if (genMode) renderGenerator();
+  // If Live is on, swap which preview driver is running for the new mode.
+  if (liveMode) {
+    if (genMode) { stopLivePreview(); startGenPreview(); }
+    else { stopGenPreview(); sendLivePreview(); }
+  }
 }
 
 function setGenShape(shape, el) {
@@ -1920,15 +1933,19 @@ function setManualPhase(fxid, v) {
 // ── Fixture selection ──────────────────────────────────────────────────────
 function toggleGenFixture(fxid) {
   const idx = genFixtures.indexOf(fxid);
-  if (idx >= 0) genFixtures.splice(idx, 1);
-  else {
+  if (idx >= 0) {
+    genFixtures.splice(idx, 1);
+    genLit.delete(fxid);
+  } else {
     genFixtures.push(fxid);
     genFixtures.sort((a, b) =>
       MOVERS.findIndex(m => m.id === a) - MOVERS.findIndex(m => m.id === b));
+    genLit.add(fxid);   // newly-added fixtures default to lit for aiming
   }
   renderGenFixtures();
   renderGenPhase();
   renderGenPad();
+  if (liveMode && genMode) genPreviewTick();
 }
 
 function renderGenerator() {
@@ -1952,6 +1969,30 @@ function renderGenerator() {
   renderGenPad();
 }
 
+// Seconds-per-loop is dialled on a log slider (0..1000) so the slow end gets
+// real travel. Engine still stores generator.speed in cycles/sec.
+const PERIOD_MIN = 0.5, PERIOD_MAX = 300;   // seconds per loop
+function periodFromPos(pos) {
+  const t = Math.max(0, Math.min(1000, +pos)) / 1000;
+  return PERIOD_MIN * Math.pow(PERIOD_MAX / PERIOD_MIN, t);
+}
+function posFromPeriod(p) {
+  p = Math.max(PERIOD_MIN, Math.min(PERIOD_MAX, p));
+  return Math.round(1000 * Math.log(p / PERIOD_MIN) / Math.log(PERIOD_MAX / PERIOD_MIN));
+}
+function fmtPeriod(p) {
+  if (p >= 100) return Math.round(p) + ' s';
+  if (p >= 10)  return p.toFixed(0) + ' s';
+  if (p >= 1)   return p.toFixed(1) + ' s';
+  return p.toFixed(2) + ' s';
+}
+function setGenSpeedPos(pos) {
+  const period = periodFromPos(pos);
+  generator.speed = 1 / period;
+  const sv = document.getElementById('gen-speed-v');
+  if (sv) sv.textContent = fmtPeriod(period);
+}
+
 function syncGenSliders() {
   [['gen-cp', 'center_pan'], ['gen-ct', 'center_tilt'],
    ['gen-sp', 'size_pan'], ['gen-st', 'size_tilt']].forEach(([id, k]) => {
@@ -1960,8 +2001,11 @@ function syncGenSliders() {
     const v = document.getElementById(id + '-v');
     if (v) v.textContent = Math.round(generator[k]);
   });
+  const period = 1 / Math.max(1e-6, +generator.speed);
+  const sp = document.getElementById('gen-speed');
+  if (sp) sp.value = posFromPeriod(period);
   const sv = document.getElementById('gen-speed-v');
-  if (sv) sv.textContent = (+generator.speed).toFixed(2);
+  if (sv) sv.textContent = fmtPeriod(period);
 }
 
 function renderGenFixtures() {
@@ -1973,13 +2017,35 @@ function renderGenFixtures() {
   }
   MOVERS.forEach(m => {
     const on = genFixtures.includes(m.id);
+    const lit = genLit.has(m.id);
     const row = document.createElement('div');
     row.className = 'genfx' + (on ? ' on' : '');
-    row.onclick = () => toggleGenFixture(m.id);
-    row.innerHTML = `<span class="dot"></span><span style="flex:1;font-size:0.8rem;">${m.name}</span>` +
-                    (on ? '<span style="font-size:0.66rem;color:var(--accent);">in pattern</span>' : '');
+    row.style.cursor = 'default';
+    const main = document.createElement('div');
+    main.style.cssText = 'display:flex;align-items:center;gap:9px;flex:1;cursor:pointer;min-width:0;';
+    main.onclick = () => toggleGenFixture(m.id);
+    main.innerHTML = `<span class="dot"></span><span style="font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.name}</span>` +
+                     (on ? '<span style="font-size:0.66rem;color:var(--accent);flex:none;">in pattern</span>' : '');
+    row.appendChild(main);
+    if (on) {
+      const lb = document.createElement('button');
+      lb.type = 'button';
+      lb.className = 'litb' + (lit ? ' on' : '');
+      lb.textContent = lit ? '💡 On' : '🌑 Off';
+      lb.title = 'Light this mover during Live aiming';
+      lb.onclick = (e) => { e.stopPropagation(); toggleGenLit(m.id); };
+      row.appendChild(lb);
+    }
     host.appendChild(row);
   });
+}
+
+function toggleGenLit(fxid) {
+  if (genLit.has(fxid)) genLit.delete(fxid);
+  else genLit.add(fxid);
+  renderGenFixtures();
+  // Live loop picks the change up on its next tick (~40ms); nudge immediately.
+  if (liveMode && genMode) genPreviewTick();
 }
 
 function renderGenPhase() {
@@ -2107,6 +2173,55 @@ function startPadDrag(e, which) {
   };
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup', up);
+}
+
+// ── Generator live preview (streams the moving frame to the rig) ───────────
+// When Live is on in generator mode, compute the shape frame in JS and push it
+// to /api/preview ~25x/sec so the actual movers run the pattern. Only pattern
+// fixtures are sent (disabled movers stay put); `lit` controls which are lit
+// for aiming. Preview timing always uses the Seconds/loop rate.
+let genPreviewTimer = null;
+let genPreviewT0 = 0;
+
+function genFrameAt(tEff) {
+  const n = genFixtures.length;
+  const fixtures = {};
+  const dir = (generator.direction == -1) ? -1 : 1;
+  const cp = generator.center_pan, ct = generator.center_tilt;
+  const sp = generator.size_pan, st = generator.size_tilt;
+  genFixtures.forEach((id, i) => {
+    const ph = genPhaseFor(i, n, id);
+    const uxy = unitShape(generator.shape, dir * tEff + ph);
+    const pan = clamp255(cp + sp * uxy[0]);
+    const tilt = clamp255(ct + st * uxy[1]);
+    const p16 = Math.max(0, Math.min(65535, Math.round(pan * 256)));
+    const t16 = Math.max(0, Math.min(65535, Math.round(tilt * 256)));
+    fixtures[id] = { pan: (p16 >> 8) & 255, pan_fine: p16 & 255,
+                     tilt: (t16 >> 8) & 255, tilt_fine: t16 & 255 };
+  });
+  return fixtures;
+}
+
+function genPreviewTick() {
+  if (!liveMode || !genMode || !genFixtures.length) return;
+  const period = Math.max(0.05, 1 / Math.max(1e-6, +generator.speed));
+  const tEff = ((performance.now() / 1000) - genPreviewT0) / period;
+  const fixtures = genFrameAt(tEff);
+  const lit = genFixtures.filter(id => genLit.has(id));
+  fetch('/api/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scene_type: 'mover_motion', fixtures, lit }),
+  }).catch(() => {});
+}
+
+function startGenPreview() {
+  stopGenPreview();
+  genPreviewT0 = performance.now() / 1000;
+  genPreviewTimer = setInterval(genPreviewTick, 40);   // ~25 fps
+  genPreviewTick();
+}
+function stopGenPreview() {
+  if (genPreviewTimer) { clearInterval(genPreviewTimer); genPreviewTimer = null; }
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────

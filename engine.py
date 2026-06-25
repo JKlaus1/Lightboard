@@ -2550,7 +2550,7 @@ class LightingEngine:
 
     PREVIEW_TAG = "__preview__"
 
-    def preview_set(self, scene_type, step_fixtures):
+    def preview_set(self, scene_type, step_fixtures, lit=None):
         """Write a live preview frame to the appropriate DMX slot for the
         scene type being edited. For main scenes, the preview takes over the
         composite output entirely (active scenes keep running but their values
@@ -2559,22 +2559,32 @@ class LightingEngine:
         and resumes on clear).
 
         scene_type: 'main' | 'mover_motion' | 'mover_look'
+        lit: optional iterable of mover ids that should be lit (dimmer=255)
+             during a motion preview. When None, every mover present in the
+             frame is auto-lit (legacy behavior, used by the step editor). When
+             provided, listed movers are lit and the rest are forced dark
+             (dimmer=0) so a single fixture can be aimed in isolation.
         """
         target = self.resolve_step(step_fixtures or {}, scene_type=scene_type)
 
-        # For motion previews, auto-include dimmer=255 for every mover that
-        # has any pan/tilt data, so the user actually sees the lights move
-        # without needing a Look scene running. The motion_dmx layer overrides
-        # the look layer, so this wins.
+        # For motion previews, drive the dimmer so the user actually sees the
+        # beams move without needing a Look scene running. The motion_dmx layer
+        # overrides the look layer, so this wins.
         if scene_type == "mover_motion":
+            lit_set = None if lit is None else set(lit)
             for fx in self._show.get("fixtures", []):
                 if not self._is_mover(fx):
                     continue
                 if fx["id"] not in (step_fixtures or {}):
                     continue
                 ch = self._mover_channel_for_role(fx, "dimmer")
-                if ch is not None:
-                    target[(self._fx_universe(fx), ch)] = 255
+                if ch is None:
+                    continue
+                if lit_set is None:
+                    val = 255
+                else:
+                    val = 255 if fx["id"] in lit_set else 0
+                target[(self._fx_universe(fx), ch)] = val
 
         if scene_type == "main":
             with self._lock:
