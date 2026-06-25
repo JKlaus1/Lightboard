@@ -47,6 +47,31 @@
             border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; }
   .bd-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 
+  /* Mover-motion generator controls */
+  .modeb { flex:1; background:var(--surface2); border:1px solid var(--border);
+           color:var(--sub); border-radius:8px; padding:9px 10px; font-size:13px;
+           font-weight:700; cursor:pointer; }
+  .modeb.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .shapeb { background:var(--surface2); border:1px solid var(--border); color:var(--text);
+            border-radius:7px; padding:7px 11px; font-size:12px; cursor:pointer; }
+  .shapeb.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .gbd-btn { background:var(--surface2); border:1px solid var(--border); color:var(--text);
+             border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; }
+  .gbd-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .ts-toggle.on  { background:var(--green); color:#000; }
+  .genrow { display:flex; align-items:center; gap:10px; }
+  .genrow label { font-size:0.72rem; color:var(--sub); min-width:84px; }
+  .genrow input[type=range] { flex:1; }
+  .genval { font-size:0.72rem; color:var(--text); min-width:34px;
+            text-align:right; font-variant-numeric:tabular-nums; }
+  .genfx { display:flex; align-items:center; gap:9px; padding:7px 10px;
+           background:var(--surface2); border:1px solid var(--border);
+           border-radius:7px; cursor:pointer; }
+  .genfx.on { border-color:var(--accent); background:rgba(59,130,246,.12); }
+  .genfx .dot { width:13px; height:13px; border-radius:50%;
+                border:2px solid var(--border); flex:none; }
+  .genfx.on .dot { border-color:var(--accent); background:var(--accent); }
+
   /* Scene name */
   .name-input { width:100%; background:var(--surface2); border:1px solid var(--border);
                 color:var(--text); border-radius:8px; padding:10px 12px;
@@ -210,9 +235,28 @@
   </div>
   {% endif %}
 
+  {% if scene_type == 'mover_motion' %}
+  <!-- ─── Motion mode: Steps vs Generator ─── -->
+  <div class="card" id="motion-mode-card">
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">Motion Type</span>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button type="button" id="mode-steps-btn" class="modeb active" onclick="setGenMode(false)">📍 Steps</button>
+      <button type="button" id="mode-gen-btn"   class="modeb"        onclick="setGenMode(true)">🌀 Generator</button>
+    </div>
+    <div style="font-size:0.7rem;color:var(--sub);margin-top:8px;">
+      <b>Steps</b>: point-to-point positions you fade between.
+      <b>Generator</b>: a continuous shape (circle, figure-8, sweep) several
+      movers can share with a phase offset so they trace the same loop at
+      different points.
+    </div>
+  </div>
+  {% endif %}
+
   {% if scene_type in ('mover_motion', 'mover_look') %}
-  <!-- ─── Mover scene editor ─── -->
-  <div class="card">
+  <!-- ─── Mover scene editor (step-based) ─── -->
+  <div class="card" id="mover-steps-card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">Steps</span>
       <button onclick="addMoverStep()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 12px;font-size:11px;cursor:pointer;">+ Step</button>
@@ -224,7 +268,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="mover-step-edit-card">
     <div class="card-title">Editing Step <span id="mover-current-step">1</span></div>
     <div class="timing-row" style="display:flex;gap:10px;margin-bottom:10px;">
       <div class="timing-field" style="flex:1;">
@@ -243,6 +287,94 @@
       <button id="mover-paste-step-btn" onclick="pasteStepAt(currentStep + 1)" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--sub);padding:6px;font-size:0.75rem;cursor:pointer;opacity:0.5;">📎 Paste after</button>
     </div>
     <div id="mover-fixtures"></div>
+  </div>
+  {% endif %}
+
+  {% if scene_type == 'mover_motion' %}
+  <!-- ─── Mover Motion Generator ─── -->
+  <div class="card" id="generator-card" style="display:none;">
+    <div class="card-title">Movement Shape</div>
+    <div id="gen-shape-row" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+      <button type="button" class="shapeb" data-shape="circle"     onclick="setGenShape('circle',this)">● Circle</button>
+      <button type="button" class="shapeb" data-shape="figure8"    onclick="setGenShape('figure8',this)">∞ Figure-8</button>
+      <button type="button" class="shapeb" data-shape="lissajous"  onclick="setGenShape('lissajous',this)">〜 Lissajous</button>
+      <button type="button" class="shapeb" data-shape="sweep_pan"  onclick="setGenShape('sweep_pan',this)">↔ Sweep Pan</button>
+      <button type="button" class="shapeb" data-shape="sweep_tilt" onclick="setGenShape('sweep_tilt',this)">↕ Sweep Tilt</button>
+    </div>
+
+    <!-- Pan/Tilt placement grid -->
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:10px;">
+      <div style="width:100%;max-width:300px;position:relative;">
+        <svg id="gen-pad" viewBox="-6 -6 267 267" preserveAspectRatio="xMidYMid meet"
+             style="width:100%;aspect-ratio:1/1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;touch-action:none;display:block;"></svg>
+      </div>
+      <div style="display:flex;justify-content:space-between;width:100%;max-width:300px;font-size:0.62rem;color:var(--sub);">
+        <span>Pan →</span><span>Tilt ↑ · drag ◍ to move, ◻ to scale</span>
+      </div>
+    </div>
+
+    <!-- Precision sliders -->
+    <div class="gen-sliders" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+      <div class="genrow"><label>Center Pan</label><input type="range" min="0" max="255" id="gen-cp" oninput="setGenParam('center_pan',this.value)"><span id="gen-cp-v" class="genval"></span></div>
+      <div class="genrow"><label>Center Tilt</label><input type="range" min="0" max="255" id="gen-ct" oninput="setGenParam('center_tilt',this.value)"><span id="gen-ct-v" class="genval"></span></div>
+      <div class="genrow"><label>Size Pan</label><input type="range" min="0" max="127" id="gen-sp" oninput="setGenParam('size_pan',this.value)"><span id="gen-sp-v" class="genval"></span></div>
+      <div class="genrow"><label>Size Tilt</label><input type="range" min="0" max="127" id="gen-st" oninput="setGenParam('size_tilt',this.value)"><span id="gen-st-v" class="genval"></span></div>
+    </div>
+
+    <!-- Lissajous params (shown only for lissajous) -->
+    <div id="gen-lissajous" style="display:none;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+      <span style="font-size:0.72rem;color:var(--sub);">Pan lobes</span>
+      <input type="number" id="gen-la" min="1" max="6" step="1" value="1" oninput="setGenParam('lissajous_a',this.value)" style="width:54px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 7px;">
+      <span style="font-size:0.72rem;color:var(--sub);">Tilt lobes</span>
+      <input type="number" id="gen-lb" min="1" max="6" step="1" value="2" oninput="setGenParam('lissajous_b',this.value)" style="width:54px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 7px;">
+      <span style="font-size:0.72rem;color:var(--sub);">Twist</span>
+      <input type="range" id="gen-ld" min="0" max="1" step="0.05" value="0" oninput="setGenParam('lissajous_delta',this.value)" style="flex:1;min-width:90px;">
+    </div>
+
+    <!-- Direction + speed -->
+    <div class="card-title" style="margin-top:4px;">Speed</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+      <button type="button" id="gen-dir-btn" class="ts-toggle" onclick="toggleGenDirection()" style="min-width:96px;">Forward</button>
+      <button type="button" id="gen-tempo-btn" class="ts-toggle off" onclick="toggleGenTempo()">Tempo: Off</button>
+    </div>
+    <div id="gen-beatdiv-row" style="display:none;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
+      <span style="font-size:0.72rem;color:var(--sub);margin-right:2px;">1 loop every</span>
+      <button type="button" class="gbd-btn" data-div="0.5" onclick="setGenBeatDiv(0.5,this)">½ beat</button>
+      <button type="button" class="gbd-btn" data-div="1"   onclick="setGenBeatDiv(1,this)">1 beat</button>
+      <button type="button" class="gbd-btn" data-div="2"   onclick="setGenBeatDiv(2,this)">2 beats</button>
+      <button type="button" class="gbd-btn" data-div="4"   onclick="setGenBeatDiv(4,this)">4 beats</button>
+      <button type="button" class="gbd-btn" data-div="8"   onclick="setGenBeatDiv(8,this)">8 beats</button>
+    </div>
+    <div id="gen-freespeed-row" class="genrow" style="margin-bottom:12px;">
+      <label>Loops/sec</label>
+      <input type="range" min="0.02" max="2" step="0.02" id="gen-speed" oninput="setGenParam('speed',this.value)">
+      <span id="gen-speed-v" class="genval"></span>
+    </div>
+    <div style="font-size:0.68rem;color:var(--sub);margin-bottom:12px;">
+      Tempo On syncs the loop to the live tap tempo. Off uses Loops/sec.
+    </div>
+
+    <!-- Fixtures -->
+    <div class="card-title">Movers in this pattern</div>
+    <div id="gen-fixtures" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
+
+    <!-- Phase -->
+    <div class="card-title">Phase Spread</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <button type="button" id="phase-even-btn"   class="modeb active" onclick="setPhaseMode('even')">Auto-even</button>
+      <button type="button" id="phase-manual-btn" class="modeb"        onclick="setPhaseMode('manual')">Manual</button>
+    </div>
+    <div id="phase-even-row" class="genrow" style="margin-bottom:10px;">
+      <label>Spread</label>
+      <input type="range" min="0" max="1" step="0.05" id="gen-spread" oninput="setSpread(this.value)">
+      <span id="gen-spread-v" class="genval"></span>
+    </div>
+    <div id="phase-manual-rows" style="display:none;flex-direction:column;gap:6px;margin-bottom:6px;"></div>
+    <div style="font-size:0.68rem;color:var(--sub);">
+      Auto-even spreads the selected movers evenly around the loop (Spread 1.0 =
+      full circle, 0.5 = bunched across half). Manual sets each mover's start
+      point on the loop. Dots on the grid show where each mover sits.
+    </div>
   </div>
   {% endif %}
 
@@ -554,7 +686,9 @@ function applyTempoSyncUI() {
 function init() {
   if (EXISTING_SCENE) {
     sceneName = EXISTING_SCENE.name || '';
-    steps     = EXISTING_SCENE.steps ? JSON.parse(JSON.stringify(EXISTING_SCENE.steps)) : [blankMoverStep()];
+    steps     = (EXISTING_SCENE.steps && EXISTING_SCENE.steps.length)
+                  ? JSON.parse(JSON.stringify(EXISTING_SCENE.steps))
+                  : (SCENE_TYPE === 'main' ? [blankStep()] : [blankMoverStep()]);
     document.getElementById('scene-name').value = sceneName;
     document.getElementById('scene-folder').value = EXISTING_SCENE.folder || '';
     document.getElementById('scene-launch-fade').value =
@@ -564,6 +698,18 @@ function init() {
     if (dbtn) dbtn.style.display = '';
     tempoSync    = !!EXISTING_SCENE.tempo_sync;
     beatDivision = EXISTING_SCENE.beat_division || 1;
+    // Generator-mode mover_motion: hydrate generator/fixtures/phase state.
+    if (SCENE_TYPE === 'mover_motion' && EXISTING_SCENE.motion_mode === 'generator') {
+      genMode = true;
+      Object.assign(generator, EXISTING_SCENE.generator || {});
+      if (Array.isArray(EXISTING_SCENE.fixtures) && EXISTING_SCENE.fixtures.length) {
+        genFixtures = EXISTING_SCENE.fixtures.filter(id => MOVERS.some(m => m.id === id));
+      }
+      const ph = EXISTING_SCENE.phase || {};
+      phaseCfg.mode    = ph.mode === 'manual' ? 'manual' : 'even';
+      phaseCfg.spread  = (ph.spread !== undefined) ? +ph.spread : 1.0;
+      phaseCfg.offsets = Object.assign({}, ph.offsets || {});
+    }
   } else {
     steps = SCENE_TYPE === 'main' ? [blankStep()] : [blankMoverStep()];
     document.getElementById('scene-launch-fade').value = SHOW.default_launch_fade || 1000;
@@ -580,6 +726,7 @@ function init() {
       (list || []).forEach(f => { LIB_FIXTURES[f.id] = f; });
       if (typeof renderMoverFixtureControls === 'function') renderMoverFixtureControls();
     }).catch(() => {});
+    if (SCENE_TYPE === 'mover_motion') applyGenModeUI();
   }
 }
 
@@ -1540,6 +1687,39 @@ function saveScene() {
     payload.tempo_sync   = tempoSync;
     payload.beat_division = beatDivision;
   }
+  // Generator-mode mover_motion: emit the procedural fields instead of steps.
+  if (SCENE_TYPE === 'mover_motion' && genMode) {
+    if (!genFixtures.length) {
+      alert('Pick at least one mover for the pattern.');
+      return;
+    }
+    payload.motion_mode  = 'generator';
+    payload.tempo_sync   = tempoSync;
+    payload.beat_division = beatDivision;
+    payload.generator    = {
+      shape: generator.shape,
+      center_pan:  Math.round(generator.center_pan),
+      center_tilt: Math.round(generator.center_tilt),
+      size_pan:    Math.round(generator.size_pan),
+      size_tilt:   Math.round(generator.size_tilt),
+      speed:       +generator.speed,
+      lissajous_a: Math.round(generator.lissajous_a),
+      lissajous_b: Math.round(generator.lissajous_b),
+      lissajous_delta: +generator.lissajous_delta,
+      direction:   (generator.direction == -1) ? -1 : 1,
+    };
+    payload.fixtures = genFixtures.slice();
+    payload.phase = {
+      mode:    phaseCfg.mode === 'manual' ? 'manual' : 'even',
+      spread:  +phaseCfg.spread,
+      offsets: {},
+    };
+    // Only persist offsets for fixtures actually in the pattern.
+    genFixtures.forEach(id => {
+      payload.phase.offsets[id] = +(phaseCfg.offsets[id] || 0);
+    });
+    payload.steps = [];   // generator ignores steps; keep the file clean
+  }
   // Edit existing scene? POST to /api/library/scene/<id>
   // New scene? POST to /api/library/scene (server assigns ID)
   const url = EXISTING_ID
@@ -1591,6 +1771,342 @@ function deleteScene() {
 
 function cancelEdit() {
   if (confirm('Discard changes?')) location.href = RETURN_PATH;
+}
+
+// ══ Mover Motion Generator ════════════════════════════════════════════════
+// Procedural, continuous mover motion. The state here mirrors mover_gen.py on
+// the engine; the SVG pad is a placement surface (scale = size, position =
+// center) showing the traced loop and where each selected mover sits on it.
+let genMode = false;
+let generator = {
+  shape: 'circle',
+  center_pan: 128, center_tilt: 128,
+  size_pan: 96, size_tilt: 96,
+  speed: 0.25,
+  lissajous_a: 1, lissajous_b: 2, lissajous_delta: 0.0,
+  direction: 1,
+};
+let genFixtures = MOVERS.map(m => m.id);
+let phaseCfg = { mode: 'even', spread: 1.0, offsets: {} };
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// JS mirror of mover_gen.unit_shape — returns [x,y] in [-1,1].
+function unitShape(shape, theta) {
+  const a = theta * 2 * Math.PI;
+  switch (shape) {
+    case 'circle':     return [Math.cos(a), Math.sin(a)];
+    case 'figure8':    return [Math.sin(a), Math.sin(2 * a)];
+    case 'lissajous': {
+      const fa = (+generator.lissajous_a) || 1;
+      const fb = (+generator.lissajous_b) || 2;
+      const d  = (+generator.lissajous_delta || 0) * 2 * Math.PI;
+      return [Math.sin(fa * a), Math.sin(fb * a + d)];
+    }
+    case 'sweep_pan':  return [Math.sin(a), 0];
+    case 'sweep_tilt': return [0, Math.sin(a)];
+    default:           return [0, 0];
+  }
+}
+
+function genPhaseFor(i, n, fxid) {
+  if (phaseCfg.mode === 'manual') {
+    const v = +(phaseCfg.offsets[fxid] || 0);
+    return ((v % 1) + 1) % 1;
+  }
+  if (n <= 1) return 0;
+  const spread = (phaseCfg.spread !== undefined) ? +phaseCfg.spread : 1;
+  return ((((i / n) * spread) % 1) + 1) % 1;
+}
+
+function clamp255(v) { return Math.max(0, Math.min(255, v)); }
+// DMX(0..255) -> SVG coords. Pan = x; tilt 0 at bottom (y inverted).
+function dmxToSvg(pan, tilt) { return [pan, 255 - tilt]; }
+
+function setGenMode(on) { genMode = !!on; applyGenModeUI(); }
+
+function applyGenModeUI() {
+  const sb = document.getElementById('mode-steps-btn');
+  const gb = document.getElementById('mode-gen-btn');
+  if (sb) sb.classList.toggle('active', !genMode);
+  if (gb) gb.classList.toggle('active', genMode);
+  const stepsCard = document.getElementById('mover-steps-card');
+  const editCard  = document.getElementById('mover-step-edit-card');
+  const genCard   = document.getElementById('generator-card');
+  if (stepsCard) stepsCard.style.display = genMode ? 'none' : '';
+  if (editCard)  editCard.style.display  = genMode ? 'none' : '';
+  if (genCard)   genCard.style.display   = genMode ? '' : 'none';
+  if (genMode) renderGenerator();
+}
+
+function setGenShape(shape, el) {
+  generator.shape = shape;
+  document.querySelectorAll('.shapeb').forEach(b => b.classList.toggle('active', b === el));
+  document.getElementById('gen-lissajous').style.display = (shape === 'lissajous') ? 'flex' : 'none';
+  renderGenPad();
+}
+
+function setGenParam(key, value) {
+  let v = parseFloat(value);
+  if (isNaN(v)) return;
+  if (key === 'lissajous_a' || key === 'lissajous_b') v = Math.max(1, Math.min(6, Math.round(v)));
+  generator[key] = v;
+  syncGenSliders();
+  renderGenPad();
+}
+
+function toggleGenDirection() {
+  generator.direction = (generator.direction == -1) ? 1 : -1;
+  const b = document.getElementById('gen-dir-btn');
+  b.textContent = generator.direction == -1 ? 'Reverse' : 'Forward';
+  b.classList.toggle('on', generator.direction == -1);
+  renderGenPad();
+}
+
+function toggleGenTempo() { tempoSync = !tempoSync; applyGenTempoUI(); }
+function setGenBeatDiv(d, el) {
+  beatDivision = d;
+  document.querySelectorAll('.gbd-btn').forEach(b => b.classList.toggle('active', b === el));
+}
+function applyGenTempoUI() {
+  const btn = document.getElementById('gen-tempo-btn');
+  const row = document.getElementById('gen-beatdiv-row');
+  if (!btn || !row) return;
+  btn.textContent = tempoSync ? 'Tempo: On' : 'Tempo: Off';
+  btn.classList.toggle('on', tempoSync);
+  btn.classList.toggle('off', !tempoSync);
+  row.style.display = tempoSync ? 'flex' : 'none';
+  document.querySelectorAll('.gbd-btn').forEach(b =>
+    b.classList.toggle('active', parseFloat(b.dataset.div) === beatDivision));
+}
+
+// ── Phase ────────────────────────────────────────────────────────────────
+function setPhaseMode(mode) {
+  phaseCfg.mode = (mode === 'manual') ? 'manual' : 'even';
+  document.getElementById('phase-even-btn').classList.toggle('active', phaseCfg.mode === 'even');
+  document.getElementById('phase-manual-btn').classList.toggle('active', phaseCfg.mode === 'manual');
+  document.getElementById('phase-even-row').style.display = (phaseCfg.mode === 'even') ? 'flex' : 'none';
+  document.getElementById('phase-manual-rows').style.display = (phaseCfg.mode === 'manual') ? 'flex' : 'none';
+  if (phaseCfg.mode === 'manual') seedManualOffsets();
+  renderGenPhase();
+  renderGenPad();
+}
+function setSpread(v) {
+  phaseCfg.spread = parseFloat(v);
+  document.getElementById('gen-spread-v').textContent = (+v).toFixed(2);
+  renderGenPad();
+}
+function genPhaseEven(i, n) {
+  if (n <= 1) return 0;
+  const spread = (phaseCfg.spread !== undefined) ? +phaseCfg.spread : 1;
+  return ((((i / n) * spread) % 1) + 1) % 1;
+}
+function seedManualOffsets() {
+  // Pre-fill manual offsets from the even distribution so switching modes
+  // doesn't collapse everyone onto phase 0.
+  const n = genFixtures.length;
+  genFixtures.forEach((id, i) => {
+    if (phaseCfg.offsets[id] === undefined)
+      phaseCfg.offsets[id] = +(genPhaseEven(i, n)).toFixed(3);
+  });
+}
+function setManualPhase(fxid, v) {
+  phaseCfg.offsets[fxid] = parseFloat(v);
+  const lbl = document.getElementById('mph-' + fxid + '-v');
+  if (lbl) lbl.textContent = (+v).toFixed(2);
+  renderGenPad();
+}
+
+// ── Fixture selection ──────────────────────────────────────────────────────
+function toggleGenFixture(fxid) {
+  const idx = genFixtures.indexOf(fxid);
+  if (idx >= 0) genFixtures.splice(idx, 1);
+  else {
+    genFixtures.push(fxid);
+    genFixtures.sort((a, b) =>
+      MOVERS.findIndex(m => m.id === a) - MOVERS.findIndex(m => m.id === b));
+  }
+  renderGenFixtures();
+  renderGenPhase();
+  renderGenPad();
+}
+
+function renderGenerator() {
+  document.querySelectorAll('.shapeb').forEach(b =>
+    b.classList.toggle('active', b.dataset.shape === generator.shape));
+  document.getElementById('gen-lissajous').style.display =
+    (generator.shape === 'lissajous') ? 'flex' : 'none';
+  document.getElementById('gen-la').value = generator.lissajous_a;
+  document.getElementById('gen-lb').value = generator.lissajous_b;
+  document.getElementById('gen-ld').value = generator.lissajous_delta;
+  const db = document.getElementById('gen-dir-btn');
+  db.textContent = generator.direction == -1 ? 'Reverse' : 'Forward';
+  db.classList.toggle('on', generator.direction == -1);
+  document.getElementById('gen-speed').value = generator.speed;
+  document.getElementById('gen-spread').value = phaseCfg.spread;
+  document.getElementById('gen-spread-v').textContent = (+phaseCfg.spread).toFixed(2);
+  setPhaseMode(phaseCfg.mode);   // sets row visibility + renders phase rows
+  syncGenSliders();
+  applyGenTempoUI();
+  renderGenFixtures();
+  renderGenPad();
+}
+
+function syncGenSliders() {
+  [['gen-cp', 'center_pan'], ['gen-ct', 'center_tilt'],
+   ['gen-sp', 'size_pan'], ['gen-st', 'size_tilt']].forEach(([id, k]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = generator[k];
+    const v = document.getElementById(id + '-v');
+    if (v) v.textContent = Math.round(generator[k]);
+  });
+  const sv = document.getElementById('gen-speed-v');
+  if (sv) sv.textContent = (+generator.speed).toFixed(2);
+}
+
+function renderGenFixtures() {
+  const host = document.getElementById('gen-fixtures');
+  host.innerHTML = '';
+  if (!MOVERS.length) {
+    host.innerHTML = '<div style="font-size:0.72rem;color:var(--sub);">No movers in this show.</div>';
+    return;
+  }
+  MOVERS.forEach(m => {
+    const on = genFixtures.includes(m.id);
+    const row = document.createElement('div');
+    row.className = 'genfx' + (on ? ' on' : '');
+    row.onclick = () => toggleGenFixture(m.id);
+    row.innerHTML = `<span class="dot"></span><span style="flex:1;font-size:0.8rem;">${m.name}</span>` +
+                    (on ? '<span style="font-size:0.66rem;color:var(--accent);">in pattern</span>' : '');
+    host.appendChild(row);
+  });
+}
+
+function renderGenPhase() {
+  const host = document.getElementById('phase-manual-rows');
+  if (!host || phaseCfg.mode !== 'manual') return;
+  host.innerHTML = '';
+  if (!genFixtures.length) {
+    host.innerHTML = '<div style="font-size:0.72rem;color:var(--sub);">Select movers above first.</div>';
+    return;
+  }
+  genFixtures.forEach(id => {
+    const m = MOVERS.find(x => x.id === id);
+    const val = (phaseCfg.offsets[id] !== undefined) ? +phaseCfg.offsets[id] : 0;
+    const row = document.createElement('div');
+    row.className = 'genrow';
+    row.innerHTML =
+      `<label style="min-width:96px;">${m ? m.name : id}</label>` +
+      `<input type="range" min="0" max="1" step="0.01" value="${val}" oninput="setManualPhase('${id}',this.value)">` +
+      `<span class="genval" id="mph-${id}-v">${val.toFixed(2)}</span>`;
+    host.appendChild(row);
+  });
+}
+
+// ── Pan/Tilt placement grid (SVG) ──────────────────────────────────────────
+function renderGenPad() {
+  const svg = document.getElementById('gen-pad');
+  if (!svg) return;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const mk = (tag, attrs) => {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  };
+
+  // Travel box
+  svg.appendChild(mk('rect', {x: 0, y: 0, width: 255, height: 255,
+    fill: 'none', stroke: '#444', 'stroke-width': 1}));
+  // Mid-travel crosshair
+  svg.appendChild(mk('line', {x1: 127.5, y1: 0, x2: 127.5, y2: 255, stroke: '#2e2e2e', 'stroke-width': 0.8}));
+  svg.appendChild(mk('line', {x1: 0, y1: 127.5, x2: 255, y2: 127.5, stroke: '#2e2e2e', 'stroke-width': 0.8}));
+
+  const cp = generator.center_pan, ct = generator.center_tilt;
+  const sp = generator.size_pan, st = generator.size_tilt;
+
+  // Bounding box (dashed)
+  svg.appendChild(mk('rect', {
+    x: cp - sp, y: 255 - (ct + st), width: 2 * sp, height: 2 * st,
+    fill: 'none', stroke: '#3b82f6', 'stroke-width': 0.8,
+    'stroke-dasharray': '4 3', opacity: 0.6}));
+
+  // Traced path (one loop, clamped to travel so clipping is visible)
+  const N = 140;
+  let d = '';
+  for (let i = 0; i <= N; i++) {
+    const uxy = unitShape(generator.shape, i / N);
+    const pan = clamp255(cp + sp * uxy[0]);
+    const tilt = clamp255(ct + st * uxy[1]);
+    const sxy = dmxToSvg(pan, tilt);
+    d += (i === 0 ? 'M' : 'L') + sxy[0].toFixed(1) + ' ' + sxy[1].toFixed(1) + ' ';
+  }
+  svg.appendChild(mk('path', {d: d, fill: 'none', stroke: '#3b82f6',
+    'stroke-width': 1.6, opacity: 0.85}));
+
+  // Per-fixture phase dots (t=0 positions)
+  const n = genFixtures.length;
+  genFixtures.forEach((id, i) => {
+    const ph = genPhaseFor(i, n, id);
+    const uxy = unitShape(generator.shape, ph);
+    const pan = clamp255(cp + sp * uxy[0]), tilt = clamp255(ct + st * uxy[1]);
+    const sxy = dmxToSvg(pan, tilt);
+    svg.appendChild(mk('circle', {cx: sxy[0], cy: sxy[1], r: 5.5,
+      fill: '#22c55e', stroke: '#0d0d0d', 'stroke-width': 1.2}));
+    const lbl = mk('text', {x: sxy[0], y: sxy[1] + 2.6, 'text-anchor': 'middle',
+      'font-size': 6, fill: '#0d0d0d', 'font-weight': 700});
+    lbl.textContent = (i + 1);
+    svg.appendChild(lbl);
+  });
+
+  // Center handle (drag to move)
+  const hc = dmxToSvg(cp, ct);
+  const ch = mk('circle', {cx: hc[0], cy: hc[1], r: 7, fill: '#f59e0b',
+    stroke: '#0d0d0d', 'stroke-width': 1.5});
+  ch.style.cursor = 'move';
+  ch.addEventListener('pointerdown', (e) => startPadDrag(e, 'center'));
+  svg.appendChild(ch);
+
+  // Scale handle (top-right corner of bbox; drag to resize)
+  const sc = dmxToSvg(clamp255(cp + sp), clamp255(ct + st));
+  const sh = mk('rect', {x: sc[0] - 5, y: sc[1] - 5, width: 10, height: 10,
+    fill: '#3b82f6', stroke: '#0d0d0d', 'stroke-width': 1.2});
+  sh.style.cursor = 'nesw-resize';
+  sh.addEventListener('pointerdown', (e) => startPadDrag(e, 'scale'));
+  svg.appendChild(sh);
+}
+
+let _padDrag = null;
+function padEventToDmx(e) {
+  const svg = document.getElementById('gen-pad');
+  const r = svg.getBoundingClientRect();
+  const vbMin = -6, vbSize = 267;   // matches viewBox="-6 -6 267 267"
+  const vx = vbMin + ((e.clientX - r.left) / r.width) * vbSize;
+  const vy = vbMin + ((e.clientY - r.top) / r.height) * vbSize;
+  return [clamp255(vx), clamp255(255 - vy)];
+}
+function startPadDrag(e, which) {
+  e.preventDefault();
+  _padDrag = which;
+  const move = (ev) => {
+    const pt = padEventToDmx(ev);
+    if (_padDrag === 'center') {
+      generator.center_pan = Math.round(pt[0]);
+      generator.center_tilt = Math.round(pt[1]);
+    } else if (_padDrag === 'scale') {
+      generator.size_pan = Math.round(Math.min(127, Math.abs(pt[0] - generator.center_pan)));
+      generator.size_tilt = Math.round(Math.min(127, Math.abs(pt[1] - generator.center_tilt)));
+    }
+    syncGenSliders();
+    renderGenPad();
+  };
+  const up = () => {
+    _padDrag = null;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────

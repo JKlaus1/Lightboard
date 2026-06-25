@@ -17,6 +17,7 @@ import logging
 
 import cell_strip
 import effects
+import mover_gen
 
 # ── GC timing instrumentation (low-noise: logs only anomalous pauses) ─────
 _GC_CB_INSTALLED = False
@@ -2077,6 +2078,13 @@ class LightingEngine:
         """kind: 'motion' or 'look'. Loops the entry's scene continuously,
         writing to entry['dmx'] until the entry's stop_event is set."""
         scene = entry["scene"]
+        # Procedural motion: a generator-mode mover_motion scene evaluates a
+        # continuous shape against the beat clock each tick instead of stepping
+        # between fixed waypoints. It publishes through the same entry['dmx']
+        # surface, so freeze / preview / presets / compositing are unchanged.
+        if kind == "motion" and scene.get("motion_mode") == "generator":
+            self._generator_loop(entry)
+            return
         scene_type = "mover_motion" if kind == "motion" else "mover_look"
         stop_event = entry["stop_event"]
         steps = scene.get("steps", [])
@@ -2090,6 +2098,36 @@ class LightingEngine:
                 fade_ms = max(0, int(step.get("fade", 0)))
                 hold_ms = max(0, int(step.get("hold", 500)))
                 self._execute_mover_step(entry, target, fade_ms, hold_ms)
+
+    def _generator_loop(self, entry):
+        """Continuous procedural mover motion. Evaluates the scene's shape once
+        per output tick and writes the resulting pan/tilt frame to entry['dmx'].
+
+        Speed follows the same musical/wall-clock split the effect renderer
+        uses: when the scene is tempo-synced and a tap tempo is live, t_eff is
+        beats-since-anchor / beat_division (1 cycle per `division` beats);
+        otherwise it's wall-clock seconds * the generator's `speed` (cycles/s).
+        """
+        scene = entry["scene"]
+        stop_event = entry["stop_event"]
+        gen = scene.get("generator") or {}
+        try:
+            speed = float(gen.get("speed", 0.25))
+        except (TypeError, ValueError):
+            speed = 0.25
+        interval = 1.0 / self.OUTPUT_HZ
+        t0 = time.time()
+        while not stop_event.is_set():
+            if scene.get("tempo_sync") and self._tempo_active:
+                division = float(scene.get("beat_division", 1.0)) or 1.0
+                t_eff = self.beat_time() / division
+            else:
+                t_eff = (time.time() - t0) * speed
+            role_frame = mover_gen.evaluate_motion_generator(scene, t_eff)
+            target = self.resolve_step(role_frame, scene_type="mover_motion")
+            with self._lock:
+                entry["dmx"] = target
+            stop_event.wait(timeout=interval)
 
     def _execute_mover_step(self, entry, target_dmx, fade_ms, hold_ms):
         """Fade-and-hold for one mover entry's step. Writes to entry['dmx']."""
