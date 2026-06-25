@@ -17,9 +17,11 @@ Live on the Pi (`pi@192.168.1.34`, `/home/pi/lightboard`, systemd unit `lightboa
 - **Look-editor thumbnail picker** (Phase 2): mover show-instances carry
   `def_id` + `channel_slots`; picker pulls current library slots fresh.
 
-## Roadmap (agreed order: GitHub → B → A)
+## Roadmap (agreed order: GitHub → B → A) — ✅ ALL DONE
 
-### 1. GitHub migration (done with this commit)
+All three roadmap phases are implemented and deployed. New work below this line.
+
+### 1. GitHub migration ✅ DONE
 Repo is the source of truth. Pi **pulls only** (public repo, no auth). Pushes
 happen from **Termux** (phone) where GitHub auth already works.
 Steady-state deploy: edit the `~/Lightboard` clone → commit → push →
@@ -46,18 +48,19 @@ effects). Key outcomes the rest of the roadmap relies on:
 - Coverage: `test_engine_concurrency.py` (stacking, singer-fold isolation,
   freeze→unfreeze diff across all three stacks).
 
-### 3. A — Presets (in progress) + category clear buttons
+### 3. A — Presets ✅ DONE + category clear buttons ✅ DONE
 
-**Clear buttons (ship first — small, and presets lean on the same primitives):**
-- Per-category **Clear** button on the home page for main / motion / look /
-  effect, each hitting the existing stop-all route (`/api/stop`,
-  `/api/<layer>/stop`).
-- **Clear All** button → new `/api/clear-all` route that stops all four stacks
-  server-side in one call. Scope = the four playback categories only; overlay /
-  blackout / cycler / master / singer levels are left untouched (they're
-  modes/levels, not playing content).
+**Clear buttons** (commit d262e0e; always-visible tweak after):
+- Per-category **✕ Clear** in each card header (main / motion / look / effect),
+  always visible, hitting that layer's stop-all route (`/api/stop`,
+  `/api/<layer>/stop`). Motion/look only render when the show has movers.
+- **✕ Clear All** in the now-playing row → `/api/clear-all` (`engine.clear_all()`):
+  stops cycler + all scenes/motion/look/effect + overlay, clears blackout, turns
+  singer mode OFF, and resets Color Dimmer + Singer Dimmer to 100%. Bypasses
+  freeze. Confirm dialog before firing.
 
-**Preset data model** (`presets.json`, single file = ordered trigger row):
+**Preset data model** (`presets.json`, single file = ordered trigger row;
+created on the Pi at first capture, not deployed from the repo):
 ```
 { id, name,
   exclusive: bool,
@@ -71,31 +74,35 @@ Order only matters *within* a category — the output pipeline fixes precedence
 union, so order is only a per-channel tiebreaker (latest-in-list wins, matching
 the live stacks).
 
-**Apply (recall) algorithm** — `app.py` orchestration over engine methods, reads
-live state via `get_state()` ordered lists:
+**Apply (recall) algorithm** — `presets.apply_preset()` orchestration over
+engine methods, reads live state via `get_state()` ordered lists:
 - For each **scoped** playback category: `desired = items[cat]` (ordered).
   - *Exclusive*: stop live ids not in `desired`; play `desired` ids not already
-    live, in list order (survivors keep their slot — order is re-enforced only
-    for newly added items; a full re-fade reorder isn't worth the visual hit).
+    live, in list order (survivors keep their slot — additive-with-pruning; a
+    full re-fade reorder of already-running items isn't enforced, by design).
   - *Additive*: play `desired` ids not already live, in order; stop nothing.
-- **Scalars** (master / singer_mode / singer_level): *set-if-scoped* via the
-  existing setters. Exclusive is a no-op on a value.
-- **Capture from live**: snapshot `get_state()` → fill `items` from the ordered
-  lists and `levels` from current scalars; user then toggles scope/exclusive and
-  reorders in the builder.
+- **Scalars** (master / singer_mode / singer_level): *set-if-scoped*. Exclusive
+  is a no-op on a value. Missing scene ids are skipped and reported, not fatal.
+- **Capture from live**: snapshot `get_state()` → `items` from the ordered
+  lists, `levels` from current scalars (exclusive + fully scoped by default).
 
 **v1 scope:** the four stacks + master + singer mode/level. Overlay / blackout /
-cycler are deferred (start/stop side effects; need a scene or config) — add later
-if wanted.
+cycler are **deferred from preset scope** (start/stop side effects; need a scene
+or config) — not in the builder; add later if wanted.
 
-**Routes:** `GET/POST /api/presets`, `PUT/DELETE /api/presets/<id>`,
-`POST /api/presets/capture`, `POST /api/preset/<id>/recall`,
-`POST /api/presets/reorder`.
-
-**UI:** builder in `settings.html` (scope checkboxes, exclusive toggle, per-
-category reorderable item lists reusing the existing reorder-row component,
-capture-from-live button); trigger row + the clear buttons on the home page
-(`lightboard_index.html`).
+**Shipped as:**
+- `presets.py` — storage + `capture_preset` + `apply_preset` (pure, Flask-free).
+- `app.py` routes: `GET /api/presets`, `POST /api/presets` (body `{capture:true}`
+  snapshots live; otherwise a full preset dict), `PUT`/`DELETE /api/presets/<id>`,
+  `POST /api/presets/reorder`, `POST /api/preset/<id>/recall`. (Capture is a flag
+  on create, not a separate `/capture` route.)
+- Home page (`lightboard_index.html`): ⭐ Presets trigger row — tap to recall,
+  ＋ Capture (names + snapshots live), ✕ to delete.
+- Settings (`settings.html`): full builder — name, additive/exclusive, per-
+  subsystem scope checkboxes, per-category ordered item pickers (add/▲▼/✕),
+  level controls, ⟲ Fill-from-live, save/delete; reorderable preset list.
+- Tests: `test_presets.py` (18 assertions: capture, additive vs exclusive, scope
+  gating, scalars set-if-scoped, missing-scene tolerance, normalize).
 
 ## Environment / workflow notes
 - Pi: `pi@192.168.1.34`, dir `/home/pi/lightboard`, restart `sudo systemctl restart lightboard`.
