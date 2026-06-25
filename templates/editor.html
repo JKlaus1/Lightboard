@@ -313,6 +313,10 @@
       <button type="button" class="shapeb" data-shape="spiral"     onclick="setGenShape('spiral',this)">🌀 Spiral</button>
       <button type="button" class="shapeb" data-shape="rose"       onclick="setGenShape('rose',this)">✿ Rose</button>
       <button type="button" class="shapeb" data-shape="bounce"     onclick="setGenShape('bounce',this)">📺 Bounce</button>
+      <button type="button" class="shapeb" data-shape="spirograph" onclick="setGenShape('spirograph',this)">⚙ Spirograph</button>
+      <button type="button" class="shapeb" data-shape="star"       onclick="setGenShape('star',this)">★ Star</button>
+      <button type="button" class="shapeb" data-shape="heart"      onclick="setGenShape('heart',this)">♥ Heart</button>
+      <button type="button" class="shapeb" data-shape="drift"      onclick="setGenShape('drift',this)">≈ Drift</button>
     </div>
 
     <!-- Aim / centering mode -->
@@ -381,15 +385,47 @@
       Tempo On syncs the loop to the live tap tempo. Off uses Loops/sec.
     </div>
 
+    <!-- Motion modifiers -->
+    <div class="card-title">Motion Modifiers</div>
+    <div class="genrow" style="margin-bottom:8px;">
+      <label>Dwell</label>
+      <input type="range" min="0" max="1" step="0.05" id="gen-dwell" oninput="setGenParam('dwell',this.value)">
+      <span id="gen-dwell-v" class="genval"></span>
+    </div>
+    <div class="genrow" style="margin-bottom:8px;">
+      <label>Breathe</label>
+      <input type="range" min="0" max="1" step="0.05" id="gen-breathe" oninput="setGenParam('breathe_depth',this.value)">
+      <span id="gen-breathe-v" class="genval"></span>
+    </div>
+    <div id="gen-breathe-rate-row" class="genrow" style="margin-bottom:8px;">
+      <label>Breath rate</label>
+      <input type="range" min="0.25" max="4" step="0.25" id="gen-breathe-rate" oninput="setGenParam('breathe_rate',this.value)">
+      <span id="gen-breathe-rate-v" class="genval"></span>
+    </div>
+    <div class="genrow" style="margin-bottom:8px;">
+      <label>Beat-snap</label>
+      <input type="number" min="0" max="32" step="1" id="gen-snap" value="0" oninput="setGenParam('snap_steps',this.value)" style="width:60px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;">
+      <span style="font-size:0.66rem;color:var(--sub);flex:1;">positions/loop (0 = smooth). With Tempo On, snaps land on the beat.</span>
+    </div>
+    <div style="font-size:0.68rem;color:var(--sub);margin-bottom:12px;">
+      Dwell eases each loop so movers linger then move. Breathe grows/shrinks the
+      pattern as it runs. Beat-snap jumps between fixed positions instead of gliding.
+    </div>
+
     <!-- Fixtures -->
-    <div class="card-title">Movers in this pattern</div>
+    <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">Movers in this pattern</span>
+      <button type="button" class="shapeb" style="padding:5px 10px;" onclick="applyMirror()">⇄ Mirror</button>
+    </div>
+    <div style="font-size:0.66rem;color:var(--sub);margin:-2px 0 6px;">Per mover: ↔ flips pan, ↕ flips tilt. Mirror pan-flips every other mover for a symmetric fan.</div>
     <div id="gen-fixtures" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
 
     <!-- Phase -->
     <div class="card-title">Phase Spread</div>
-    <div style="display:flex;gap:8px;margin-bottom:8px;">
-      <button type="button" id="phase-even-btn"   class="modeb active" onclick="setPhaseMode('even')">Auto-even</button>
-      <button type="button" id="phase-manual-btn" class="modeb"        onclick="setPhaseMode('manual')">Manual</button>
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+      <button type="button" id="phase-even-btn"    class="modeb active" onclick="setPhaseMode('even')">Auto-even</button>
+      <button type="button" id="phase-manual-btn"  class="modeb"        onclick="setPhaseMode('manual')">Manual</button>
+      <button type="button" id="phase-scatter-btn" class="modeb"        onclick="setPhaseMode('scatter')">Scatter</button>
     </div>
     <div id="phase-even-row" class="genrow" style="margin-bottom:10px;">
       <label>Spread</label>
@@ -398,9 +434,9 @@
     </div>
     <div id="phase-manual-rows" style="display:none;flex-direction:column;gap:6px;margin-bottom:6px;"></div>
     <div style="font-size:0.68rem;color:var(--sub);">
-      Auto-even spreads the selected movers evenly around the loop (Spread 1.0 =
-      full circle, 0.5 = bunched across half). Manual sets each mover's start
-      point on the loop. Dots on the grid show where each mover sits.
+      Auto-even spreads movers evenly around the loop. Manual sets each one's
+      start point. Scatter gives a fixed pseudo-random spread for an un-synced,
+      organic feel.
     </div>
   </div>
   {% endif %}
@@ -736,7 +772,7 @@ function init() {
       }
       genLit = new Set(genFixtures);   // default all pattern movers lit for aiming
       const ph = EXISTING_SCENE.phase || {};
-      phaseCfg.mode    = ph.mode === 'manual' ? 'manual' : 'even';
+      phaseCfg.mode    = (ph.mode === 'manual' || ph.mode === 'scatter') ? ph.mode : 'even';
       phaseCfg.spread  = (ph.spread !== undefined) ? +ph.spread : 1.0;
       phaseCfg.offsets = Object.assign({}, ph.offsets || {});
       // Per-fixture center trims (absent = none).
@@ -744,6 +780,13 @@ function init() {
       const co = EXISTING_SCENE.center_offsets || {};
       genFixtures.forEach(id => {
         if (co[id]) centerOffsets[id] = { dp: +co[id].dp || 0, dt: +co[id].dt || 0 };
+      });
+      // Per-fixture inverts (absent = none).
+      genInverts = {};
+      const iv = EXISTING_SCENE.inverts || {};
+      genFixtures.forEach(id => {
+        if (iv[id] && (iv[id].pan || iv[id].tilt))
+          genInverts[id] = { pan: !!iv[id].pan, tilt: !!iv[id].tilt };
       });
     }
   } else {
@@ -1743,10 +1786,14 @@ function saveScene() {
       lissajous_b: Math.round(generator.lissajous_b),
       lissajous_delta: +generator.lissajous_delta,
       direction:   (generator.direction == -1) ? -1 : 1,
+      dwell:        +generator.dwell || 0,
+      snap_steps:   Math.round(+generator.snap_steps || 0),
+      breathe_depth: +generator.breathe_depth || 0,
+      breathe_rate:  +generator.breathe_rate || 1,
     };
     payload.fixtures = genFixtures.slice();
     payload.phase = {
-      mode:    phaseCfg.mode === 'manual' ? 'manual' : 'even',
+      mode:    (phaseCfg.mode === 'manual' || phaseCfg.mode === 'scatter') ? phaseCfg.mode : 'even',
       spread:  +phaseCfg.spread,
       offsets: {},
     };
@@ -1760,6 +1807,14 @@ function saveScene() {
       const o = centerOffsets[id];
       if (o && (o.dp || o.dt)) {
         payload.center_offsets[id] = { dp: Math.round(o.dp), dt: Math.round(o.dt) };
+      }
+    });
+    // Per-fixture inverts — only in-pattern fixtures with a flip set.
+    payload.inverts = {};
+    genFixtures.forEach(id => {
+      const v = genInverts[id];
+      if (v && (v.pan || v.tilt)) {
+        payload.inverts[id] = { pan: !!v.pan, tilt: !!v.tilt };
       }
     });
     payload.steps = [];   // generator ignores steps; keep the file clean
@@ -1830,11 +1885,13 @@ let generator = {
   speed: 0.25,
   lissajous_a: 1, lissajous_b: 2, lissajous_delta: 0.0,
   direction: 1,
+  dwell: 0, snap_steps: 0, breathe_depth: 0, breathe_rate: 1,
 };
 let genFixtures = MOVERS.map(m => m.id);
 let genLit = new Set(genFixtures);   // which movers are lit during live aiming
 let phaseCfg = { mode: 'even', spread: 1.0, offsets: {} };
 let centerOffsets = {};              // { fxid: {dp, dt} } per-fixture center trim
+let genInverts = {};                 // { fxid: {pan, tilt} } per-fixture invert
 let aimMode = false;                 // freeze-at-centers aiming workflow
 let aimSelFx = null;                 // which mover is currently being aimed
 let _trimDrag = null;                // fixture id being trimmed on the pad
@@ -1880,6 +1937,37 @@ function unitShape(shape, theta) {
       const by = (+generator.lissajous_b) || 2;
       return [triWave(bx * theta), triWave(by * theta)];
     }
+    case 'spirograph': {
+      const k = (+generator.lissajous_a) || 5;
+      const d = (+generator.lissajous_delta);
+      const norm = 1 + Math.abs(d);
+      return [(Math.cos(a) + d * Math.cos(k * a)) / norm,
+              (Math.sin(a) + d * Math.sin(k * a)) / norm];
+    }
+    case 'star': {
+      const nPts = Math.max(2, Math.round((+generator.lissajous_a) || 5));
+      const skip = Math.max(1, Math.round((+generator.lissajous_b) || 2));
+      const vtx = (j) => {
+        const ang = 2 * Math.PI * ((j % nPts + nPts) % nPts) / nPts - Math.PI / 2;
+        return [Math.cos(ang), Math.sin(ang)];
+      };
+      const pos = (theta - Math.floor(theta)) * nPts;
+      const seg = ((Math.floor(pos) % nPts) + nPts) % nPts;
+      const f = pos - Math.floor(pos);
+      const v0 = vtx(seg * skip), v1 = vtx((seg + 1) * skip);
+      return [v0[0] + (v1[0] - v0[0]) * f, v0[1] + (v1[1] - v0[1]) * f];
+    }
+    case 'heart': {
+      const t = a;
+      const x = Math.pow(Math.sin(t), 3);
+      const raw = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+      return [x, (raw + 2.5384) / 14.4616];
+    }
+    case 'drift': {
+      const s = ((+generator.lissajous_a) || 2) / 2;
+      return [0.5 * (Math.sin(s * 0.71 * a) + Math.sin(s * 1.30 * a + 1.3)),
+              0.5 * (Math.sin(s * 1.07 * a + 1.7) + Math.sin(s * 0.93 * a + 0.4))];
+    }
     default:           return [0, 0];
   }
 }
@@ -1897,6 +1985,14 @@ function updateShapeParamsUI(shape) {
   } else if (shape === 'bounce') {
     lbl('gen-la-lbl', 'Pan bounces'); lbl('gen-lb-lbl', 'Tilt bounces');
     show('gen-la-wrap', true); show('gen-lb-wrap', true); show('gen-ld-wrap', false);
+  } else if (shape === 'spirograph') {
+    lbl('gen-la-lbl', 'Lobes'); lbl('gen-ld-lbl', 'Depth');
+    show('gen-la-wrap', true); show('gen-lb-wrap', false); show('gen-ld-wrap', true);
+  } else if (shape === 'star') {
+    lbl('gen-la-lbl', 'Points'); lbl('gen-lb-lbl', 'Skip');
+    show('gen-la-wrap', true); show('gen-lb-wrap', true); show('gen-ld-wrap', false);
+  } else if (shape === 'drift') {
+    lbl('gen-la-lbl', 'Busyness'); show('gen-la-wrap', true); show('gen-lb-wrap', false); show('gen-ld-wrap', false);
   } else if (shape === 'spiral') {
     lbl('gen-la-lbl', 'Turns');  show('gen-la-wrap', true); show('gen-lb-wrap', false); show('gen-ld-wrap', false);
   } else if (shape === 'rose') {
@@ -1912,9 +2008,49 @@ function genPhaseFor(i, n, fxid) {
     const v = +(phaseCfg.offsets[fxid] || 0);
     return ((v % 1) + 1) % 1;
   }
+  if (phaseCfg.mode === 'scatter') {
+    const h = Math.sin((i + 1) * 12.9898) * 43758.5453;
+    return h - Math.floor(h);
+  }
   if (n <= 1) return 0;
   const spread = (phaseCfg.spread !== undefined) ? +phaseCfg.spread : 1;
   return ((((i / n) * spread) % 1) + 1) % 1;
+}
+
+// ── Modifier math (mirrors mover_gen.py so preview == live) ────────────────
+function easePhaseJS(theta, dwell) {
+  if (dwell <= 0) return theta;
+  if (dwell > 1) dwell = 1;
+  const base = Math.floor(theta);
+  const f = theta - base;
+  const s = f * f * f * (f * (6 * f - 15) + 10);
+  return base + (1 - dwell) * f + dwell * s;
+}
+function breatheFactor(tEff) {
+  const depth = +generator.breathe_depth || 0;
+  if (depth <= 0) return 1;
+  const rate = (+generator.breathe_rate) || 1;
+  return 1 + depth * Math.sin(2 * Math.PI * rate * tEff);
+}
+// Full per-fixture evaluation -> [pan, tilt] in 0..255 (clamped). Single source
+// of truth for the on-screen dots AND the live rig frame.
+function genEvalFixture(fxid, i, n, tEff) {
+  const dir = (generator.direction == -1) ? -1 : 1;
+  const o = centerOffsets[fxid] || {};
+  const ecp = generator.center_pan + (+o.dp || 0);
+  const ect = generator.center_tilt + (+o.dt || 0);
+  const bf = breatheFactor(tEff);
+  const sp = generator.size_pan * bf, st = generator.size_tilt * bf;
+  let theta = dir * tEff + genPhaseFor(i, n, fxid);
+  const snap = +generator.snap_steps || 0;
+  if (snap > 0) theta = Math.floor(theta * snap) / snap;
+  else theta = easePhaseJS(theta, +generator.dwell || 0);
+  let xy = unitShape(generator.shape, theta);
+  let x = xy[0], y = xy[1];
+  const inv = genInverts[fxid] || {};
+  if (inv.pan) x = -x;
+  if (inv.tilt) y = -y;
+  return [clamp255(ecp + sp * x), clamp255(ect + st * y)];
 }
 
 function clamp255(v) { return Math.max(0, Math.min(255, v)); }
@@ -1954,6 +2090,8 @@ function setGenParam(key, value) {
   let v = parseFloat(value);
   if (isNaN(v)) return;
   if (key === 'lissajous_a' || key === 'lissajous_b') v = Math.max(1, Math.min(8, Math.round(v)));
+  if (key === 'snap_steps') v = Math.max(0, Math.min(32, Math.round(v)));
+  if (key === 'dwell' || key === 'breathe_depth') v = Math.max(0, Math.min(1, v));
   generator[key] = v;
   syncGenSliders();
   renderGenPad();
@@ -1986,9 +2124,11 @@ function applyGenTempoUI() {
 
 // ── Phase ────────────────────────────────────────────────────────────────
 function setPhaseMode(mode) {
-  phaseCfg.mode = (mode === 'manual') ? 'manual' : 'even';
+  phaseCfg.mode = (mode === 'manual' || mode === 'scatter') ? mode : 'even';
   document.getElementById('phase-even-btn').classList.toggle('active', phaseCfg.mode === 'even');
   document.getElementById('phase-manual-btn').classList.toggle('active', phaseCfg.mode === 'manual');
+  const scat = document.getElementById('phase-scatter-btn');
+  if (scat) scat.classList.toggle('active', phaseCfg.mode === 'scatter');
   document.getElementById('phase-even-row').style.display = (phaseCfg.mode === 'even') ? 'flex' : 'none';
   document.getElementById('phase-manual-rows').style.display = (phaseCfg.mode === 'manual') ? 'flex' : 'none';
   if (phaseCfg.mode === 'manual') seedManualOffsets();
@@ -2028,6 +2168,7 @@ function toggleGenFixture(fxid) {
     genFixtures.splice(idx, 1);
     genLit.delete(fxid);
     delete centerOffsets[fxid];
+    delete genInverts[fxid];
   } else {
     genFixtures.push(fxid);
     genFixtures.sort((a, b) =>
@@ -2098,6 +2239,18 @@ function syncGenSliders() {
   if (sp) sp.value = posFromPeriod(period);
   const sv = document.getElementById('gen-speed-v');
   if (sv) sv.textContent = fmtPeriod(period);
+  // Modifiers
+  const setRange = (id, val, fmt) => {
+    const el = document.getElementById(id); if (el) el.value = val;
+    const v = document.getElementById(id + '-v'); if (v) v.textContent = fmt(val);
+  };
+  setRange('gen-dwell', +generator.dwell || 0, x => (+x).toFixed(2));
+  setRange('gen-breathe', +generator.breathe_depth || 0, x => (+x).toFixed(2));
+  setRange('gen-breathe-rate', +generator.breathe_rate || 1, x => (+x).toFixed(2) + '×');
+  const snapEl = document.getElementById('gen-snap');
+  if (snapEl) snapEl.value = Math.round(+generator.snap_steps || 0);
+  const brr = document.getElementById('gen-breathe-rate-row');
+  if (brr) brr.style.opacity = (+generator.breathe_depth > 0) ? '1' : '0.45';
 }
 
 function renderGenFixtures() {
@@ -2125,6 +2278,19 @@ function renderGenFixtures() {
     main.innerHTML = `<span class="dot"></span><span style="font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.name}</span>` + tag;
     row.appendChild(main);
     if (on) {
+      const inv = genInverts[m.id] || {};
+      const ib = (axis, glyph) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'litb' + (inv[axis] ? ' on' : '');
+        b.style.cssText = 'min-width:34px;padding:6px 8px;';
+        b.textContent = glyph;
+        b.title = (axis === 'pan' ? 'Flip pan' : 'Flip tilt') + ' for this mover';
+        b.onclick = (e) => { e.stopPropagation(); toggleGenInvert(m.id, axis); };
+        return b;
+      };
+      row.appendChild(ib('pan', '↔'));
+      row.appendChild(ib('tilt', '↕'));
       const lb = document.createElement('button');
       lb.type = 'button';
       lb.className = 'litb' + (lit ? ' on' : '');
@@ -2135,6 +2301,29 @@ function renderGenFixtures() {
     }
     host.appendChild(row);
   });
+}
+
+function toggleGenInvert(fxid, axis) {
+  const cur = genInverts[fxid] || {};
+  cur[axis] = !cur[axis];
+  if (!cur.pan && !cur.tilt) delete genInverts[fxid];
+  else genInverts[fxid] = cur;
+  renderGenFixtures();
+  renderGenPad();
+  if (liveMode && genMode) genPreviewTick();   // reflect on the rig immediately
+}
+
+// Mirror: pan-flip every other mover (by pattern order) for a symmetric fan.
+function applyMirror() {
+  genFixtures.forEach((id, i) => {
+    const cur = genInverts[id] || {};
+    if (i % 2 === 1) cur.pan = true; else cur.pan = false;
+    if (!cur.pan && !cur.tilt) delete genInverts[id];
+    else genInverts[id] = cur;
+  });
+  renderGenFixtures();
+  renderGenPad();
+  if (liveMode && genMode) genPreviewTick();
 }
 
 function selectAimFx(id) {
@@ -2307,15 +2496,11 @@ function renderGenPad() {
 // existing elements, no DOM rebuild — safe to call every animation frame.
 function positionAnimDots(tEff) {
   if (aimMode || !genAnimDots || !genAnimDots.length) return;
-  const dir = (generator.direction == -1) ? -1 : 1;
-  const cp = generator.center_pan, ct = generator.center_tilt;
-  const sp = generator.size_pan, st = generator.size_tilt;
+  const n = genFixtures.length;
   genAnimDots.forEach(d => {
-    const o = centerOffsets[d.fxid] || {};
-    const ecp = cp + (+o.dp || 0), ect = ct + (+o.dt || 0);
-    const uxy = unitShape(generator.shape, dir * tEff + d.phase);
-    const pan = clamp255(ecp + sp * uxy[0]), tilt = clamp255(ect + st * uxy[1]);
-    const sxy = dmxToSvg(pan, tilt);
+    const i = genFixtures.indexOf(d.fxid);
+    const pt = genEvalFixture(d.fxid, i < 0 ? 0 : i, n, tEff);
+    const sxy = dmxToSvg(pt[0], pt[1]);
     d.dot.setAttribute('cx', sxy[0]); d.dot.setAttribute('cy', sxy[1]);
     d.label.setAttribute('x', sxy[0]); d.label.setAttribute('y', sxy[1] + 2.6);
   });
@@ -2481,18 +2666,10 @@ let genPreviewTimer = null;
 function genFrameAt(tEff) {
   const n = genFixtures.length;
   const fixtures = {};
-  const dir = (generator.direction == -1) ? -1 : 1;
-  const cp = generator.center_pan, ct = generator.center_tilt;
-  const sp = generator.size_pan, st = generator.size_tilt;
   genFixtures.forEach((id, i) => {
-    const ph = genPhaseFor(i, n, id);
-    const o = centerOffsets[id] || {};
-    const ecp = cp + (+o.dp || 0), ect = ct + (+o.dt || 0);
-    const uxy = unitShape(generator.shape, dir * tEff + ph);
-    const pan = clamp255(ecp + sp * uxy[0]);
-    const tilt = clamp255(ect + st * uxy[1]);
-    const p16 = Math.max(0, Math.min(65535, Math.round(pan * 256)));
-    const t16 = Math.max(0, Math.min(65535, Math.round(tilt * 256)));
+    const pt = genEvalFixture(id, i, n, tEff);
+    const p16 = Math.max(0, Math.min(65535, Math.round(pt[0] * 256)));
+    const t16 = Math.max(0, Math.min(65535, Math.round(pt[1] * 256)));
     fixtures[id] = { pan: (p16 >> 8) & 255, pan_fine: p16 & 255,
                      tilt: (t16 >> 8) & 255, tilt_fine: t16 & 255 };
   });

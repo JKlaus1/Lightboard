@@ -48,7 +48,7 @@ import math
 _TWO_PI = 2.0 * math.pi
 
 SHAPES = ("circle", "figure8", "lissajous", "sweep_pan", "sweep_tilt",
-          "spiral", "rose", "bounce")
+          "spiral", "rose", "bounce", "spirograph", "star", "heart", "drift")
 
 
 def _tri(u):
@@ -106,25 +106,85 @@ def unit_shape(shape, theta, gen=None):
         bx = _f(gen, "lissajous_a", 3.0) or 3.0
         by = _f(gen, "lissajous_b", 2.0) or 2.0
         return _tri(bx * theta), _tri(by * theta)
+    if shape == "spirograph":
+        # Epicyclic spirograph: a small circle rolling on a big one. lissajous_a
+        # = sub-loops, lissajous_delta = sub-loop size (0 -> plain circle).
+        k = _f(gen, "lissajous_a", 5.0) or 5.0
+        d = _f(gen, "lissajous_delta", 0.5)
+        norm = 1.0 + abs(d)
+        x = (math.cos(a) + d * math.cos(k * a)) / norm
+        y = (math.sin(a) + d * math.sin(k * a)) / norm
+        return x, y
+    if shape == "star":
+        # Snap corner-to-corner of a star polygon {n/skip}. lissajous_a = points,
+        # lissajous_b = skip (1 = convex polygon, 2 = classic star).
+        n_pts = max(2, int(round(_f(gen, "lissajous_a", 5.0))))
+        skip = max(1, int(round(_f(gen, "lissajous_b", 2.0))))
+
+        def _vertex(j):
+            ang = _TWO_PI * (j % n_pts) / n_pts - math.pi / 2.0  # start at top
+            return math.cos(ang), math.sin(ang)
+
+        pos = (theta - math.floor(theta)) * n_pts
+        seg = int(math.floor(pos)) % n_pts
+        f = pos - math.floor(pos)
+        x0, y0 = _vertex(seg * skip)
+        x1, y1 = _vertex((seg + 1) * skip)
+        return x0 + (x1 - x0) * f, y0 + (y1 - y0) * f
+    if shape == "heart":
+        # Parametric heart, normalized (and box-centered) to [-1, 1].
+        t = a
+        x = (math.sin(t) ** 3)
+        raw = (13.0 * math.cos(t) - 5.0 * math.cos(2 * t)
+               - 2.0 * math.cos(3 * t) - math.cos(4 * t))
+        y = (raw + 2.5384) / 14.4616     # raw range [-17, 11.923] -> [-1, 1]
+        return x, y
+    if shape == "drift":
+        # Smooth organic wander — incommensurate sines, fills the box loosely
+        # without hard reflections. lissajous_a scales how busy the wander is.
+        s = (_f(gen, "lissajous_a", 2.0) or 2.0) / 2.0
+        x = 0.5 * (math.sin(s * 0.71 * a) + math.sin(s * 1.30 * a + 1.3))
+        y = 0.5 * (math.sin(s * 1.07 * a + 1.7) + math.sin(s * 0.93 * a + 0.4))
+        return x, y
     # Unknown shape -> hold at center.
     return 0.0, 0.0
+
+
+def _ease_phase(theta, dwell):
+    """Dwell: blend the per-loop phase toward a smootherstep so the motion
+    eases out of and into each loop's start (movers linger, then move).
+    dwell 0 = linear (off), 1 = full ease."""
+    if dwell <= 0:
+        return theta
+    if dwell > 1:
+        dwell = 1.0
+    base = math.floor(theta)
+    f = theta - base
+    s = f * f * f * (f * (6.0 * f - 15.0) + 10.0)   # smootherstep
+    return base + (1.0 - dwell) * f + dwell * s
 
 
 def phase_for(index, n, phase_cfg, fxid):
     """Phase offset (in cycles, 0..1) for fixture ``fxid`` at position
     ``index`` of ``n`` selected fixtures.
 
-    even   -> spread evenly around the loop: (index / n) * spread.
-    manual -> use the stored per-fixture offset (default 0).
+    even    -> spread evenly around the loop: (index / n) * spread.
+    manual  -> use the stored per-fixture offset (default 0).
+    scatter -> seeded pseudo-random offset, stable per fixture index.
     """
     phase_cfg = phase_cfg or {}
-    if phase_cfg.get("mode") == "manual":
+    mode = phase_cfg.get("mode")
+    if mode == "manual":
         offsets = phase_cfg.get("offsets") or {}
         try:
             v = offsets.get(fxid, 0.0)
             return float(0.0 if v is None else v) % 1.0
         except (TypeError, ValueError):
             return 0.0
+    if mode == "scatter":
+        # Deterministic hash of the index -> a stable "random" offset in [0,1).
+        h = math.sin((index + 1) * 12.9898) * 43758.5453
+        return h - math.floor(h)
     # even (default)
     if n <= 1:
         return 0.0
@@ -151,6 +211,7 @@ def evaluate_motion_generator(scene, t_eff):
     fixtures = scene.get("fixtures") or []
     phase_cfg = scene.get("phase") or {}
     center_offsets = scene.get("center_offsets") or {}
+    inverts = scene.get("inverts") or {}
 
     shape = gen.get("shape", "circle")
     direction = -1.0 if str(gen.get("direction", 1)) in ("-1", "-1.0") else 1.0
@@ -158,6 +219,17 @@ def evaluate_motion_generator(scene, t_eff):
     center_tilt = _f(gen, "center_tilt", 128.0)
     size_pan = _f(gen, "size_pan", 96.0)
     size_tilt = _f(gen, "size_tilt", 96.0)
+    dwell = _f(gen, "dwell", 0.0)
+    snap_steps = int(_f(gen, "snap_steps", 0.0))
+    breathe_depth = _f(gen, "breathe_depth", 0.0)
+    breathe_rate = _f(gen, "breathe_rate", 1.0)
+
+    # Breathing: the whole pattern slowly grows/shrinks. Shared across fixtures.
+    bf = 1.0
+    if breathe_depth > 0:
+        bf = 1.0 + breathe_depth * math.sin(_TWO_PI * breathe_rate * t_eff)
+    sp_eff = size_pan * bf
+    st_eff = size_tilt * bf
 
     n = len(fixtures)
     out = {}
@@ -169,9 +241,20 @@ def evaluate_motion_generator(scene, t_eff):
         ctilt = center_tilt + _f(off, "dt", 0.0)
         ph = phase_for(i, n, phase_cfg, fxid)
         theta = direction * t_eff + ph
+        if snap_steps and snap_steps > 0:
+            # Beat-snap: hold at N discrete positions around the loop.
+            theta = math.floor(theta * snap_steps) / float(snap_steps)
+        else:
+            theta = _ease_phase(theta, dwell)
         x, y = unit_shape(shape, theta, gen)
-        pan_coarse, pan_fine = _split16(cpan + size_pan * x)
-        tilt_coarse, tilt_fine = _split16(ctilt + size_tilt * y)
+        # Per-fixture invert (also how Mirror mode flips alternate movers).
+        inv = inverts.get(fxid) or {}
+        if inv.get("pan"):
+            x = -x
+        if inv.get("tilt"):
+            y = -y
+        pan_coarse, pan_fine = _split16(cpan + sp_eff * x)
+        tilt_coarse, tilt_fine = _split16(ctilt + st_eff * y)
         out[fxid] = {
             "pan": pan_coarse,
             "pan_fine": pan_fine,

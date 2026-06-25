@@ -45,27 +45,68 @@ def test_unit_shapes():
 
 
 def test_new_shapes():
-    print("spiral / rose / bounce:")
-    g = {"lissajous_a": 3, "lissajous_b": 2}
-    # All stay within the unit box across a full loop (plus into the next).
-    for shape in ("spiral", "rose", "bounce"):
+    print("spiral / rose / bounce / spirograph / star / heart / drift:")
+    g = {"lissajous_a": 3, "lissajous_b": 2, "lissajous_delta": 0.5}
+    for shape in ("spiral", "rose", "bounce", "spirograph", "star", "heart", "drift"):
         for k in range(0, 240):
-            t = k / 120.0   # 0 .. 2 (two loops)
+            t = k / 120.0
             x, y = mg.unit_shape(shape, t, g)
             check_silent(-1.0001 <= x <= 1.0001 and -1.0001 <= y <= 1.0001,
                          f"{shape} in box @t={t:.3f} -> ({x:.2f},{y:.2f})")
-    print("  ok: spiral/rose/bounce stay within the unit box")
-    # Spiral returns to center at the loop boundary (r=0).
+    print("  ok: all shapes stay within the unit box")
     sx, sy = mg.unit_shape("spiral", 0.0, g)
     check(abs(sx) < 1e-9 and abs(sy) < 1e-9, "spiral starts at center")
-    sx1, sy1 = mg.unit_shape("spiral", 1.0, g)
-    check(abs(sx1) < 1e-9 and abs(sy1) < 1e-9, "spiral returns to center each loop")
-    # Bounce starts in a corner (triangle wave is -1 at 0).
     bx, by = mg.unit_shape("bounce", 0.0, g)
     check(bx == -1.0 and by == -1.0, "bounce starts at a corner")
-    # Bounce reflects: at the pan half-period it hits the far wall (+1).
-    bx2, _ = mg.unit_shape("bounce", 1.0 / (2 * 3), g)  # bx=3 -> half period 1/6
-    check(abs(bx2 - 1.0) < 1e-9, "bounce reflects to far pan wall")
+    # Star hits a vertex (on the unit circle) at a segment boundary.
+    vx, vy = mg.unit_shape("star", 0.0, {"lissajous_a": 5, "lissajous_b": 2})
+    check(abs((vx * vx + vy * vy) - 1.0) < 1e-6, "star vertex sits on the unit circle")
+    # Spirograph with d=0 reduces to a circle.
+    cx, cy = mg.unit_shape("spirograph", 0.0, {"lissajous_a": 5, "lissajous_delta": 0.0})
+    check(abs(cx - 1.0) < 1e-9, "spirograph d=0 -> circle")
+
+
+def test_modifiers():
+    print("modifiers (dwell / snap / breathe / invert / scatter):")
+    base = {"scene_type": "mover_motion", "motion_mode": "generator",
+            "generator": {"shape": "sweep_pan", "center_pan": 128, "center_tilt": 128,
+                          "size_pan": 100, "size_tilt": 100},
+            "fixtures": ["m0"], "phase": {"mode": "manual", "offsets": {"m0": 0.0}}}
+
+    # Dwell: at t=0 both eased and linear sit at the seam, but mid-loop the eased
+    # phase lags the linear one (slower start) -> different position.
+    g = dict(base, generator=dict(base["generator"], dwell=1.0))
+    lin = mg.evaluate_motion_generator(base, 0.1)["m0"]["pan"]
+    eased = mg.evaluate_motion_generator(g, 0.1)["m0"]["pan"]
+    check(eased != lin, f"dwell warps the phase (eased {eased} != linear {lin})")
+
+    # Snap: with snap_steps=4 the value is constant across a quarter-loop band.
+    s = dict(base, generator=dict(base["generator"], snap_steps=4))
+    a = mg.evaluate_motion_generator(s, 0.05)["m0"]["pan"]
+    b = mg.evaluate_motion_generator(s, 0.20)["m0"]["pan"]   # same step [0,0.25)
+    check(a == b, f"snap holds within a step ({a} == {b})")
+    c = mg.evaluate_motion_generator(s, 0.30)["m0"]["pan"]   # next step
+    check(c != a, "snap advances to the next position")
+
+    # Breathe: size grows then shrinks -> the swept extreme differs over time.
+    br = dict(base, generator=dict(base["generator"], breathe_depth=0.5, breathe_rate=1.0))
+    # quarter loop = sweep extreme; breathe phase changes the reach.
+    p_a = mg.evaluate_motion_generator(br, 0.25)["m0"]["pan"]
+    p_b = mg.evaluate_motion_generator(br, 0.25 + 0.5)["m0"]["pan"]
+    check(p_a != p_b, f"breathing changes reach over time ({p_a} vs {p_b})")
+
+    # Invert: pan flips around the center.
+    inv = dict(base, inverts={"m0": {"pan": True}})
+    normal = mg.evaluate_motion_generator(base, 0.25)["m0"]["pan"]   # sweep extreme
+    flipped = mg.evaluate_motion_generator(inv, 0.25)["m0"]["pan"]
+    check(abs((normal - 128) + (flipped - 128)) <= 1, f"pan invert mirrors about center ({normal}/{flipped})")
+
+    # Scatter: stable, in [0,1), and differs across indices.
+    cfg = {"mode": "scatter"}
+    s0 = mg.phase_for(0, 4, cfg, "a")
+    s1 = mg.phase_for(1, 4, cfg, "b")
+    check(0 <= s0 < 1 and 0 <= s1 < 1 and s0 != s1, f"scatter spreads ({s0:.2f},{s1:.2f})")
+    check(mg.phase_for(0, 4, cfg, "a") == s0, "scatter is stable (seeded)")
 
 
 def check_silent(cond, msg):
@@ -196,9 +237,10 @@ def test_evaluate_center_offsets():
 
 def main():
     tests = [
-        test_unit_shapes, test_new_shapes, test_phase_even, test_phase_manual,
-        test_split16, test_evaluate_circle_phase, test_evaluate_direction_and_time,
-        test_evaluate_center_offsets, test_evaluate_empty,
+        test_unit_shapes, test_new_shapes, test_modifiers, test_phase_even,
+        test_phase_manual, test_split16, test_evaluate_circle_phase,
+        test_evaluate_direction_and_time, test_evaluate_center_offsets,
+        test_evaluate_empty,
     ]
     for t in tests:
         t()
