@@ -113,10 +113,15 @@ class LightingEngine:
         self._pending_main_ids    = []
         self._pending_main_scenes = {}   # scene_id → scene data
         self._pending_main_fades  = {}   # scene_id → launch_fade ms (for new adds)
-        # Pending motion/look (single-slot). None = no pending change.
-        # Otherwise: {"action": "play"|"stop", "id": scene_id, "scene": data}
-        self._pending_motion = None
-        self._pending_look   = None
+        # Pending motion/look/effect (Task B: stacked, mirroring main scenes).
+        # Each is the ordered list of scene_ids that WILL be active after
+        # unfreeze, plus stored scene data for any newly-added-while-frozen ids.
+        self._pending_motion_ids    = []
+        self._pending_motion_scenes = {}
+        self._pending_look_ids      = []
+        self._pending_look_scenes   = {}
+        self._pending_effect_ids    = []
+        self._pending_effect_scenes = {}
         # freeze_includes: which categories queue when freeze is active.
         # Defaults match the user's preferred behavior: scene changes queue,
         # raw control inputs (blackout, dimmers, singer toggle) stay live.
@@ -142,39 +147,45 @@ class LightingEngine:
         self._overlay_stop_event   = threading.Event()
         self._current_overlay_name = None
 
-        # Mover Motion scene layer — controls pan/tilt of mover fixtures.
-        self._motion_dmx          = {}
-        self._motion_thread       = None
-        self._motion_stop_event   = threading.Event()
-        self._current_motion_name = None
-        self._current_motion_id   = None
+        # Mover Motion scene layer (Task B: stacked) — controls pan/tilt of
+        # mover fixtures. Each entry runs its own player thread writing to its
+        # own dmx dict; the layer composite overlays entries in play order
+        # (newest on top → latest-wins per channel; different movers union).
+        # Entry: {id, name, scene, dmx, thread, stop_event}. No layer-level
+        # fade: motion/look snap (step-internal fades still apply).
+        self._active_motions      = []
+        # Editor preview slot (separate from the stack). While active it
+        # OVERRIDES the composited motion layer so the editor shows exactly
+        # the frame being edited. Kept out of the stack and the freeze queue.
+        self._preview_motion_dmx    = {}
+        self._preview_motion_active = False
 
-        # Mover Look scene layer — controls dimmer/color/gobo/prism etc. of movers.
-        self._look_dmx            = {}
-        self._look_thread         = None
-        self._look_stop_event     = threading.Event()
-        self._current_look_name   = None
-        self._current_look_id     = None
+        # Mover Look scene layer (Task B: stacked) — dimmer/color/gobo/prism
+        # etc. of movers. Same stack + preview-slot shape as motion.
+        self._active_looks        = []
+        self._preview_look_dmx    = {}
+        self._preview_look_active = False
 
-        # ── Effect layer (Phase 2C) ─────────────────────────────────────────
-        # An effect scene renders animated colour to one or more fixtures'
-        # cell strips. The current scene is held in _current_effect_scene
-        # and re-rendered every output tick using _effect_start_time as
-        # the reference for `t`. The effect layer sits ABOVE the master-
-        # scaled main scenes and BELOW singer / overlay / blackout.
-        # Stopping fades out via _effect_blend like the overlay layer;
-        # when the blend reaches 0 the scene reference is cleared.
-        self._effect_dmx           = {}
-        self._effect_blend         = 0.0
-        self._effect_target        = 0.0
+        # ── Effect layer (Phase 2C; Task B: stacked) ───────────────────────
+        # Each active effect renders animated colour to one or more fixtures'
+        # cell strips. Effects are held as a stack of entries, each re-rendered
+        # every output tick using its own start_time as the reference for `t`
+        # and faded by its own independent blend. The effect layer sits ABOVE
+        # the master-scaled main scenes and BELOW singer / overlay / blackout.
+        # Stopping fades an entry out via its blend; when its blend reaches 0
+        # the entry is removed. Composite = overlay entries in play order.
+        # Entry: {id, name, scene, blend, target, start_time}.
+        self._active_effects       = []
+        self._effect_dmx           = {}    # merged frame, for tools/inspection
         self._effect_fade_ms       = show_config.get("effect_fade_ms", 500)
-        self._current_effect_scene = None   # full scene dict for re-rendering
-        self._current_effect_id    = None
-        self._current_effect_name  = None
-        self._effect_start_time    = 0.0
-        # Pending effect change while frozen, mirroring _pending_motion shape:
-        #   {"action": "play"|"stop", "id": ..., "scene": ...}  or None
-        self._pending_effect       = None
+        # Editor preview slot (single, separate from the stack). While a
+        # preview is active it SUPPRESSES the live effect stack so the editor
+        # shows only the effect being edited (matches pre-Task-B behaviour).
+        self._preview_effect_scene  = None
+        self._preview_effect_blend  = 0.0
+        self._preview_effect_target = 0.0
+        self._preview_effect_start  = 0.0
+        # Pending effect changes while frozen use _pending_effect_ids (above).
         # Pending raw-control changes while frozen (None = no queued change).
         self._pending_singer       = None   # bool: desired singer on/off
         self._pending_master       = None   # float: desired color-dimmer level
@@ -724,93 +735,113 @@ class LightingEngine:
         return out
 
     def _tick_effect_blend(self):
-        """Advance the effect fade-in/out blend toward its target. When
-        the blend reaches 0 (fully faded out), clear the scene reference
-        so the renderer goes idle until something new is played."""
+        """Advance every active effect's fade-in/out blend toward its target,
+        plus the editor preview's blend. Entries whose blend reaches 0 (fully
+        faded out) are removed; the preview clears its scene at 0."""
+        step_full = 1.0 / self.OUTPUT_HZ
         with self._lock:
-            target  = self._effect_target
-            current = self._effect_blend
             fade_ms = self._effect_fade_ms
-        if abs(target - current) < 0.005:
-            with self._lock:
-                self._effect_blend = target
-                if target == 0.0 and self._current_effect_scene is not None:
-                    self._current_effect_scene = None
-                    self._current_effect_id    = None
-                    self._current_effect_name  = None
-                    self._effect_dmx           = {}
-            return
-        step = (1.0 / self.OUTPUT_HZ) / max(fade_ms / 1000.0, 0.05)
-        direction = 1 if target > current else -1
+            step    = step_full / max(fade_ms / 1000.0, 0.05)
+            to_remove = []
+            for e in self._active_effects:
+                target  = e["target"]
+                current = e["blend"]
+                if abs(target - current) < 0.005:
+                    e["blend"] = target
+                    if target == 0.0:
+                        to_remove.append(e)
+                    continue
+                direction = 1 if target > current else -1
+                e["blend"] = max(0.0, min(1.0, current + direction * step))
+            for e in to_remove:
+                self._active_effects.remove(e)
+            # Preview blend (single slot)
+            if self._preview_effect_scene is not None:
+                t = self._preview_effect_target
+                c = self._preview_effect_blend
+                if abs(t - c) < 0.005:
+                    self._preview_effect_blend = t
+                    if t == 0.0:
+                        self._preview_effect_scene = None
+                        self._preview_effect_blend = 0.0
+                else:
+                    d = 1 if t > c else -1
+                    self._preview_effect_blend = max(0.0, min(1.0, c + d * step))
+
+    def _effect_active(self, scene_id):
+        """True if scene_id is in the effect stack and not fading out."""
         with self._lock:
-            self._effect_blend = max(0.0, min(1.0, current + direction * step))
+            return any(e["id"] == scene_id and e["target"] == 1.0
+                       for e in self._active_effects)
 
     def play_effect_scene(self, scene, scene_id=None):
-        """Start (or replace) the current effect scene. Smoothly fades in.
-        Re-tapping the currently-playing scene_id is a no-op (stays on);
-        use stop_effect_scene() to toggle off. Queued under freeze when
-        'effects' is in freeze_includes."""
-        # Freeze gate: queue the action instead of taking effect now.
+        """Add (or ensure-on) an effect in the stack. Smoothly fades in.
+        Re-playing an id already in the stack hot-swaps its data and keeps it
+        fading toward on. Queued under freeze when 'effects' is in
+        freeze_includes. This is an additive primitive — it never removes
+        other effects (presets/Task A rely on that); use stop/toggle for that."""
         if self._is_frozen_for("effects"):
             with self._lock:
-                if self._pending_effect and self._pending_effect.get("id") == scene_id:
-                    # Tap-to-toggle while frozen
-                    self._pending_effect = None
-                else:
-                    self._pending_effect = {
-                        "action": "play", "id": scene_id, "scene": scene
-                    }
+                if scene_id is not None and scene_id not in self._pending_effect_ids:
+                    self._pending_effect_ids.append(scene_id)
+                    self._pending_effect_scenes[scene_id] = scene
             return
-
         with self._lock:
-            # Idempotent: same id already playing forward → keep going
-            if (self._current_effect_id == scene_id
-                    and self._effect_target == 1.0
-                    and self._current_effect_scene is not None):
-                # Hot-swap scene data in case params changed
-                self._current_effect_scene = scene
-                return
-            # Replace any in-flight scene immediately; the blend continues
-            # from wherever it was so a quick swap doesn't go through 0.
-            self._current_effect_scene = scene
-            self._current_effect_id    = scene_id
-            self._current_effect_name  = scene.get("name")
-            self._effect_start_time    = time.time()
-            self._effect_target        = 1.0
+            for e in self._active_effects:
+                if e["id"] == scene_id:
+                    # Already in the stack → hot-swap data and ensure fading in.
+                    e["scene"]  = scene
+                    e["name"]   = scene.get("name")
+                    e["target"] = 1.0
+                    return
+            self._active_effects.append({
+                "id":         scene_id,
+                "name":       scene.get("name"),
+                "scene":      scene,
+                "blend":      0.0,
+                "target":     1.0,
+                "start_time": time.time(),
+            })
 
-    def stop_effect_scene(self):
-        """Fade the current effect out. The blend tick will clear the
-        scene once it reaches 0. Queued under freeze."""
+    def stop_effect_scene(self, scene_id=None):
+        """Fade an effect out (scene_id) or all effects (scene_id=None). The
+        blend tick removes each entry once its blend reaches 0. Queued under
+        freeze: a specific id is dropped from the pending set; None clears it."""
         if self._is_frozen_for("effects"):
             with self._lock:
-                if self._pending_effect and self._pending_effect.get("action") == "play":
-                    # A queued play is cancelled by a queued stop
-                    self._pending_effect = None
-                else:
-                    self._pending_effect = {"action": "stop"}
+                if scene_id is None:
+                    self._pending_effect_ids = []
+                elif scene_id in self._pending_effect_ids:
+                    self._pending_effect_ids.remove(scene_id)
             return
         with self._lock:
-            self._effect_target = 0.0
+            for e in self._active_effects:
+                if scene_id is None or e["id"] == scene_id:
+                    e["target"] = 0.0
 
     def toggle_effect_scene(self, scene, scene_id=None):
-        """If this scene_id is the currently-playing effect (not stopping),
-        stop it. Otherwise play it. Convenience for tap-to-toggle UIs."""
-        with self._lock:
-            currently_on = (
-                self._current_effect_id == scene_id
-                and self._effect_target == 1.0
-                and self._current_effect_scene is not None
-            )
-        if currently_on:
-            self.stop_effect_scene()
+        """Tap-to-toggle: stop this id if it's active, else play it. Freeze-
+        aware (toggles the pending set when frozen)."""
+        if self._is_frozen_for("effects"):
+            with self._lock:
+                if scene_id in self._pending_effect_ids:
+                    self._pending_effect_ids.remove(scene_id)
+                else:
+                    self._pending_effect_ids.append(scene_id)
+                    self._pending_effect_scenes[scene_id] = scene
+            return
+        if scene_id is not None and self._effect_active(scene_id):
+            self.stop_effect_scene(scene_id)
         else:
             self.play_effect_scene(scene, scene_id=scene_id)
 
-    # ── Effect live preview (editor in Phase 2D will hit this) ─────────────
+    # ── Effect live preview (editor) ───────────────────────────────────────
     #
     # preview_effect() hot-swaps the scene dict in-place if a preview is
-    # already running so editor slider drags don't restart the fade.
-    # preview_effect_clear() fades it out like a normal stop.
+    # already running so editor slider drags don't restart the fade. While a
+    # preview is active it SUPPRESSES the live effect stack (see _push_to_dmx)
+    # so the editor shows only the effect being edited. Kept out of the stack
+    # and the freeze queue.
 
     PREVIEW_EFFECT_TAG = "__effect_preview__"
 
@@ -819,26 +850,19 @@ class LightingEngine:
         If a preview is already running, hot-swap the scene definition
         so timing and fade-in state are preserved (no janky restart)."""
         with self._lock:
-            already_previewing = (
-                self._current_effect_id == self.PREVIEW_EFFECT_TAG
-                and self._current_effect_scene is not None
-            )
-            if already_previewing:
-                self._current_effect_scene = scene
-                self._effect_target        = 1.0   # in case a fade-out had started
+            if self._preview_effect_scene is not None:
+                self._preview_effect_scene  = scene
+                self._preview_effect_target = 1.0   # in case a fade-out had started
                 return
-            # Start fresh
-            self._current_effect_scene = scene
-            self._current_effect_id    = self.PREVIEW_EFFECT_TAG
-            self._current_effect_name  = "🟢 Live Preview"
-            self._effect_start_time    = time.time()
-            self._effect_target        = 1.0
+            self._preview_effect_scene  = scene
+            self._preview_effect_start  = time.time()
+            self._preview_effect_target = 1.0
 
     def preview_effect_clear(self):
         """End the preview. Same fade-out semantics as a normal stop."""
         with self._lock:
-            if self._current_effect_id == self.PREVIEW_EFFECT_TAG:
-                self._effect_target = 0.0
+            if self._preview_effect_scene is not None:
+                self._preview_effect_target = 0.0
 
     # ── Output loop (mixer) ───────────────────────────────────────────────
 
@@ -990,8 +1014,19 @@ class LightingEngine:
         # directly (DMX monitor's snapshot path, etc.)
         with self._lock:
             self._scene_dmx = scene
-            motion        = dict(self._motion_dmx)
-            look          = dict(self._look_dmx)
+            # Stacked motion/look: composite each layer (preview overrides).
+            if self._preview_motion_active:
+                motion = dict(self._preview_motion_dmx)
+            else:
+                motion = {}
+                for e in self._active_motions:
+                    motion.update(e["dmx"])          # play order, latest wins
+            if self._preview_look_active:
+                look = dict(self._preview_look_dmx)
+            else:
+                look = {}
+                for e in self._active_looks:
+                    look.update(e["dmx"])
             sb            = self._singer_blend
             singer        = self._singer_dmx_full   # static ref (read-only; never mutated in place)
             s_level       = self._singer_level
@@ -1004,27 +1039,38 @@ class LightingEngine:
             ov_dmx        = dict(self._overlay_dmx)
             ov_blend      = self._overlay_blend
             ov_keep_singer = self._overlay_keep_singer
-            effect_scene = self._current_effect_scene
-            effect_start = self._effect_start_time
-            effect_blend = self._effect_blend
+            # Stacked effects: snapshot (scene, blend, start) per entry. While
+            # an editor preview is active it SUPPRESSES the live stack so the
+            # editor shows only the effect being edited.
+            if self._preview_effect_scene is not None and self._preview_effect_blend > 0.001:
+                effect_specs = [(self._preview_effect_scene,
+                                 self._preview_effect_blend,
+                                 self._preview_effect_start)]
+            else:
+                effect_specs = [(e["scene"], e["blend"], e["start_time"])
+                                for e in self._active_effects if e["blend"] > 0.001]
 
-        # Render the current effect outside the lock — the scene dict is
-        # replaced atomically by play/stop, never mutated in place, so this
-        # is safe. Cell strips are immutable after build.
-        if effect_scene is not None and effect_blend > 0.001:
-            if effect_scene.get("tempo_sync") and self._tempo_active:
+        # Render each active effect outside the lock — scene dicts are replaced
+        # atomically by play/stop, never mutated in place, so this is safe.
+        # Cell strips are immutable after build. Build an ordered list of
+        # (frame, blend) so steps 3b/4 can composite them in play order.
+        effect_frames = []
+        merged_effect = {}
+        for e_scene, e_blend, e_start in effect_specs:
+            if e_scene.get("tempo_sync") and self._tempo_active:
                 # Musical time: beats since anchor, scaled by the per-effect beat
                 # window so the effect's "speed" reads as cycles per <division>
                 # beats (1 = cycles/beat, 2 = cycles per 2 beats, 0.5 = per ½ beat).
-                division = float(effect_scene.get("beat_division", 1.0)) or 1.0
+                division = float(e_scene.get("beat_division", 1.0)) or 1.0
                 t_eff = self.beat_time() / division
             else:
-                t_eff = time.time() - effect_start  # default: wall-clock seconds
-            effect_frame = self._render_effect_frame(effect_scene, t_eff)
-        else:
-            effect_frame = {}
-        # Cache for tools/inspection; harmless under read races.
-        self._effect_dmx = effect_frame
+                t_eff = time.time() - e_start  # default: wall-clock seconds
+            frame = self._render_effect_frame(e_scene, t_eff)
+            if frame:
+                effect_frames.append((frame, e_blend))
+                merged_effect.update(frame)
+        # Cache merged frame for tools/inspection; harmless under read races.
+        self._effect_dmx = merged_effect
 
         # 1. Initialize every patched channel to 0
         normal = {ch: 0.0 for ch in patched}
@@ -1047,33 +1093,28 @@ class LightingEngine:
                 continue
             normal[ch] *= master
 
-        # 3b. Effect layer (Phase 2C). The effect owns every cell of the
-        #     fixtures it lists in fixtures_enabled, so its values
-        #     replace whatever the main scene + master dimmer produced
-        #     on those channels. The effect is NOT scaled by master.
-        #     Singer pods are included here so the effect value is written
-        #     into normal[ch] — step 4 then crossfades that toward the
-        #     singer color. When singer is OFF (sb=0), the effect shows
-        #     through fully. When singer is ON (sb=1), singer wins.
-        if effect_blend > 0.001 and effect_frame:
-            for ch, ev in effect_frame.items():
-                if ch not in normal:
-                    normal[ch] = 0.0
-                cur = normal[ch]
-                normal[ch] = cur + (float(ev) - cur) * effect_blend
+        # 3b. Effect layer (Phase 2C; Task B stacked). Each active effect owns
+        #     the cells of the fixtures it lists, so its values replace whatever
+        #     is below on those channels; entries composite in play order
+        #     (newest on top). Effects are NOT scaled by master. Singer pods are
+        #     included here so the effect value is written into normal[ch] —
+        #     step 4 then crossfades that toward the singer color. When singer is
+        #     OFF (sb=0) the effect shows through; when ON (sb=1) singer wins.
+        for frame, e_blend in effect_frames:
+            for ch, ev in frame.items():
+                cur = normal.get(ch, 0.0)
+                normal[ch] = cur + (float(ev) - cur) * e_blend
 
-        # 4. Singer pod channels: crossfade (main_scene+effect)↔singer-color.
-        #    The "below" value now includes the effect contribution so that
-        #    turning the singer off reveals the effect (or main scene if no
-        #    effect is running) rather than leaving those pods dark.
+        # 4. Singer pod channels: crossfade (main_scene+effects)↔singer-color.
+        #    The "below" value folds in every active effect (in play order) so
+        #    turning the singer off reveals the composited effect (or main scene
+        #    if none are running) rather than leaving those pods dark. With a
+        #    single effect this reduces exactly to the pre-Task-B math.
         for ch in s_chs:
-            main_val   = scene.get(ch, 0) * master
-            # Use whatever step 3b wrote (effect-blended or pure main).
-            # Re-derive cleanly so master scaling is always correct.
-            if effect_blend > 0.001 and ch in effect_frame:
-                below = main_val + (float(effect_frame[ch]) - main_val) * effect_blend
-            else:
-                below = main_val
+            below = scene.get(ch, 0) * master   # master-scaled main value
+            for frame, e_blend in effect_frames:
+                if ch in frame:
+                    below = below + (float(frame[ch]) - below) * e_blend
             singer_val = singer.get(ch, 0) * s_level
             normal[ch] = below + (singer_val - below) * sb
 
@@ -1248,18 +1289,17 @@ class LightingEngine:
         return True
 
     def refresh_active_effect(self, scene_id, scene):
-        """If `scene_id` is the currently-playing EFFECT scene, hot-swap its
-        data live (no re-fade) so an edit-and-save updates immediately. Returns
-        False (no-op) when it isn't the active effect."""
+        """If `scene_id` is an active EFFECT in the stack, hot-swap its data
+        live (no re-fade) so an edit-and-save updates immediately. Returns
+        False (no-op) when it isn't currently an active effect."""
         if scene_id is None:
             return False
         with self._lock:
-            active = (self._current_effect_id == scene_id
-                      and self._current_effect_scene is not None
-                      and self._effect_target == 1.0)
-        if not active:
+            found = any(e["id"] == scene_id and e["target"] == 1.0
+                        for e in self._active_effects)
+        if not found:
             return False
-        self.play_effect_scene(scene, scene_id=scene_id)   # hot-swaps the dict
+        self.play_effect_scene(scene, scene_id=scene_id)   # hot-swaps the entry
         return True
 
     def stop_scene(self, scene_id=None):
@@ -1465,9 +1505,14 @@ class LightingEngine:
             self._sampled_scene_color = None
             return
 
+        # Exclude the cells every active effect (and the editor preview) renders
+        # on, so effects don't sample their own output. Union across the stack.
         exclude = set()
-        if self._current_effect_scene:
-            exclude = set(self._current_effect_scene.get("fixtures_enabled") or [])
+        with self._lock:
+            for e in self._active_effects:
+                exclude |= set(e["scene"].get("fixtures_enabled") or [])
+            if self._preview_effect_scene is not None:
+                exclude |= set(self._preview_effect_scene.get("fixtures_enabled") or [])
 
         accum = {}
         count = 0
@@ -1560,20 +1605,31 @@ class LightingEngine:
         if self._freeze_active:
             return  # idempotent
         with self._lock:
-            # Seed pending list with current live scenes (in order)
+            # Seed pending lists with current live items (in order)
             self._pending_main_ids = [
                 s["id"] for s in self._active_scenes
                 if s["id"] is not None and not s["stopping"]
             ]
-            # No motion/look/effect pending changes yet
-            self._pending_motion = None
-            self._pending_look   = None
-            self._pending_effect = None
+            self._pending_motion_ids = [
+                e["id"] for e in self._active_motions if e["id"] is not None
+            ]
+            self._pending_look_ids = [
+                e["id"] for e in self._active_looks if e["id"] is not None
+            ]
+            self._pending_effect_ids = [
+                e["id"] for e in self._active_effects
+                if e["id"] is not None and e["target"] == 1.0
+            ]
+            self._pending_motion_scenes = {}
+            self._pending_look_scenes   = {}
+            self._pending_effect_scenes = {}
             self._pending_singer = None
             self._pending_master = None
             self._pending_singer_level = None
             self._freeze_active = True
-        log.info("Freeze ENABLED; pending list seeded with %d scenes", len(self._pending_main_ids))
+        log.info("Freeze ENABLED; pending seeded: %d main, %d motion, %d look, %d effect",
+                 len(self._pending_main_ids), len(self._pending_motion_ids),
+                 len(self._pending_look_ids), len(self._pending_effect_ids))
 
     def _exit_freeze(self):
         if not self._freeze_active:
@@ -1583,9 +1639,12 @@ class LightingEngine:
             pending_main_ids = list(self._pending_main_ids)
             pending_main_scenes = dict(self._pending_main_scenes)
             pending_main_fades  = dict(self._pending_main_fades)
-            pending_motion = self._pending_motion
-            pending_look   = self._pending_look
-            pending_effect = self._pending_effect
+            pending_motion_ids    = list(self._pending_motion_ids)
+            pending_motion_scenes = dict(self._pending_motion_scenes)
+            pending_look_ids      = list(self._pending_look_ids)
+            pending_look_scenes   = dict(self._pending_look_scenes)
+            pending_effect_ids    = list(self._pending_effect_ids)
+            pending_effect_scenes = dict(self._pending_effect_scenes)
             pending_singer = self._pending_singer
             pending_master = self._pending_master
             pending_singer_level = self._pending_singer_level
@@ -1593,13 +1652,20 @@ class LightingEngine:
                 s["id"] for s in self._active_scenes
                 if s["id"] is not None and not s["stopping"]
             ]
+            live_motion = [e["id"] for e in self._active_motions if e["id"] is not None]
+            live_look   = [e["id"] for e in self._active_looks   if e["id"] is not None]
+            live_effect = [e["id"] for e in self._active_effects
+                           if e["id"] is not None and e["target"] == 1.0]
             self._freeze_active = False
             self._pending_main_ids    = []
             self._pending_main_scenes = {}
             self._pending_main_fades  = {}
-            self._pending_motion = None
-            self._pending_look   = None
-            self._pending_effect = None
+            self._pending_motion_ids    = []
+            self._pending_motion_scenes = {}
+            self._pending_look_ids      = []
+            self._pending_look_scenes   = {}
+            self._pending_effect_ids    = []
+            self._pending_effect_scenes = {}
             self._pending_singer = None
             self._pending_master = None
             self._pending_singer_level = None
@@ -1608,38 +1674,35 @@ class LightingEngine:
             self._blackout_target = 0.0
 
         # Apply diff for main scenes
-        live_set    = set(live_ids)
         pending_set = set(pending_main_ids)
-        to_stop  = [sid for sid in live_ids if sid not in pending_set]
-        to_start = [sid for sid in pending_main_ids if sid not in live_set]
-        for sid in to_stop:
+        live_set    = set(live_ids)
+        for sid in [i for i in live_ids if i not in pending_set]:
             self.stop_scene(scene_id=sid)
-        for sid in to_start:
+        for sid in [i for i in pending_main_ids if i not in live_set]:
             scene = pending_main_scenes.get(sid)
             fade  = pending_main_fades.get(sid)
             if scene is not None:
                 self.play_scene(scene, launch_fade_ms=fade, scene_id=sid)
 
-        # Apply motion change
-        if pending_motion is not None:
-            if pending_motion.get("action") == "play":
-                self.play_motion_scene(pending_motion["scene"], scene_id=pending_motion.get("id"))
-            elif pending_motion.get("action") == "stop":
-                self.stop_motion_scene()
+        # Apply diff for motion / look / effect stacks (same shape)
+        def _apply_diff(live, pending_ids, pending_scenes, stop_fn, play_fn):
+            pset, lset = set(pending_ids), set(live)
+            for sid in [i for i in live if i not in pset]:
+                stop_fn(sid)
+            for sid in [i for i in pending_ids if i not in lset]:
+                sc = pending_scenes.get(sid)
+                if sc is not None:
+                    play_fn(sc, sid)
 
-        # Apply look change
-        if pending_look is not None:
-            if pending_look.get("action") == "play":
-                self.play_look_scene(pending_look["scene"], scene_id=pending_look.get("id"))
-            elif pending_look.get("action") == "stop":
-                self.stop_look_scene()
-
-        # Apply effect change
-        if pending_effect is not None:
-            if pending_effect.get("action") == "play":
-                self.play_effect_scene(pending_effect["scene"], scene_id=pending_effect.get("id"))
-            elif pending_effect.get("action") == "stop":
-                self.stop_effect_scene()
+        _apply_diff(live_motion, pending_motion_ids, pending_motion_scenes,
+                    lambda sid: self.stop_motion_scene(sid),
+                    lambda sc, sid: self.play_motion_scene(sc, scene_id=sid))
+        _apply_diff(live_look, pending_look_ids, pending_look_scenes,
+                    lambda sid: self.stop_look_scene(sid),
+                    lambda sc, sid: self.play_look_scene(sc, scene_id=sid))
+        _apply_diff(live_effect, pending_effect_ids, pending_effect_scenes,
+                    lambda sid: self.stop_effect_scene(sid),
+                    lambda sc, sid: self.play_effect_scene(sc, scene_id=sid))
 
         # Apply queued raw-control changes (freeze now inactive → live)
         if pending_singer is not None:
@@ -1649,22 +1712,21 @@ class LightingEngine:
         if pending_singer_level is not None:
             self.set_singer_level(pending_singer_level)
 
-        log.info("Freeze DISABLED; applied %d stops, %d starts", len(to_stop), len(to_start))
+        log.info("Freeze DISABLED; applied main diff %d/%d, motion %d, look %d, effect %d",
+                 len([i for i in live_ids if i not in pending_set]),
+                 len([i for i in pending_main_ids if i not in live_set]),
+                 len(pending_motion_ids), len(pending_look_ids), len(pending_effect_ids))
 
     def get_freeze_state(self):
         """Return current freeze state including pending changes for UI display."""
-        def _compact(p):
-            if p is None:
-                return None
-            return {"action": p.get("action"), "id": p.get("id")}
         with self._lock:
             return {
                 "active": self._freeze_active,
                 "includes": dict(self._freeze_includes),
-                "pending_main_ids": list(self._pending_main_ids),
-                "pending_motion": _compact(self._pending_motion),
-                "pending_look":   _compact(self._pending_look),
-                "pending_effect": _compact(self._pending_effect),
+                "pending_main_ids":   list(self._pending_main_ids),
+                "pending_motion_ids": list(self._pending_motion_ids),
+                "pending_look_ids":   list(self._pending_look_ids),
+                "pending_effect_ids": list(self._pending_effect_ids),
                 "pending_singer": self._pending_singer,
                 "pending_master": self._pending_master,
                 "pending_singer_level": self._pending_singer_level,
@@ -1820,109 +1882,153 @@ class LightingEngine:
         if hold_ms > 0:
             self._overlay_stop_event.wait(timeout=hold_ms / 1000.0)
 
-    # ── Mover layer playback (Motion + Look) ───────────────────────────────
+    # ── Mover layer playback (Motion + Look), Task B: stacked ──────────────
+    # Each play adds an entry running its own player thread that writes to its
+    # own entry["dmx"]. The layer composite (in _push_to_dmx) overlays entries
+    # in play order. No layer-level fade (snap); step-internal fades still run.
+    # play_*  = additive "ensure on" (re-playing an id restarts it in place);
+    # stop_*  = remove one id, or all when scene_id is None;
+    # toggle_* = stop if active else play (freeze-aware).
+
+    def _start_mover_entry(self, stack, kind, scene, scene_id):
+        entry = {
+            "id":         scene_id,
+            "name":       scene.get("name"),
+            "scene":      scene,
+            "dmx":        {},
+            "thread":     None,
+            "stop_event": threading.Event(),
+        }
+        with self._lock:
+            stack.append(entry)
+        entry["thread"] = threading.Thread(
+            target=self._mover_loop, args=(entry, kind), daemon=True,
+            name=f"{kind}-player",
+        )
+        entry["thread"].start()
+        return entry
+
+    def _stop_mover_entry(self, stack, scene_id):
+        with self._lock:
+            target = next((e for e in stack if e["id"] == scene_id), None)
+            if target is None:
+                return
+            stack.remove(target)
+        target["stop_event"].set()
+        if target["thread"] and target["thread"].is_alive():
+            target["thread"].join(timeout=0.5)
+
+    def _stop_all_mover_entries(self, stack):
+        with self._lock:
+            entries = list(stack)
+            stack.clear()
+        for e in entries:
+            e["stop_event"].set()
+            if e["thread"] and e["thread"].is_alive():
+                e["thread"].join(timeout=0.5)
 
     def play_motion_scene(self, scene, scene_id=None):
-        """Start playing a mover_motion scene (pan/tilt only).
-        Queued under freeze if 'motion' is in freeze_includes."""
+        """Add (ensure-on) a mover_motion scene (pan/tilt). Re-playing an id
+        already in the stack restarts it in place. Queued under freeze."""
         if self._is_frozen_for("motion"):
             with self._lock:
-                # Toggle behavior: if pending says "play this same scene", clear
-                if self._pending_motion and self._pending_motion.get("id") == scene_id:
-                    self._pending_motion = None
-                else:
-                    self._pending_motion = {
-                        "action": "play", "id": scene_id, "scene": scene
-                    }
+                if scene_id is not None and scene_id not in self._pending_motion_ids:
+                    self._pending_motion_ids.append(scene_id)
+                    self._pending_motion_scenes[scene_id] = scene
             return
-        self._stop_motion_thread()
-        self._motion_stop_event.clear()
-        with self._lock:
-            self._current_motion_name = scene.get("name")
-            self._current_motion_id   = scene_id
-        self._motion_thread = threading.Thread(
-            target=self._mover_loop,
-            args=(scene, "motion"),
-            daemon=True,
-            name="motion-player",
-        )
-        self._motion_thread.start()
+        if scene_id is not None:
+            with self._lock:
+                exists = any(e["id"] == scene_id for e in self._active_motions)
+            if exists:
+                self._stop_mover_entry(self._active_motions, scene_id)
+        self._start_mover_entry(self._active_motions, "motion", scene, scene_id)
 
-    def stop_motion_scene(self):
-        """Stop the playing mover_motion scene.
-        Queued under freeze if 'motion' is in freeze_includes."""
+    def stop_motion_scene(self, scene_id=None):
+        """Stop one mover_motion entry (scene_id) or all (None). Queued under
+        freeze: drop a specific id from pending, or clear pending when None."""
         if self._is_frozen_for("motion"):
             with self._lock:
-                # If a play was pending, cancel it; otherwise queue a stop
-                if self._pending_motion and self._pending_motion.get("action") == "play":
-                    self._pending_motion = None
-                else:
-                    self._pending_motion = {"action": "stop"}
+                if scene_id is None:
+                    self._pending_motion_ids = []
+                elif scene_id in self._pending_motion_ids:
+                    self._pending_motion_ids.remove(scene_id)
             return
-        self._stop_motion_thread()
+        if scene_id is None:
+            self._stop_all_mover_entries(self._active_motions)
+        else:
+            self._stop_mover_entry(self._active_motions, scene_id)
+
+    def toggle_motion_scene(self, scene, scene_id=None):
+        """Tap-to-toggle: stop this id if active, else play it. Freeze-aware."""
+        if self._is_frozen_for("motion"):
+            with self._lock:
+                if scene_id in self._pending_motion_ids:
+                    self._pending_motion_ids.remove(scene_id)
+                else:
+                    self._pending_motion_ids.append(scene_id)
+                    self._pending_motion_scenes[scene_id] = scene
+            return
         with self._lock:
-            self._motion_dmx          = {}
-            self._current_motion_name = None
-            self._current_motion_id   = None
+            on = any(e["id"] == scene_id for e in self._active_motions)
+        if on:
+            self.stop_motion_scene(scene_id)
+        else:
+            self.play_motion_scene(scene, scene_id=scene_id)
 
     def play_look_scene(self, scene, scene_id=None):
-        """Start playing a mover_look scene (dimmer/color/gobo/etc.).
-        Queued under freeze if 'look' is in freeze_includes."""
+        """Add (ensure-on) a mover_look scene (dimmer/color/gobo/etc.). Queued
+        under freeze."""
         if self._is_frozen_for("look"):
             with self._lock:
-                if self._pending_look and self._pending_look.get("id") == scene_id:
-                    self._pending_look = None
-                else:
-                    self._pending_look = {
-                        "action": "play", "id": scene_id, "scene": scene
-                    }
+                if scene_id is not None and scene_id not in self._pending_look_ids:
+                    self._pending_look_ids.append(scene_id)
+                    self._pending_look_scenes[scene_id] = scene
             return
-        self._stop_look_thread()
-        self._look_stop_event.clear()
-        with self._lock:
-            self._current_look_name = scene.get("name")
-            self._current_look_id   = scene_id
-        self._look_thread = threading.Thread(
-            target=self._mover_loop,
-            args=(scene, "look"),
-            daemon=True,
-            name="look-player",
-        )
-        self._look_thread.start()
+        if scene_id is not None:
+            with self._lock:
+                exists = any(e["id"] == scene_id for e in self._active_looks)
+            if exists:
+                self._stop_mover_entry(self._active_looks, scene_id)
+        self._start_mover_entry(self._active_looks, "look", scene, scene_id)
 
-    def stop_look_scene(self):
-        """Stop the playing mover_look scene.
-        Queued under freeze if 'look' is in freeze_includes."""
+    def stop_look_scene(self, scene_id=None):
+        """Stop one mover_look entry (scene_id) or all (None). Queued under
+        freeze like motion."""
         if self._is_frozen_for("look"):
             with self._lock:
-                if self._pending_look and self._pending_look.get("action") == "play":
-                    self._pending_look = None
-                else:
-                    self._pending_look = {"action": "stop"}
+                if scene_id is None:
+                    self._pending_look_ids = []
+                elif scene_id in self._pending_look_ids:
+                    self._pending_look_ids.remove(scene_id)
             return
-        self._stop_look_thread()
+        if scene_id is None:
+            self._stop_all_mover_entries(self._active_looks)
+        else:
+            self._stop_mover_entry(self._active_looks, scene_id)
+
+    def toggle_look_scene(self, scene, scene_id=None):
+        """Tap-to-toggle for looks. Freeze-aware."""
+        if self._is_frozen_for("look"):
+            with self._lock:
+                if scene_id in self._pending_look_ids:
+                    self._pending_look_ids.remove(scene_id)
+                else:
+                    self._pending_look_ids.append(scene_id)
+                    self._pending_look_scenes[scene_id] = scene
+            return
         with self._lock:
-            self._look_dmx          = {}
-            self._current_look_name = None
-            self._current_look_id   = None
+            on = any(e["id"] == scene_id for e in self._active_looks)
+        if on:
+            self.stop_look_scene(scene_id)
+        else:
+            self.play_look_scene(scene, scene_id=scene_id)
 
-    def _stop_motion_thread(self):
-        self._motion_stop_event.set()
-        if self._motion_thread and self._motion_thread.is_alive():
-            self._motion_thread.join(timeout=1.0)
-        self._motion_thread = None
-
-    def _stop_look_thread(self):
-        self._look_stop_event.set()
-        if self._look_thread and self._look_thread.is_alive():
-            self._look_thread.join(timeout=1.0)
-        self._look_thread = None
-
-    def _mover_loop(self, scene, kind):
-        """kind: 'motion' or 'look'. Loops the scene continuously, writing to
-        the appropriate DMX dict."""
+    def _mover_loop(self, entry, kind):
+        """kind: 'motion' or 'look'. Loops the entry's scene continuously,
+        writing to entry['dmx'] until the entry's stop_event is set."""
+        scene = entry["scene"]
         scene_type = "mover_motion" if kind == "motion" else "mover_look"
-        stop_event = self._motion_stop_event if kind == "motion" else self._look_stop_event
+        stop_event = entry["stop_event"]
         steps = scene.get("steps", [])
         if not steps:
             return
@@ -1933,13 +2039,13 @@ class LightingEngine:
                 target  = self.resolve_step(step.get("fixtures", {}), scene_type=scene_type)
                 fade_ms = max(0, int(step.get("fade", 0)))
                 hold_ms = max(0, int(step.get("hold", 500)))
-                self._execute_mover_step(kind, target, fade_ms, hold_ms)
+                self._execute_mover_step(entry, target, fade_ms, hold_ms)
 
-    def _execute_mover_step(self, kind, target_dmx, fade_ms, hold_ms):
-        """Fade-and-hold for a mover scene step. Writes to _motion_dmx or _look_dmx."""
-        stop_event = self._motion_stop_event if kind == "motion" else self._look_stop_event
+    def _execute_mover_step(self, entry, target_dmx, fade_ms, hold_ms):
+        """Fade-and-hold for one mover entry's step. Writes to entry['dmx']."""
+        stop_event = entry["stop_event"]
         with self._lock:
-            start_dmx = dict(self._motion_dmx if kind == "motion" else self._look_dmx)
+            start_dmx = dict(entry["dmx"])
         for ch in target_dmx:
             if ch not in start_dmx:
                 start_dmx[ch] = 0
@@ -1954,19 +2060,13 @@ class LightingEngine:
                 for ch, tgt in target_dmx.items():
                     frame[ch] = int(start_dmx.get(ch, 0) + (tgt - start_dmx.get(ch, 0)) * t)
                 with self._lock:
-                    if kind == "motion":
-                        self._motion_dmx = frame
-                    else:
-                        self._look_dmx = frame
+                    entry["dmx"] = frame
                 if t >= 1.0:
                     break
                 time.sleep(0.02)
         else:
             with self._lock:
-                if kind == "motion":
-                    self._motion_dmx = dict(target_dmx)
-                else:
-                    self._look_dmx = dict(target_dmx)
+                entry["dmx"] = dict(target_dmx)
 
         stop_event.wait(timeout=hold_ms / 1000.0)
 
@@ -2263,21 +2363,23 @@ class LightingEngine:
                 for s in self._active_scenes
                 if not (s["id"] or "").startswith("__cycler")
             ]
+            # Stacked layers (Task B). Each list is bottom-first (play order),
+            # which is the order presets capture and re-apply.
+            motions = [{"id": e["id"], "name": e["name"]} for e in self._active_motions]
+            looks   = [{"id": e["id"], "name": e["name"]} for e in self._active_looks]
+            effects = [{"id": e["id"], "name": e["name"], "stopping": e["target"] == 0.0}
+                       for e in self._active_effects]
+            # Topmost-active (non-stopping) per layer for legacy single fields.
+            top_motion = motions[-1] if motions else None
+            top_look   = looks[-1] if looks else None
+            top_effect = next((e for e in reversed(effects) if not e["stopping"]), None)
+            max_effect_blend = max((e["blend"] for e in self._active_effects), default=0.0)
             freeze = {
                 "active": self._freeze_active,
-                "pending_main_ids": list(self._pending_main_ids),
-                "pending_motion_id":
-                    self._pending_motion.get("id") if self._pending_motion else None,
-                "pending_motion_action":
-                    self._pending_motion.get("action") if self._pending_motion else None,
-                "pending_look_id":
-                    self._pending_look.get("id") if self._pending_look else None,
-                "pending_look_action":
-                    self._pending_look.get("action") if self._pending_look else None,
-                "pending_effect_id":
-                    self._pending_effect.get("id") if self._pending_effect else None,
-                "pending_effect_action":
-                    self._pending_effect.get("action") if self._pending_effect else None,
+                "pending_main_ids":   list(self._pending_main_ids),
+                "pending_motion_ids": list(self._pending_motion_ids),
+                "pending_look_ids":   list(self._pending_look_ids),
+                "pending_effect_ids": list(self._pending_effect_ids),
                 "pending_singer": self._pending_singer,
                 "pending_master": self._pending_master,
                 "pending_singer_level": self._pending_singer_level,
@@ -2285,6 +2387,10 @@ class LightingEngine:
             return {
                 # Multi-scene state: list of currently active main scenes
                 "scenes":            actives,
+                # Stacked motion / look / effect (Task B)
+                "motions":           motions,
+                "looks":             looks,
+                "effects":           effects,
                 # Backward-compat single-scene fields (uses most recent active)
                 "current_scene":     actives[-1]["name"] if actives else None,
                 "current_scene_id":  actives[-1]["id"]   if actives else None,
@@ -2297,13 +2403,15 @@ class LightingEngine:
                 "overlay_active":    self._overlay_target == 1.0,
                 "overlay_blend":     round(self._overlay_blend, 3),
                 "overlay_name":      self._current_overlay_name,
-                "current_motion":    self._current_motion_name,
-                "current_motion_id": self._current_motion_id,
-                "current_look":      self._current_look_name,
-                "current_look_id":   self._current_look_id,
-                "current_effect":    self._current_effect_name,
-                "current_effect_id": self._current_effect_id,
-                "effect_blend":      round(self._effect_blend, 3),
+                # Legacy single fields = topmost active of each stack (deprecated;
+                # prefer the motions/looks/effects lists above).
+                "current_motion":    top_motion["name"] if top_motion else None,
+                "current_motion_id": top_motion["id"]   if top_motion else None,
+                "current_look":      top_look["name"] if top_look else None,
+                "current_look_id":   top_look["id"]   if top_look else None,
+                "current_effect":    top_effect["name"] if top_effect else None,
+                "current_effect_id": top_effect["id"]   if top_effect else None,
+                "effect_blend":      round(max_effect_blend, 3),
                 "dmx_connected":     self._dmx.connected,
                 "freeze":            freeze,
                 "tempo": {
@@ -2331,16 +2439,16 @@ class LightingEngine:
         self._output_running = False
         self.stop_all_scenes()
         self._stop_overlay_thread()
-        self._stop_motion_thread()
-        self._stop_look_thread()
+        self._stop_all_mover_entries(self._active_motions)
+        self._stop_all_mover_entries(self._active_looks)
         self._stop_cycler_thread()
-        # Effect layer has no thread of its own — just clear state.
+        # Effect layer has no threads of its own — just clear state.
         with self._lock:
-            self._current_effect_scene = None
-            self._current_effect_id    = None
-            self._effect_target        = 0.0
-            self._effect_blend         = 0.0
-            self._effect_dmx           = {}
+            self._active_effects        = []
+            self._preview_effect_scene  = None
+            self._preview_effect_target = 0.0
+            self._preview_effect_blend  = 0.0
+            self._effect_dmx            = {}
 
     def set_dmx(self, new_dmx):
         """Hot-swap the DMX output driver. Returns the previous driver so the
@@ -2358,8 +2466,9 @@ class LightingEngine:
         """Write a live preview frame to the appropriate DMX slot for the
         scene type being edited. For main scenes, the preview takes over the
         composite output entirely (active scenes keep running but their values
-        are hidden until preview clears). For motion/look, the preview replaces
-        that layer's playing scene.
+        are hidden until preview clears). For motion/look, the preview OVERRIDES
+        that layer's composited stack (the live stack keeps running underneath
+        and resumes on clear).
 
         scene_type: 'main' | 'mover_motion' | 'mover_look'
         """
@@ -2384,37 +2493,29 @@ class LightingEngine:
                 self._preview_dmx    = target
                 self._preview_active = True
         elif scene_type == "mover_motion":
-            self._stop_motion_thread()
             with self._lock:
-                self._motion_dmx          = target
-                self._current_motion_name = "🟢 Live Preview"
-                self._current_motion_id   = self.PREVIEW_TAG
+                self._preview_motion_dmx    = target
+                self._preview_motion_active = True
         elif scene_type == "mover_look":
-            self._stop_look_thread()
             with self._lock:
-                self._look_dmx          = target
-                self._current_look_name = "🟢 Live Preview"
-                self._current_look_id   = self.PREVIEW_TAG
+                self._preview_look_dmx    = target
+                self._preview_look_active = True
 
     def preview_clear(self, scene_type):
         """Clear the preview in the given slot, returning that slot to empty
-        so playback can resume normally on the next scene start."""
+        so the live stack composite shows through again."""
         if scene_type == "main":
             with self._lock:
                 self._preview_active = False
                 self._preview_dmx    = {}
         elif scene_type == "mover_motion":
             with self._lock:
-                if self._current_motion_id == self.PREVIEW_TAG:
-                    self._motion_dmx          = {}
-                    self._current_motion_name = None
-                    self._current_motion_id   = None
+                self._preview_motion_active = False
+                self._preview_motion_dmx    = {}
         elif scene_type == "mover_look":
             with self._lock:
-                if self._current_look_id == self.PREVIEW_TAG:
-                    self._look_dmx          = {}
-                    self._current_look_name = None
-                    self._current_look_id   = None
+                self._preview_look_active = False
+                self._preview_look_dmx    = {}
 
     # ── Raw channel test (fixture builder discovery probe) ────────────────
     #
@@ -2466,8 +2567,8 @@ class LightingEngine:
             self._freeze_includes = self._load_freeze_includes(show_config)
         self.stop_all_scenes()
         self._stop_overlay_thread()
-        self._stop_motion_thread()
-        self._stop_look_thread()
+        self._stop_all_mover_entries(self._active_motions)
+        self._stop_all_mover_entries(self._active_looks)
         self._stop_cycler_thread()
         with self._lock:
             self._scene_dmx            = {}
@@ -2478,9 +2579,12 @@ class LightingEngine:
             self._pending_main_ids     = []
             self._pending_main_scenes  = {}
             self._pending_main_fades   = {}
-            self._pending_motion       = None
-            self._pending_look         = None
-            self._pending_effect       = None
+            self._pending_motion_ids    = []
+            self._pending_motion_scenes = {}
+            self._pending_look_ids      = []
+            self._pending_look_scenes   = {}
+            self._pending_effect_ids    = []
+            self._pending_effect_scenes = {}
             # Reset tempo / cycler state when changing shows
             self._tempo_active         = False
             self._bpm                  = 0.0
@@ -2498,19 +2602,19 @@ class LightingEngine:
             self._overlay_blend        = 0.0
             self._overlay_target       = 0.0
             self._current_overlay_name = None
-            self._motion_dmx           = {}
-            self._current_motion_name  = None
-            self._current_motion_id    = None
-            self._look_dmx             = {}
-            self._current_look_name    = None
-            self._current_look_id      = None
-            # Effect layer reset (no thread to stop)
-            self._effect_dmx           = {}
-            self._effect_blend         = 0.0
-            self._effect_target        = 0.0
-            self._current_effect_scene = None
-            self._current_effect_id    = None
-            self._current_effect_name  = None
+            # Mover stacks reset (threads stopped above)
+            self._active_motions        = []
+            self._preview_motion_dmx    = {}
+            self._preview_motion_active = False
+            self._active_looks          = []
+            self._preview_look_dmx      = {}
+            self._preview_look_active   = False
+            # Effect stack reset (no threads to stop)
+            self._active_effects        = []
+            self._effect_dmx            = {}
+            self._preview_effect_scene  = None
+            self._preview_effect_blend  = 0.0
+            self._preview_effect_target = 0.0
             self._dimmer_channels     = self._get_dimmer_channels()
             self._singer_channels     = self._get_singer_channels()
             self._singer_dmx_full     = self._build_singer_dmx()

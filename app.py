@@ -619,9 +619,11 @@ def api_cycler_toggle():
 
 @app.route("/api/motion/<scene_id>", methods=["POST"])
 def api_play_motion(scene_id):
+    """Tap-to-toggle a motion in the stack: adds it if not running, removes it
+    if it is. Stacked (Task B) — multiple motions can run at once."""
     try:
         scene = load_library_scene(scene_id)
-        engine.play_motion_scene(scene, scene_id=scene_id)
+        engine.toggle_motion_scene(scene, scene_id=scene_id)
         return jsonify({"ok": True})
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "Scene not found"}), 404
@@ -630,14 +632,22 @@ def api_play_motion(scene_id):
 
 @app.route("/api/motion/stop", methods=["POST"])
 def api_stop_motion():
+    """Stop ALL motions in the stack."""
     engine.stop_motion_scene()
+    return jsonify({"ok": True})
+
+@app.route("/api/motion/stop/<scene_id>", methods=["POST"])
+def api_stop_motion_one(scene_id):
+    """Stop a single motion by id."""
+    engine.stop_motion_scene(scene_id=scene_id)
     return jsonify({"ok": True})
 
 @app.route("/api/look/<scene_id>", methods=["POST"])
 def api_play_look(scene_id):
+    """Tap-to-toggle a look in the stack (stacked — multiple looks at once)."""
     try:
         scene = load_library_scene(scene_id)
-        engine.play_look_scene(scene, scene_id=scene_id)
+        engine.toggle_look_scene(scene, scene_id=scene_id)
         return jsonify({"ok": True})
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "Scene not found"}), 404
@@ -646,7 +656,14 @@ def api_play_look(scene_id):
 
 @app.route("/api/look/stop", methods=["POST"])
 def api_stop_look():
+    """Stop ALL looks in the stack."""
     engine.stop_look_scene()
+    return jsonify({"ok": True})
+
+@app.route("/api/look/stop/<scene_id>", methods=["POST"])
+def api_stop_look_one(scene_id):
+    """Stop a single look by id."""
+    engine.stop_look_scene(scene_id=scene_id)
     return jsonify({"ok": True})
 
 # ── Live preview from editor ──────────────────────────────────────────────
@@ -1247,17 +1264,14 @@ def api_effects_registry():
 
 @app.route("/api/effect/<scene_id>", methods=["POST"])
 def api_play_effect(scene_id):
-    """Play an effect scene by library id. Body may include `toggle: true`
-    to make a repeat-tap stop the scene."""
+    """Tap-to-toggle an effect in the stack: plays it if not active, stops it
+    if it is. Stacked (Task B) — multiple effects can layer at once. (The old
+    body flag `toggle` is accepted but ignored; toggling is now the default.)"""
     try:
         scene = load_library_scene(scene_id)
         if (scene.get("scene_type") or "main") != "effect":
             return jsonify({"ok": False, "error": "Not an effect scene"}), 400
-        data = request.json or {}
-        if data.get("toggle"):
-            engine.toggle_effect_scene(scene, scene_id=scene_id)
-        else:
-            engine.play_effect_scene(scene, scene_id=scene_id)
+        engine.toggle_effect_scene(scene, scene_id=scene_id)
         return jsonify({"ok": True})
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "Scene not found"}), 404
@@ -1266,7 +1280,14 @@ def api_play_effect(scene_id):
 
 @app.route("/api/effect/stop", methods=["POST"])
 def api_stop_effect():
+    """Stop ALL effects in the stack."""
     engine.stop_effect_scene()
+    return jsonify({"ok": True})
+
+@app.route("/api/effect/stop/<scene_id>", methods=["POST"])
+def api_stop_effect_one(scene_id):
+    """Stop a single effect by id."""
+    engine.stop_effect_scene(scene_id=scene_id)
     return jsonify({"ok": True})
 
 @app.route("/api/effect/preview", methods=["POST"])
