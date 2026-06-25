@@ -312,8 +312,9 @@
         <svg id="gen-pad" viewBox="-6 -6 267 267" preserveAspectRatio="xMidYMid meet"
              style="width:100%;aspect-ratio:1/1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;touch-action:none;display:block;"></svg>
       </div>
-      <div style="display:flex;justify-content:space-between;width:100%;max-width:300px;font-size:0.62rem;color:var(--sub);">
-        <span>Pan →</span><span>Tilt ↑ · drag ◍ to move, ◻ to scale</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%;max-width:300px;gap:8px;">
+        <button type="button" id="gen-anim-btn" class="shapeb" style="padding:5px 11px;" onclick="toggleGenAnim()">⏸ Pause</button>
+        <span style="font-size:0.62rem;color:var(--sub);text-align:right;">Pan → · Tilt ↑ · drag ◍ move, ◻ scale · dots = preview</span>
       </div>
     </div>
 
@@ -1797,6 +1798,13 @@ let genFixtures = MOVERS.map(m => m.id);
 let genLit = new Set(genFixtures);   // which movers are lit during live aiming
 let phaseCfg = { mode: 'even', spread: 1.0, offsets: {} };
 
+// On-screen animated preview state (dots orbiting the pad).
+let genAnimDots = [];
+let genAnimRunning = false;
+let genAnimCycles = 0;
+let genAnimLastTs = null;
+let genAnimRAF = null;
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 // JS mirror of mover_gen.unit_shape — returns [x,y] in [-1,1].
@@ -1845,6 +1853,7 @@ function applyGenModeUI() {
   if (editCard)  editCard.style.display  = genMode ? 'none' : '';
   if (genCard)   genCard.style.display   = genMode ? '' : 'none';
   if (genMode) renderGenerator();
+  if (genMode) startGenAnim(); else stopGenAnim();
   // If Live is on, swap which preview driver is running for the new mode.
   if (liveMode) {
     if (genMode) { stopLivePreview(); startGenPreview(); }
@@ -2110,20 +2119,24 @@ function renderGenPad() {
   svg.appendChild(mk('path', {d: d, fill: 'none', stroke: '#3b82f6',
     'stroke-width': 1.6, opacity: 0.85}));
 
-  // Per-fixture phase dots (t=0 positions)
+  // Per-fixture dots — orbit the loop in real time (see genAnimTick). Built
+  // here so they survive rebuilds (drag/slider) and re-anchor to live phases.
+  genAnimDots = [];
   const n = genFixtures.length;
   genFixtures.forEach((id, i) => {
     const ph = genPhaseFor(i, n, id);
-    const uxy = unitShape(generator.shape, ph);
-    const pan = clamp255(cp + sp * uxy[0]), tilt = clamp255(ct + st * uxy[1]);
-    const sxy = dmxToSvg(pan, tilt);
-    svg.appendChild(mk('circle', {cx: sxy[0], cy: sxy[1], r: 5.5,
-      fill: '#22c55e', stroke: '#0d0d0d', 'stroke-width': 1.2}));
-    const lbl = mk('text', {x: sxy[0], y: sxy[1] + 2.6, 'text-anchor': 'middle',
+    const dot = mk('circle', {cx: 0, cy: 0, r: 5.5,
+      fill: '#22c55e', stroke: '#0d0d0d', 'stroke-width': 1.2});
+    dot.style.pointerEvents = 'none';
+    svg.appendChild(dot);
+    const lbl = mk('text', {x: 0, y: 0, 'text-anchor': 'middle',
       'font-size': 6, fill: '#0d0d0d', 'font-weight': 700});
+    lbl.style.pointerEvents = 'none';
     lbl.textContent = (i + 1);
     svg.appendChild(lbl);
+    genAnimDots.push({dot: dot, label: lbl, phase: ph});
   });
+  positionAnimDots(genAnimRunning ? genAnimCycles : 0);
 
   // Center handle (drag to move)
   const hc = dmxToSvg(cp, ct);
@@ -2141,6 +2154,71 @@ function renderGenPad() {
   sh.addEventListener('pointerdown', (e) => startPadDrag(e, 'scale'));
   svg.appendChild(sh);
 }
+
+// Position the orbiting dots for a given time (in cycles). Cheap: only moves
+// existing elements, no DOM rebuild — safe to call every animation frame.
+function positionAnimDots(tEff) {
+  if (!genAnimDots || !genAnimDots.length) return;
+  const dir = (generator.direction == -1) ? -1 : 1;
+  const cp = generator.center_pan, ct = generator.center_tilt;
+  const sp = generator.size_pan, st = generator.size_tilt;
+  genAnimDots.forEach(d => {
+    const uxy = unitShape(generator.shape, dir * tEff + d.phase);
+    const pan = clamp255(cp + sp * uxy[0]), tilt = clamp255(ct + st * uxy[1]);
+    const sxy = dmxToSvg(pan, tilt);
+    d.dot.setAttribute('cx', sxy[0]); d.dot.setAttribute('cy', sxy[1]);
+    d.label.setAttribute('x', sxy[0]); d.label.setAttribute('y', sxy[1] + 2.6);
+  });
+}
+
+// rAF loop: advance the on-screen preview by real elapsed time / period, so
+// changing Seconds/loop smoothly changes the rate and Pause freezes it. Pauses
+// itself when the generator card isn't showing or the tab is hidden.
+function genAnimTick(ts) {
+  if (genAnimLastTs == null) genAnimLastTs = ts;
+  const dt = (ts - genAnimLastTs) / 1000;
+  genAnimLastTs = ts;
+  if (genAnimRunning) {
+    const period = Math.max(0.05, 1 / Math.max(1e-6, +generator.speed));
+    genAnimCycles += dt / period;
+    positionAnimDots(genAnimCycles);
+  }
+  if (genMode && !document.hidden) {
+    genAnimRAF = requestAnimationFrame(genAnimTick);
+  } else {
+    genAnimRAF = null;
+  }
+}
+function startGenAnim() {
+  if (!genMode) return;
+  genAnimRunning = true;
+  genAnimLastTs = null;
+  updateGenAnimBtn();
+  if (!genAnimRAF) genAnimRAF = requestAnimationFrame(genAnimTick);
+}
+function stopGenAnim() {
+  if (genAnimRAF) { cancelAnimationFrame(genAnimRAF); genAnimRAF = null; }
+  genAnimLastTs = null;
+}
+function toggleGenAnim() {
+  genAnimRunning = !genAnimRunning;
+  updateGenAnimBtn();
+  if (genAnimRunning) {
+    genAnimLastTs = null;
+    if (!genAnimRAF && genMode) genAnimRAF = requestAnimationFrame(genAnimTick);
+  }
+}
+function updateGenAnimBtn() {
+  const b = document.getElementById('gen-anim-btn');
+  if (b) b.textContent = genAnimRunning ? '⏸ Pause' : '▶ Play';
+}
+// Resume the loop when the tab/window comes back into view.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && genMode && genAnimRunning && !genAnimRAF) {
+    genAnimLastTs = null;
+    genAnimRAF = requestAnimationFrame(genAnimTick);
+  }
+});
 
 let _padDrag = null;
 function padEventToDmx(e) {
