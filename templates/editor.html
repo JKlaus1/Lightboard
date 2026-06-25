@@ -531,7 +531,7 @@ function toggleLive() {
     btn.style.background = '#2e5e2e';
     btn.style.borderColor = '#4eae4e';
     btn.style.color = '#fff';
-    if (genMode) startGenPreview();   // animate the generator on the rig
+    if (genMode) { startGenAnim(); startGenPreview(); }  // shared clock drives both
     else sendLivePreview();           // push the current step immediately
   } else {
     btn.innerHTML = '⚪ LIVE';
@@ -2257,9 +2257,9 @@ function startPadDrag(e, which) {
 // When Live is on in generator mode, compute the shape frame in JS and push it
 // to /api/preview ~25x/sec so the actual movers run the pattern. Only pattern
 // fixtures are sent (disabled movers stay put); `lit` controls which are lit
-// for aiming. Preview timing always uses the Seconds/loop rate.
+// for aiming. The rig reads the SAME genAnimCycles clock as the on-screen dots,
+// so the beam and its dot stay phase-locked (and Pause freezes both together).
 let genPreviewTimer = null;
-let genPreviewT0 = 0;
 
 function genFrameAt(tEff) {
   const n = genFixtures.length;
@@ -2282,9 +2282,7 @@ function genFrameAt(tEff) {
 
 function genPreviewTick() {
   if (!liveMode || !genMode || !genFixtures.length) return;
-  const period = Math.max(0.05, 1 / Math.max(1e-6, +generator.speed));
-  const tEff = ((performance.now() / 1000) - genPreviewT0) / period;
-  const fixtures = genFrameAt(tEff);
+  const fixtures = genFrameAt(genAnimCycles);   // same clock as the screen dots
   const lit = genFixtures.filter(id => genLit.has(id));
   fetch('/api/preview', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2294,7 +2292,6 @@ function genPreviewTick() {
 
 function startGenPreview() {
   stopGenPreview();
-  genPreviewT0 = performance.now() / 1000;
   genPreviewTimer = setInterval(genPreviewTick, 40);   // ~25 fps
   genPreviewTick();
 }
