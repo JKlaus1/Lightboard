@@ -1739,6 +1739,7 @@ function saveScene() {
     body: JSON.stringify(payload),
   }).then(r => r.json()).then(d => {
     if (d.ok) {
+      endLivePreviewNow();   // release the rig before leaving
       // If this is a new scene, auto-enable it in the current show
       if (!EXISTING_ID && d.id) {
         autoEnableAndExit(d.id);
@@ -1772,13 +1773,13 @@ function deleteScene() {
   if (!confirm(`Delete "${name}" from the library? This cannot be undone.`)) return;
   fetch(`/api/library/scene/${EXISTING_ID}`, { method: 'DELETE' })
     .then(r => r.json()).then(d => {
-      if (d.ok) location.href = RETURN_PATH;
+      if (d.ok) { endLivePreviewNow(); location.href = RETURN_PATH; }
       else alert('Delete failed: ' + d.error);
     });
 }
 
 function cancelEdit() {
-  if (confirm('Discard changes?')) location.href = RETURN_PATH;
+  if (confirm('Discard changes?')) { endLivePreviewNow(); location.href = RETURN_PATH; }
 }
 
 // ══ Mover Motion Generator ════════════════════════════════════════════════
@@ -2286,7 +2287,7 @@ function genPreviewTick() {
   const lit = genFixtures.filter(id => genLit.has(id));
   fetch('/api/preview', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scene_type: 'mover_motion', fixtures, lit }),
+    body: JSON.stringify({ scene_type: 'mover_motion', fixtures, lit, ephemeral: true }),
   }).catch(() => {});
 }
 
@@ -2297,6 +2298,15 @@ function startGenPreview() {
 }
 function stopGenPreview() {
   if (genPreviewTimer) { clearInterval(genPreviewTimer); genPreviewTimer = null; }
+}
+
+// Tear down every live-preview driver and tell the engine to release the
+// override now, so exiting the editor returns the rig to the live stack
+// immediately (the engine's TTL is the backstop if this never lands).
+function endLivePreviewNow() {
+  stopGenPreview();
+  stopGenAnim();
+  stopLivePreview();   // POSTs /api/preview/stop for SCENE_TYPE
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────

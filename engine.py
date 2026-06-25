@@ -48,6 +48,9 @@ log = logging.getLogger(__name__)
 class LightingEngine:
 
     OUTPUT_HZ = 40   # how often the output thread updates DMX
+    # A streamed (ephemeral) motion preview that goes this long without a
+    # refresh is auto-released, returning the rig to the live stack.
+    PREVIEW_EPHEMERAL_TTL = 0.4   # seconds
 
     def __init__(self, dmx, show_config):
         self._dmx    = dmx
@@ -160,6 +163,14 @@ class LightingEngine:
         # the frame being edited. Kept out of the stack and the freeze queue.
         self._preview_motion_dmx    = {}
         self._preview_motion_active = False
+        # Dead-man's-switch for *streamed* motion previews (the generator's live
+        # rig preview pushes a frame ~25x/sec). If an ephemeral preview isn't
+        # refreshed within PREVIEW_EPHEMERAL_TTL, the output loop auto-releases
+        # it so the rig returns to the live stack the moment the stream stops —
+        # on exit, Live-off, tab close, network drop, or crash. One-shot step
+        # previews are not ephemeral and persist until explicitly cleared.
+        self._preview_motion_ephemeral = False
+        self._preview_motion_ts        = 0.0
 
         # Mover Look scene layer (Task B: stacked) — dimmer/color/gobo/prism
         # etc. of movers. Same stack + preview-slot shape as motion.
@@ -1015,6 +1026,14 @@ class LightingEngine:
         # directly (DMX monitor's snapshot path, etc.)
         with self._lock:
             self._scene_dmx = scene
+            # An ephemeral (streamed) motion preview that hasn't been refreshed
+            # within the TTL is auto-released here, so the rig falls back to the
+            # live motion stack the instant the editor's stream stops.
+            if (self._preview_motion_active and self._preview_motion_ephemeral
+                    and (time.time() - self._preview_motion_ts) > self.PREVIEW_EPHEMERAL_TTL):
+                self._preview_motion_active    = False
+                self._preview_motion_ephemeral = False
+                self._preview_motion_dmx       = {}
             # Stacked motion/look: composite each layer (preview overrides).
             if self._preview_motion_active:
                 motion = dict(self._preview_motion_dmx)
@@ -2550,7 +2569,7 @@ class LightingEngine:
 
     PREVIEW_TAG = "__preview__"
 
-    def preview_set(self, scene_type, step_fixtures, lit=None):
+    def preview_set(self, scene_type, step_fixtures, lit=None, ephemeral=False):
         """Write a live preview frame to the appropriate DMX slot for the
         scene type being edited. For main scenes, the preview takes over the
         composite output entirely (active scenes keep running but their values
@@ -2564,6 +2583,10 @@ class LightingEngine:
              frame is auto-lit (legacy behavior, used by the step editor). When
              provided, listed movers are lit and the rest are forced dark
              (dimmer=0) so a single fixture can be aimed in isolation.
+        ephemeral: when True (the generator's streamed motion preview), the
+             override self-expires if not refreshed within PREVIEW_EPHEMERAL_TTL,
+             so the rig recovers on its own when the stream stops. One-shot step
+             previews leave this False so they persist until explicitly cleared.
         """
         target = self.resolve_step(step_fixtures or {}, scene_type=scene_type)
 
@@ -2592,8 +2615,10 @@ class LightingEngine:
                 self._preview_active = True
         elif scene_type == "mover_motion":
             with self._lock:
-                self._preview_motion_dmx    = target
-                self._preview_motion_active = True
+                self._preview_motion_dmx       = target
+                self._preview_motion_active    = True
+                self._preview_motion_ephemeral = bool(ephemeral)
+                self._preview_motion_ts        = time.time()
         elif scene_type == "mover_look":
             with self._lock:
                 self._preview_look_dmx    = target
@@ -2608,8 +2633,9 @@ class LightingEngine:
                 self._preview_dmx    = {}
         elif scene_type == "mover_motion":
             with self._lock:
-                self._preview_motion_active = False
-                self._preview_motion_dmx    = {}
+                self._preview_motion_active    = False
+                self._preview_motion_ephemeral = False
+                self._preview_motion_dmx       = {}
         elif scene_type == "mover_look":
             with self._lock:
                 self._preview_look_active = False
@@ -2704,6 +2730,7 @@ class LightingEngine:
             self._active_motions        = []
             self._preview_motion_dmx    = {}
             self._preview_motion_active = False
+            self._preview_motion_ephemeral = False
             self._active_looks          = []
             self._preview_look_dmx      = {}
             self._preview_look_active   = False

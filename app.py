@@ -771,7 +771,8 @@ def api_preview():
         return jsonify({"ok": False, "error": "Invalid scene_type"}), 400
     fixtures = data.get("fixtures") or {}
     lit = data.get("lit")            # None -> legacy (light all in-frame movers)
-    engine.preview_set(scene_type, fixtures, lit=lit)
+    ephemeral = bool(data.get("ephemeral"))   # streamed generator preview
+    engine.preview_set(scene_type, fixtures, lit=lit, ephemeral=ephemeral)
     return jsonify({"ok": True})
 
 @app.route("/api/preview/stop", methods=["POST"])
