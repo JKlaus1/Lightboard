@@ -88,6 +88,15 @@
                border-radius:10px; padding:14px 8px; text-align:center;
                cursor:pointer; user-select:none;
                transition:border-color .15s, background .15s; }
+  /* Per-category Clear button in card headers, and the global Clear All. */
+  .clear-cat-btn { background:#3a1010; border:1px solid #5a1818; color:#ff8888;
+                   padding:4px 10px; border-radius:6px; font-size:11px;
+                   cursor:pointer; font-weight:600; white-space:nowrap; }
+  .clear-cat-btn:active { filter:brightness(1.25); }
+  .clear-all-btn { background:#4a0f0f; border:1px solid #7a1d1d; color:#ff9a9a;
+                   padding:5px 12px; border-radius:6px; font-size:0.7rem;
+                   cursor:pointer; font-weight:700; white-space:nowrap; }
+  .clear-all-btn:active { filter:brightness(1.25); }
   .scene-btn:active { filter:brightness(1.2); }
   .scene-btn.active { border-color:var(--accent); background:rgba(59,130,246,.12); }
   /* Effect-buttons use the same shape as main scenes but a distinct purple
@@ -302,6 +311,9 @@
             style="display:none;background:#3a1010;border:1px solid #5a1818;color:#ff8888;padding:5px 12px;border-radius:6px;font-size:0.7rem;cursor:pointer;font-weight:600;white-space:nowrap;">
       ⏹ Stop all
     </button>
+    <button id="clear-all-btn" class="clear-all-btn" onclick="clearAll()" title="Stop everything and reset controls">
+      ✕ Clear All
+    </button>
   </div>
 
   <!-- Freeze banner (shown when freeze is active) -->
@@ -363,6 +375,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">Scenes</span>
+      <button id="clear-main-btn" class="clear-cat-btn" onclick="clearCategory('main')" style="display:none;">✕ Clear</button>
       <button onclick="location.href='/editor?from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
       <button onclick="openScenesEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
     </div>
@@ -392,6 +405,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">🌀 Effects</span>
+      <button id="clear-effect-btn" class="clear-cat-btn" onclick="clearCategory('effect')" style="display:none;">✕ Clear</button>
       <button onclick="location.href='/editor?type=effect&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:#d4b6ff;padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
       <button onclick="openEffectsEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
     </div>
@@ -561,6 +575,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">🎯 Mover Motion</span>
+      <button id="clear-motion-btn" class="clear-cat-btn" onclick="clearCategory('motion')" style="display:none;">✕ Clear</button>
       <button onclick="location.href='/editor?type=mover_motion&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
     </div>
     <div class="scene-grid" id="motion-grid">
@@ -586,6 +601,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">💡 Mover Look</span>
+      <button id="clear-look-btn" class="clear-cat-btn" onclick="clearCategory('look')" style="display:none;">✕ Clear</button>
       <button onclick="location.href='/editor?type=mover_look&from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
     </div>
     <div class="scene-grid" id="look-grid">
@@ -682,6 +698,18 @@ function pollState() {
     highlightLayer('motion');
     highlightLayer('look');
     highlightLayer('effect');
+
+    // Per-category Clear buttons: visible only when that layer has something
+    // active (mirrors the conditional top "Stop all"). Effective set so a
+    // frozen pending-empty still hides it.
+    const showClear = (btnId, set) => {
+      const b = document.getElementById(btnId);
+      if (b) b.style.display = set.size > 0 ? '' : 'none';
+    };
+    showClear('clear-main-btn',   effectiveSceneIds);
+    showClear('clear-motion-btn', effMotionIds);
+    showClear('clear-look-btn',   effLookIds);
+    showClear('clear-effect-btn', effEffectIds);
 
     // Freeze button + banner
     const fbtn = document.getElementById('freeze-btn');
@@ -943,6 +971,33 @@ function stopAllScenes() {
     .then(r => r.json()).then(d => {
       if (!d.ok) toast('Error: ' + d.error);
     });
+}
+
+// ── Clear (per-category + global) ─────────────────────────────────────────
+// Per-category Clear hits that layer's stop-all route. Clear All hits the
+// server-side panic route that also resets singer + faders.
+function clearCategory(cat) {
+  const url = (cat === 'main') ? '/api/stop' : '/api/' + cat + '/stop';
+  fetch(url, { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) toast(cat + ' clear failed: ' + (d.error || ''), 'err');
+      pollState();
+    })
+    .catch(() => {});
+}
+
+function clearAll() {
+  if (!confirm('Clear everything?\n\nStops all scenes, motion, look, effects, '
+             + 'the overlay and the cycler, clears blackout, turns singer OFF, '
+             + 'and resets the Color Dimmer and Singer Dimmer to 100%.')) return;
+  fetch('/api/clear-all', { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) toast('Clear all failed: ' + (d.error || ''), 'err');
+      pollState();
+    })
+    .catch(() => {});
 }
 
 // ── Stacked layer optimistic state (motion / look / effect) ───────────────

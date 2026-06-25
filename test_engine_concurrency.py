@@ -202,4 +202,40 @@ finally:
     eng.shutdown()
 
 
+# ── 6. clear_all() panic reset ─────────────────────────────────────────────
+print("\n[clear-all-panic-reset]")
+eng = LightingEngine(StubDMX(), SHOW)
+try:
+    eng.play_scene(_main("S1"), scene_id="S1")
+    eng.play_motion_scene(_motion("MO1", "MA", 10, 10), scene_id="MO1")
+    eng.play_look_scene(_look("LO1", "MB", 1, 2, 3), scene_id="LO1")
+    eng.play_effect_scene(_effect("E1", ["P"], {"r": 50, "g": 0, "b": 0}), scene_id="E1")
+    eng.set_master(0.4)
+    eng.set_singer_level(0.5)
+    eng.set_singer_mode(True)
+    wait(0.15)
+    eng.clear_all()
+    wait(0.25)   # let graceful fades complete
+    st = eng.get_state()
+    ok(st["scenes"] == [], "clear_all stopped all main scenes")
+    ok(st["motions"] == [], "clear_all stopped all motions")
+    ok(st["looks"] == [], "clear_all stopped all looks")
+    ok([e for e in st["effects"] if not e["stopping"]] == [], "clear_all stopped all effects")
+    ok(abs(st["master_level"] - 1.0) < 1e-6, "clear_all reset master to 100%")
+    ok(abs(st["singer_level"] - 1.0) < 1e-6, "clear_all reset singer dimmer to 100%")
+    ok(st["singer_mode"] is False, "clear_all turned singer mode OFF")
+    ok(st["blackout_mode"] in (None, "off") or st["blackout_blend"] == 0.0, "clear_all cleared blackout")
+    # Bypasses freeze: clear while frozen still applies.
+    eng.play_scene(_main("S2"), scene_id="S2")
+    wait(0.1)
+    eng.set_freeze(True)
+    eng.clear_all()
+    wait(0.2)
+    st = eng.get_state()
+    ok(not st["freeze"]["active"], "clear_all dropped freeze")
+    ok(st["scenes"] == [], "clear_all cleared scenes despite freeze")
+finally:
+    eng.shutdown()
+
+
 print("\nALL CONCURRENCY TESTS PASSED (%d assertions)" % PASSED)

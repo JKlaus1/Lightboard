@@ -1769,6 +1769,43 @@ class LightingEngine:
             self._singer_mode   = enabled
             self._singer_target = 1.0 if enabled else 0.0
 
+    def clear_all(self):
+        """Panic reset to a clean slate. Stops every playing layer (cycler,
+        main scenes, motions, looks, effects, overlay), clears blackout, turns
+        singer mode OFF, and resets the master and singer dimmers to 100%.
+        Bypasses freeze — a panic clear always applies immediately."""
+        # Drop freeze (and any queued changes) so the stops/sets all go live.
+        with self._lock:
+            self._freeze_active = False
+            self._pending_main_ids      = []
+            self._pending_main_scenes   = {}
+            self._pending_main_fades    = {}
+            self._pending_motion_ids    = []
+            self._pending_motion_scenes = {}
+            self._pending_look_ids      = []
+            self._pending_look_scenes   = {}
+            self._pending_effect_ids    = []
+            self._pending_effect_scenes = {}
+            self._pending_singer        = None
+            self._pending_master        = None
+            self._pending_singer_level  = None
+        # Stop every playing layer. Cycler first so it can't re-seed its decks
+        # into the scene stack between stopping scenes and stopping the thread.
+        self._stop_cycler_thread()
+        self.stop_scene()                                    # graceful fade-out, all mains (incl. cycler decks)
+        self._stop_all_mover_entries(self._active_motions)   # motion snaps
+        self._stop_all_mover_entries(self._active_looks)     # look snaps
+        self.stop_effect_scene()                             # graceful fade-out, all effects
+        self.stop_overlay()                                  # graceful fade-out
+        # Clear blackout (fade back to the now-empty scene).
+        with self._lock:
+            self._blackout_target = 0.0
+        # Reset controls to a clean slate.
+        self.set_singer_mode(False)   # singer override (warm white) OFF
+        self.set_master(1.0)          # master / colour dimmer → 100%
+        self.set_singer_level(1.0)    # singer dimmer → 100%
+        log.info("CLEAR ALL — all layers stopped; controls reset to clean slate")
+
     def blackout(self, mode='full'):
         """
         Toggle blackout mode. Scene playback is NOT stopped — the blackout is

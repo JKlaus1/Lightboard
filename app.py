@@ -514,6 +514,14 @@ def api_stop_all():
     engine.stop_all_scenes()
     return jsonify({"ok": True})
 
+@app.route("/api/clear-all", methods=["POST"])
+def api_clear_all():
+    """Panic clear: stop every playing layer (cycler, scenes, motion, look,
+    effect, overlay), clear blackout, turn singer mode OFF, and reset the
+    master and singer dimmers to 100%."""
+    engine.clear_all()
+    return jsonify({"ok": True})
+
 @app.route("/api/freeze", methods=["POST"])
 def api_freeze():
     """Toggle freeze on/off. Body: {enable: bool}."""
