@@ -136,7 +136,7 @@ via the Pi's own AP, or by driving the venue rig from his mixer-rack Pi as
 extra Art-Net universes. Local-only: **no Cloudflare tunnel** on venue installs
 (don't want to be on the hook for a business's connectivity).
 
-Build order: **1) custom faders ✅ → 2) Art-Net remote mode (NEXT) → 3) installer bundle.**
+Build order: **1) custom faders ✅ → 2) Art-Net remote mode ✅ → 3) installer bundle (NEXT).**
 
 ### Phase 1 — Custom fader system (touch UI) — ✅ SHIPPED (2026-07-03)
 Built to spec plus WYSIWYG/drag extensions. As-built reference:
@@ -185,18 +185,43 @@ Built to spec plus WYSIWYG/drag extensions. As-built reference:
 - **Field-tuning knobs:** `LONG_PRESS_MS`, `FADER_SEND_MS`, fader track
   min-sizes — revisit on the real 7" screen (only phone/iPad tested so far).
 
-### Phase 2 — Art-Net remote mode (master/slave Pis) — ⏭ NEXT
-(Buildable/testable now on the current rig over the wired network; does not
-wait on the AP dongle. Fire test Art-Net at the Pi from anything on the LAN.)
-- Venue Pi listens on UDP 6454 **always** (no toggle). Incoming Art-Net from
-  the master engages remote mode automatically: local engine output suspended,
-  frames piped straight to local output nodes, touchscreen shows "Remote
-  control active" and local faders are bypassed (master has total say —
-  limit/override stage skipped in remote mode).
-- Watchdog: stream silent for N seconds → auto-revert to local control /
-  default preset. Venue never left with dead lights.
-- Master side: venue Pi is just another node in the planned `DMXRouter`
-  fan-out; its fixtures patched as extra universes, unicast to 10.42.0.1:6454.
+### Phase 2 — Art-Net remote mode (master/slave Pis) — ✅ SHIPPED (2026-07-03)
+Built to spec; live-verified over WiFi (Termux phone → Pi, banner + DMX
+monitor + watchdog revert all confirmed). As-built reference:
+
+- **`artnet_receiver.py` (new):** always-on UDP :6454 listener started at app
+  boot (no toggle). Parses ArtDmx (opcode 0x5000, full 15-bit port-address)
+  via module-level `parse_artdmx()`; `build_artdmx()` is the shared packet
+  builder used by tests and the blast tool. Guards: only ArtDmx acted on
+  (ArtPoll/PollReply from output nodes ignored); packets from the Pi's OWN
+  IPs dropped (SIOCGIFADDR enumeration, refreshed 60s) so the local sender
+  can never feedback-loop into remote mode; malformed/truncated dropped.
+- **Engine:** `handle_remote_frame(uni, data, src_ip)` engages remote mode on
+  first packet and straight-pipes the full-length frame to `_dmx.set_channels`
+  (full 512 write so master-cleared channels propagate). Driver has its own
+  lock → receiver-thread writes are safe; ≤1 local frame overlaps at
+  engagement. `_push_to_dmx` early-returns while remote is active — the whole
+  local composite INCLUDING fader stage 8a and blackout is bypassed (master
+  has total say). Scene/blend ticks keep running, so revert resumes the local
+  show exactly where it should be. Watchdog in `_output_loop`: stream silent
+  > `REMOTE_TIMEOUT_S` (default **10s**; config `remote_timeout_s`, floor 1s)
+  → revert to local on the same tick. Optional `remote_universe_map`
+  ({incoming: local}) in config.json; identity pass-through by default.
+  `_remote_universes` is a frozenset replaced atomically (get_state-safe).
+- **State/UI:** `get_state()` carries `remote: {active, source, universes,
+  age, timeout_s}`. `touch.html` shows a full-screen pulsing blue
+  "REMOTE CONTROL ACTIVE — local controls bypassed — master: <ip>" overlay
+  that also swallows all touches; markup sits BEFORE the inline `<script>`
+  (script-placement rule). Picked up by the existing 2s `/api/state` poll.
+- **Tests:** `test_remote.py`, 24 checks (packet round-trip, junk rejection,
+  engagement, remap, local suspension incl. armed-override bypass, watchdog
+  revert, get_state, end-to-end loopback with real socket). Doubles as the
+  manual tester: `python3 test_remote.py --blast <pi-ip> [uni] [secs]` fires
+  a ~30fps red chase — must run from a machine that is NOT the Pi (own-IP
+  guard). Termux works; use the numeric IP (no mDNS in Termux).
+- **Master side (still to come with `DMXRouter`):** venue Pi is just another
+  fan-out node; its fixtures patched as extra universes, unicast to
+  10.42.0.1:6454.
 
 ### Network architecture (venue install)
 - **USB WiFi dongle = always-on AP.** ✅ ORDERED (2026-07-03): **Panda
@@ -236,7 +261,11 @@ wait on the AP dongle. Fire test Art-Net at the Pi from anything on the LAN.)
   static in the rig scheme. Bench-configure before install day. Rescue paths:
   `nmap -sn` sweep; ArtIpProg (DMX-Workshop) for MAC-based IP reprogramming.
 
-### Phase 3 — Installer bundle
+### Phase 3 — Installer bundle — ⏭ NEXT
+Hardware on hand as of 2026-07-03: Panda PAU0B AP dongle **and** a PKnight
+CR011R Ethernet Art-Net node (wired venue output — same PKnight family as the
+rack's wireless dongles) both delivered/arriving today, so Phase 3 can bake in
+the AP profile and bench-test wired Art-Net end-to-end.
 - `install.sh` in-repo: packages, systemd units, avahi, AP profile,
   touchscreen (DSI) setup, kiosk autostart. One-time setup only — installed
   Pis update via `git pull && restart`, so the installer only changes when
