@@ -31,9 +31,12 @@
   body {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100vh;               /* fallback for old engines */
+    height: 100dvh;              /* dynamic viewport: excludes browser chrome */
     padding: 6px;
     gap: 5px;
+    /* keep the grid clear of gesture-nav bars on phones */
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
   }
   /* ── Header ── */
   #header {
