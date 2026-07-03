@@ -325,6 +325,21 @@
   }
 
   // ── Build grid from config ────────────────────────────────────────────
+  // WYSIWYG: slot index i maps to a fixed grid position (row ⌊i/cols⌋,
+  // col i%cols), so cells land exactly where the builder placed them —
+  // gaps included. Faders occupy their full w×h footprint; slots inside a
+  // footprint are skipped defensively if anything is stored there.
+  function faderFootprint(idx, def, cols, rows) {
+    const col = idx % cols, row = Math.floor(idx / cols);
+    const w = Math.max(1, Math.min(def.w || 1, cols - col));
+    const h = Math.max(1, Math.min(def.h || 1, rows - row));
+    const slots = [];
+    for (let dr = 0; dr < h; dr++)
+      for (let dc = 0; dc < w; dc++)
+        slots.push(idx + dr * cols + dc);
+    return { col, row, w, h, slots };
+  }
+
   function buildGrid() {
     const grid = document.getElementById('scene-grid');
     grid.innerHTML = '';
@@ -332,24 +347,37 @@
     const rows   = gridConfig.rows || 4;
     const faders = {};
     (gridConfig.faders || []).forEach(f => { faders[f.id] = f; });
-    const cells = (gridConfig.cells || [])
-      .filter(c => c && (c.scene_id || c.action || c.fader_id));
+    const cells = gridConfig.cells || [];
     grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-    // Only pin row heights (needed for row-spanning faders) when a fader is
-    // present, so existing button-only grids keep the legacy compact layout.
-    if (cells.some(c => c.fader_id)) {
-      grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-      grid.style.gridAutoFlow     = 'row dense';
-      grid.style.alignContent     = 'stretch';
-    }
+    grid.style.gridTemplateRows    = `repeat(${rows}, 1fr)`;
+    grid.style.alignContent        = 'stretch';
 
-    cells.forEach(cell => {
+    // Slots covered by a fader footprint (beyond its own anchor slot)
+    const covered = new Set();
+    cells.forEach((cell, i) => {
+      if (!cell || !cell.fader_id || !faders[cell.fader_id]) return;
+      faderFootprint(i, faders[cell.fader_id], cols, rows).slots
+        .forEach(s => { if (s !== i) covered.add(s); });
+    });
+
+    cells.forEach((cell, i) => {
+      if (!cell || i >= cols * rows || covered.has(i)) return;
+      if (!(cell.scene_id || cell.action || cell.fader_id)) return;
+      const col = i % cols, row = Math.floor(i / cols);
+
       if (cell.fader_id) {
         const def = faders[cell.fader_id];
-        if (def) grid.appendChild(buildFader(def));
+        if (!def) return;
+        const fp = faderFootprint(i, def, cols, rows);
+        const el = buildFader(def);
+        el.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
+        el.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
+        grid.appendChild(el);
         return;
       }
       const btn = document.createElement('button');
+      btn.style.gridColumn = String(col + 1);
+      btn.style.gridRow    = String(row + 1);
       btn.className = 'scene-btn';
       btn.id = cell.scene_id ? 'scene-' + cell.scene_id : 'action-' + cell.action;
 
@@ -390,8 +418,7 @@
     el.className = 'fader-cell ' + (vert ? 'vert' : 'horiz') +
                    ' mode-' + (def.mode || 'limit');
     el.id = 'fader-' + def.id;
-    el.style.gridColumn = 'span ' + Math.min(def.w || 1, gridConfig.cols || 2);
-    el.style.gridRow    = 'span ' + Math.min(def.h || 1, gridConfig.rows || 4);
+    // placement + span are set by buildGrid (WYSIWYG footprint)
 
     const st = faderState[def.id] = faderState[def.id] ||
       { level: (def.level !== undefined ? def.level : 1.0), armed: false,

@@ -480,23 +480,92 @@
     buildGrid();
   }
 
+  function gridDims() {
+    return {
+      cols: parseInt(document.getElementById('cols-input').value) || 2,
+      rows: parseInt(document.getElementById('rows-input').value) || 4,
+    };
+  }
+
+  function faderFootprint(idx, def, cols, rows) {
+    const col = idx % cols, row = Math.floor(idx / cols);
+    const w = Math.max(1, Math.min(def.w || 1, cols - col));
+    const h = Math.max(1, Math.min(def.h || 1, rows - row));
+    const slots = [];
+    for (let dr = 0; dr < h; dr++)
+      for (let dc = 0; dc < w; dc++)
+        slots.push(idx + dr * cols + dc);
+    return { col, row, w, h, slots };
+  }
+
+  // Returns an error string if placing fader `def` with its anchor at slot
+  // `idx` won't fit the grid or would overlap other cells; null if OK.
+  function placementError(idx, def, selfId) {
+    const { cols, rows } = gridDims();
+    const col = idx % cols, row = Math.floor(idx / cols);
+    const w = def.w || 1, h = def.h || 1;
+    if (w > cols - col || h > rows - row)
+      return 'Fader is ' + w + '\u00d7' + h + ' and doesn\u2019t fit at this position.';
+    const fp = faderFootprint(idx, def, cols, rows);
+    const blockers = [];
+    fp.slots.forEach(s => {
+      if (s === idx) return;
+      const c = cells[s];
+      if (c && c.fader_id !== selfId)
+        blockers.push(c.label || c.name || c.action || ('cell ' + (s + 1)));
+    });
+    // other faders' footprints overlapping ours
+    cells.forEach((c, i) => {
+      if (!c || !c.fader_id || i === idx || c.fader_id === selfId) return;
+      const d = faderDefs.find(x => x.id === c.fader_id);
+      if (!d) return;
+      if (faderFootprint(i, d, cols, rows).slots.some(s => fp.slots.includes(s)))
+        blockers.push(c.name || c.fader_id);
+    });
+    if (blockers.length)
+      return 'Overlaps: ' + Array.from(new Set(blockers)).join(', ') +
+             '. Clear those cells first.';
+    return null;
+  }
+
   function buildGrid() {
-    const cols = parseInt(document.getElementById('cols-input').value) || 2;
+    const { cols, rows } = gridDims();
     const wrap = document.getElementById('grid-wrap');
     wrap.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    wrap.style.gridTemplateRows    = `repeat(${rows}, minmax(52px, auto))`;
     wrap.innerHTML = '';
+    const fadersById = {};
+    faderDefs.forEach(f => { fadersById[f.id] = f; });
+
+    // Slots covered by fader footprints (beyond their anchor slot)
+    const covered = new Set();
+    cells.forEach((cell, i) => {
+      if (cell && cell.fader_id && fadersById[cell.fader_id])
+        faderFootprint(i, fadersById[cell.fader_id], cols, rows).slots
+          .forEach(s => { if (s !== i) covered.add(s); });
+    });
 
     cells.forEach((cell, i) => {
+      if (covered.has(i)) return;   // inside a fader's footprint
       const el = document.createElement('div');
       el.className = 'grid-cell' + (cell ? ' filled' : '');
       el.onclick = () => openModal(i);
+      el.style.gridColumn = String((i % cols) + 1);
+      el.style.gridRow    = String(Math.floor(i / cols) + 1);
 
       if (cell) {
-        const typeLabel = cell.fader_id ? 'fader'  :
-                          cell.action   ? 'action' :
-                          cell.scene_type === 'effect' ? 'effect' :
-                          cell.scene_type === 'mover_motion' ? 'motion' :
-                          cell.scene_type === 'mover_look'   ? 'look'   : 'scene';
+        let typeLabel = cell.fader_id ? 'fader'  :
+                        cell.action   ? 'action' :
+                        cell.scene_type === 'effect' ? 'effect' :
+                        cell.scene_type === 'mover_motion' ? 'motion' :
+                        cell.scene_type === 'mover_look'   ? 'look'   : 'scene';
+        if (cell.fader_id && fadersById[cell.fader_id]) {
+          const d  = fadersById[cell.fader_id];
+          const fp = faderFootprint(i, d, cols, rows);
+          el.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
+          el.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
+          typeLabel = 'fader \u00b7 ' + fp.w + '\u00d7' + fp.h + ' \u00b7 ' + d.mode;
+        }
         el.innerHTML = `
           <span class="cell-name">${cell.label || cell.name || cell.action || ''}</span>
           <span class="cell-type">${typeLabel}</span>
@@ -603,6 +672,8 @@
   }
 
   function assignFader(f) {
+    const err = placementError(editingIdx, f, f.id);
+    if (err) { alert(err); return; }
     cells[editingIdx] = { fader_id: f.id, name: f.label || f.id };
     closeModal();
     buildGrid();
@@ -683,6 +754,13 @@
       },
       level: 1.0,
     };
+    // If this fader is already placed, make sure the (possibly resized)
+    // footprint still fits and doesn't overlap anything.
+    const anchorIdx = cells.findIndex(c => c && c.fader_id === def.id);
+    if (anchorIdx >= 0) {
+      const err = placementError(anchorIdx, def, def.id);
+      if (err) { alert('Can\u2019t save: ' + err); return; }
+    }
     const idx = faderDefs.findIndex(x => x.id === def.id);
     if (idx >= 0) {
       def.level = faderDefs[idx].level !== undefined ? faderDefs[idx].level : 1.0;
