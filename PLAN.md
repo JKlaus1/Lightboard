@@ -126,3 +126,86 @@ blackout/overlay/cycler (backward-compatible).
 - Stage Messenger is a **separate app** (`/home/pi/stage-messenger/`) — not in this repo.
 - Build against a fresh `git clone`; validate Python with `py_compile`, extracted
   JS with `node --check` (neutralize Jinja first), and a full Jinja render.
+
+## Venue-install controller (next major project)
+
+Standalone Pi (4 or 5) permanently installed at a venue, driving house fixtures.
+Day-to-day: venue staff run basic looks from a 7" touchscreen (`touch.html`).
+When Joseph is on site he takes full control — either directly from his tablet
+via the Pi's own AP, or by driving the venue rig from his mixer-rack Pi as
+extra Art-Net universes. Local-only: **no Cloudflare tunnel** on venue installs
+(don't want to be on the hook for a business's connectivity).
+
+Build order: **1) custom faders → 2) Art-Net remote mode → 3) installer bundle.**
+Phase 1 is useful on the current rig immediately and needs no new hardware.
+
+### Phase 1 — Custom fader system (touch UI) — AGREED SPEC
+- Faders are grid citizens in the existing `touch_grid` config that can **span
+  multiple rows/columns** (a vertical side fader = 1-wide, full-height cell).
+  Orientation (vertical/horizontal) + span are per-fader config. With the 7"
+  screen mounted landscape, Joseph expects a vertical fader on the side.
+- Fader definition: `id`, `label`, `targets` (single fixture, list, or group),
+  `channels` (`"dimmer"` default; any explicit channel offsets selectable),
+  `mode` (`"limit"` | `"override"`), persisted level. Stored in `config.json`;
+  live level set via a lightweight API endpoint (~20 posts/sec throttle).
+- **Limit mode** = inhibitive submaster: multiplies engine output for its target
+  channels. Full = invisible; pulled down = proportional cap on whatever the
+  show is doing.
+- **Override mode** = park: fader value wins outright for those channels,
+  ignoring all scene/effect output. Has an **arm/disarm toggle** — disarmed, the
+  fader does nothing (can't accidentally lock a channel at 0); armed at 0 it
+  deliberately turns the target off. Armed override must be **visually
+  unmistakable** on the venue screen (distinct color, e.g. red vs amber for
+  limit) so anyone looking at the panel can tell the show is being overridden.
+- Engine integration: new final stage in `_output_loop` composite, applied
+  AFTER blackout (step 7), just before the output dict is written — limit
+  multiplies, then armed overrides stamp values. No changes to scenes/effects/
+  `genEvalFixture`. Same ~25ms responsiveness as the master fader.
+- Files touched: `engine.py` (fader state + output stage), `app.py` (CRUD +
+  level endpoints), `touch_config.html` (fader builder: name, orientation,
+  span, target picker, channel selector, mode toggle), `touch.html` (render,
+  axis-aware drag, arm/disarm, mode colors).
+
+### Phase 2 — Art-Net remote mode (master/slave Pis)
+- Venue Pi listens on UDP 6454 **always** (no toggle). Incoming Art-Net from
+  the master engages remote mode automatically: local engine output suspended,
+  frames piped straight to local output nodes, touchscreen shows "Remote
+  control active" and local faders are bypassed (master has total say —
+  limit/override stage skipped in remote mode).
+- Watchdog: stream silent for N seconds → auto-revert to local control /
+  default preset. Venue never left with dead lights.
+- Master side: venue Pi is just another node in the planned `DMXRouter`
+  fan-out; its fixtures patched as extra universes, unicast to 10.42.0.1:6454.
+
+### Network architecture (venue install)
+- **USB WiFi dongle = always-on AP.** Alfa AWUS036ACM (MT7612U — in-kernel
+  driver, proven AP mode, 2.4+5GHz) or AWUS036ACHM for max range. NOT the
+  AWUS036AXM (6GHz AP blocked by US regs; mt7921u BT-coex crashes on 6.6+
+  kernels). NM profile: `802-11-wireless.mode ap`, band a / ch 149,
+  `ipv4.method shared`, `ipv4.addresses 10.42.0.1/24` — venue Pi is always
+  10.42.0.1 on its AP. **Pin the profile to the dongle by MAC**, not ifname
+  (wlan0/wlan1 can swap on USB enumeration). 5GHz primary; drop to 2.4 if
+  crowd attenuation bites (~30ft, ~20 bodies, near-LOS; mount Pi high).
+- **Mixer-rack Pi joins the venue AP as a WiFi client** (its eth0 stays on the
+  rack Art-Net LAN with the EdgeRouter X / Wing / PKnight dongles). Plain NM
+  autoconnect — show up, power rack, it joins, Art-Net flows. No mode-switching
+  scripts on the venue side. (Back-pocket alternative if the link disappoints:
+  NM dispatcher swap so the venue dongle becomes a client of the rack SSID,
+  with 60s+ debounce against mid-show flapping — documented, not built.)
+- **Built-in wlan0 (venue Pi)** = optional client for venue house WiFi
+  (updates/NTP only; house WiFi client isolation confirmed to block
+  tablet→Pi control, hence the AP approach).
+- **Subnets must not overlap:** AP 10.42.0.x vs rack LAN vs eth0 Art-Net
+  192.168.0.x (.185/.186 dongles).
+- Wired Art-Net nodes: configure via their web UI at the manual's default
+  static IP (temporarily move a laptop/eth0 onto that subnet), assign a
+  static in the rig scheme. Bench-configure before install day. Rescue paths:
+  `nmap -sn` sweep; ArtIpProg (DMX-Workshop) for MAC-based IP reprogramming.
+
+### Phase 3 — Installer bundle
+- `install.sh` in-repo: packages, systemd units, avahi, AP profile,
+  touchscreen (DSI) setup, kiosk autostart. One-time setup only — installed
+  Pis update via `git pull && restart`, so the installer only changes when
+  infrastructure changes (edit script, push; no packaging/rebuild step).
+- Screen candidates: Pi official 7" DSI (800×480) or Waveshare 7" IPS
+  (1024×600); `touch.html` grid/font sizes need upward scaling either way.
