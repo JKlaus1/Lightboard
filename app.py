@@ -270,6 +270,9 @@ dmx.connect()
 
 engine = LightingEngine(dmx, show_config)
 
+# Custom venue faders (touch UI) live in config.json, like touch_grid
+engine.set_custom_faders(config.get("custom_faders", []))
+
 startup = show_config.get("startup_scene")
 if startup:
     try:
@@ -424,7 +427,8 @@ def api_touch_info():
 @app.route("/api/touch/config", methods=["GET"])
 def api_touch_config_get():
     """Return the current touch screen grid config."""
-    cfg = config.get("touch_grid", {"cols": 2, "rows": 6, "cells": []})
+    cfg = dict(config.get("touch_grid", {"cols": 2, "rows": 6, "cells": []}))
+    cfg["faders"] = config.get("custom_faders", [])
     return jsonify(cfg)
 
 @app.route("/api/touch/config", methods=["POST"])
@@ -439,6 +443,122 @@ def api_touch_config_set():
     save_json(CONFIG_PATH, config)
     log.info("Touch grid config saved.")
     return jsonify({"ok": True})
+
+# ── Custom venue faders (touch UI) ─────────────────────────────────────────
+
+_fader_persist_timer = None
+
+def _persist_fader_levels():
+    """Debounced: fold live fader levels back into config.json so they
+    survive a restart, without hammering the SD card at drag rate."""
+    global _fader_persist_timer
+    _fader_persist_timer = None
+    live = {f["id"]: f["level"] for f in engine.get_fader_state()}
+    changed = False
+    for d in config.get("custom_faders", []):
+        lv = live.get(d.get("id"))
+        if lv is not None and abs(float(d.get("level", 1.0)) - lv) > 0.0005:
+            d["level"] = lv
+            changed = True
+    if changed:
+        save_json(CONFIG_PATH, config)
+
+def _schedule_fader_persist():
+    import threading
+    global _fader_persist_timer
+    if _fader_persist_timer is not None:
+        _fader_persist_timer.cancel()
+    _fader_persist_timer = threading.Timer(2.0, _persist_fader_levels)
+    _fader_persist_timer.daemon = True
+    _fader_persist_timer.start()
+
+def _clean_fader_def(d):
+    """Validate/normalize one fader definition from the builder."""
+    mode   = d.get("mode") if d.get("mode") in ("limit", "override") else "limit"
+    orient = (d.get("orientation")
+              if d.get("orientation") in ("vertical", "horizontal") else "vertical")
+    chans = d.get("channels", "intensity")
+    if isinstance(chans, (list, tuple)):
+        out = []
+        for c in chans:
+            try:
+                c = int(c)
+            except (TypeError, ValueError):
+                continue
+            if c >= 1:
+                out.append(c)
+        chans = out if out else "intensity"
+    else:
+        chans = "intensity"
+    targets = d.get("targets") or {}
+    def _num(v, lo, hi, dflt):
+        try:
+            return max(lo, min(hi, int(v)))
+        except (TypeError, ValueError):
+            return dflt
+    try:
+        level = max(0.0, min(1.0, float(d.get("level", 1.0))))
+    except (TypeError, ValueError):
+        level = 1.0
+    return {
+        "id":          str(d["id"]),
+        "label":       str(d.get("label", ""))[:24],
+        "orientation": orient,
+        "w":           _num(d.get("w", 1), 1, 12, 1),
+        "h":           _num(d.get("h", 1), 1, 12, 1),
+        "mode":        mode,
+        "channels":    chans,
+        "targets": {
+            "fixtures": [str(x) for x in (targets.get("fixtures") or [])],
+            "groups":   [str(x) for x in (targets.get("groups") or [])],
+        },
+        "level":       level,
+    }
+
+@app.route("/api/touch/faders", methods=["GET"])
+def api_touch_faders_get():
+    """Fader defs + live state + pickable targets (for the builder)."""
+    return jsonify({
+        "faders":   config.get("custom_faders", []),
+        "state":    engine.get_fader_state(),
+        "fixtures": [{"id": fx.get("id"), "name": fx.get("name", fx.get("id"))}
+                     for fx in show_config.get("fixtures", [])],
+        "groups":   [{"id": g.get("id"), "name": g.get("name", g.get("id"))}
+                     for g in show_config.get("groups", [])],
+    })
+
+@app.route("/api/touch/faders", methods=["POST"])
+def api_touch_faders_set():
+    """Replace the fader definition list (the builder sends the whole list)."""
+    data = request.json or {}
+    defs = data.get("faders") if isinstance(data, dict) else data
+    if not isinstance(defs, list):
+        return jsonify({"ok": False, "error": "expected a list of faders"}), 400
+    clean = [_clean_fader_def(d) for d in defs
+             if isinstance(d, dict) and d.get("id")]
+    config["custom_faders"] = clean
+    save_json(CONFIG_PATH, config)
+    engine.set_custom_faders(clean)
+    log.info("Custom faders saved (%d).", len(clean))
+    return jsonify({"ok": True, "faders": clean})
+
+@app.route("/api/touch/fader/<fid>/level", methods=["POST"])
+def api_touch_fader_level(fid):
+    try:
+        level = float((request.json or {}).get("level", 1.0))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "bad level"}), 400
+    if not engine.set_fader_level(fid, level):
+        return jsonify({"ok": False, "error": "unknown fader"}), 404
+    _schedule_fader_persist()
+    return jsonify({"ok": True, "level": max(0.0, min(1.0, level))})
+
+@app.route("/api/touch/fader/<fid>/arm", methods=["POST"])
+def api_touch_fader_arm(fid):
+    armed = bool((request.json or {}).get("armed", False))
+    if not engine.set_fader_armed(fid, armed):
+        return jsonify({"ok": False, "error": "unknown fader"}), 404
+    return jsonify({"ok": True, "armed": armed})
 
 
 @app.route("/messenger")

@@ -249,6 +249,15 @@ class LightingEngine:
         # resolution and by effect-scene rendering (Phase 2C).
         self._cell_strips       = self._build_cell_strips_cache()
 
+        # Custom venue faders (touch UI). Raw defs come from config.json via
+        # set_custom_faders(); _custom_faders holds live runtime state keyed
+        # by fader id; _fader_snapshot is an immutable tuple the output loop
+        # reads cheaply under the existing snapshot lock (rebuilt only when
+        # a fader's level/arm/config changes — not per tick).
+        self._custom_fader_defs = []
+        self._custom_faders     = {}   # id -> {mode, level, armed, keys}
+        self._fader_snapshot    = ()   # tuple of (mode, level, armed, keys)
+
         # Output-loop timing diagnostics (see _output_loop; low-noise).
         self._tick_durs      = []
         self._tick_window_t  = time.time()
@@ -876,6 +885,148 @@ class LightingEngine:
             if self._preview_effect_scene is not None:
                 self._preview_effect_target = 0.0
 
+    # ── Custom venue faders (touch UI) ────────────────────────────────────
+    #
+    # Faders are defined in config.json (not the show) and applied as a
+    # final composite stage in _push_to_dmx, AFTER blackout:
+    #   limit    — inhibitive submaster: multiplies engine output for its
+    #              target channels. At full it is invisible; pulled down it
+    #              proportionally caps whatever the show is doing.
+    #   override — park: while ARMED the fader value wins outright on those
+    #              channels (beats scenes / effects / blackout). Disarmed it
+    #              does nothing, so a fader left at 0 can't silently lock a
+    #              channel. Arm state intentionally does NOT persist across
+    #              restarts; levels do (persisted by app.py, debounced).
+    # The raw channel test (fixture discovery) stays ABOVE this stage so an
+    # unknown fixture can always be probed on the bench.
+
+    def set_custom_faders(self, defs):
+        """Install fader definitions (list of dicts from config.json) and
+        resolve their target channels against the current show. Live level /
+        arm state is preserved for fader ids that survive the update."""
+        if not isinstance(defs, list):
+            defs = []
+        with self._lock:
+            self._custom_fader_defs = [dict(d) for d in defs
+                                       if isinstance(d, dict) and d.get("id")]
+            self._resolve_faders_locked(preserve=True)
+
+    def _resolve_faders_locked(self, preserve=False):
+        """(Re)build runtime fader state from raw defs. Caller holds _lock."""
+        old = self._custom_faders if preserve else {}
+        new = {}
+        for d in self._custom_fader_defs:
+            fid  = d["id"]
+            prev = old.get(fid)
+            mode = d.get("mode", "limit")
+            if mode not in ("limit", "override"):
+                mode = "limit"
+            try:
+                lvl = max(0.0, min(1.0, float(d.get("level", 1.0))))
+            except (TypeError, ValueError):
+                lvl = 1.0
+            new[fid] = {
+                "mode":  mode,
+                "level": prev["level"] if prev else lvl,
+                "armed": prev["armed"] if prev else False,
+                "keys":  self._resolve_fader_channels(d),
+            }
+        self._custom_faders = new
+        self._rebuild_fader_snapshot_locked()
+
+    def _resolve_fader_channels(self, d):
+        """Resolve a fader def's targets + channels to a frozenset of
+        (universe, channel) keys against the current show.
+
+        channels == "intensity" (default) means:
+          - mover: its dimmer channel role (if defined)
+          - pod fixture with a hardware dimmer: that dimmer channel (the
+            output loop parks it at 255, so a limit there acts as an
+            intensity scaler and an armed override at 0 kills the fixture)
+          - pod fixture with NO dimmer (e.g. Betopper LPC1818): every pod
+            color channel becomes the intensity surface.
+        channels == [1-indexed offsets] targets those offsets within each
+        fixture's footprint (out-of-range offsets ignored per fixture)."""
+        targets = d.get("targets") or {}
+        fxids   = list(targets.get("fixtures") or [])
+        by_id   = {g.get("id"): g for g in self._show.get("groups", [])}
+        for gid in (targets.get("groups") or []):
+            g = by_id.get(gid)
+            if g:
+                fxids.extend(g.get("members") or [])
+        fx_by_id = {fx.get("id"): fx for fx in self._show.get("fixtures", [])}
+        chans = d.get("channels", "intensity")
+        keys = set()
+        for fxid in dict.fromkeys(fxids):        # dedupe, keep order
+            fx = fx_by_id.get(fxid)
+            if not fx:
+                continue                          # not patched in this show
+            uni   = self._fx_universe(fx)
+            start = fx.get("start_address", 1)
+            if isinstance(chans, (list, tuple)):
+                length = fx.get("channels", 1)
+                for off in chans:
+                    try:
+                        off = int(off)
+                    except (TypeError, ValueError):
+                        continue
+                    if 1 <= off <= length:
+                        keys.add(self._ch_overflow(uni, start + off - 1))
+            else:                                 # "intensity" / "dimmer"
+                if self._is_mover(fx):
+                    ch = self._mover_channel_for_role(fx, "dimmer")
+                    if ch:
+                        keys.add(self._ch_overflow(uni, ch))
+                    continue
+                doff = self._fx_dimmer_offset(fx)
+                if doff and doff > 0:
+                    keys.add(self._ch_overflow(uni, start + doff - 1))
+                else:
+                    first  = self._fx_first_pod_channel(fx)
+                    ch_per = self._fx_channels_per_pod(fx)
+                    offs   = list(self._fx_pod_color_offsets(fx).values())
+                    for pod in range(self._fx_pods(fx)):
+                        base = start + first - 1 + pod * ch_per
+                        for o in offs:
+                            keys.add(self._ch_overflow(uni, base + o))
+        return frozenset(keys)
+
+    def _rebuild_fader_snapshot_locked(self):
+        """Immutable per-change snapshot read by _push_to_dmx. Order follows
+        definition order, so a later override wins on shared channels."""
+        self._fader_snapshot = tuple(
+            (f["mode"], f["level"], f["armed"], f["keys"])
+            for f in self._custom_faders.values()
+        )
+
+    def set_fader_level(self, fid, level):
+        level = max(0.0, min(1.0, float(level)))
+        with self._lock:
+            f = self._custom_faders.get(fid)
+            if f is None:
+                return False
+            f["level"] = level
+            self._rebuild_fader_snapshot_locked()
+        return True
+
+    def set_fader_armed(self, fid, armed):
+        with self._lock:
+            f = self._custom_faders.get(fid)
+            if f is None:
+                return False
+            f["armed"] = bool(armed)
+            self._rebuild_fader_snapshot_locked()
+        return True
+
+    def get_fader_state(self):
+        """Live level / arm per fader id (for /api/state and the touch UI)."""
+        with self._lock:
+            return [
+                {"id": fid, "mode": f["mode"],
+                 "level": round(f["level"], 3), "armed": f["armed"]}
+                for fid, f in self._custom_faders.items()
+            ]
+
     # ── Output loop (mixer) ───────────────────────────────────────────────
 
     def _rebuild_channel_caches(self):
@@ -1059,6 +1210,7 @@ class LightingEngine:
             ov_dmx        = dict(self._overlay_dmx)
             ov_blend      = self._overlay_blend
             ov_keep_singer = self._overlay_keep_singer
+            fader_specs    = self._fader_snapshot
             # Stacked effects: snapshot (scene, blend, start) per entry. While
             # an editor preview is active it SUPPRESSES the live stack so the
             # editor shows only the effect being edited.
@@ -1180,6 +1332,23 @@ class LightingEngine:
                 n = normal[ch]
                 t = target.get(ch, n)
                 frame[ch] = n + (t - n) * bo_blend
+
+        # 8a. Custom venue faders (touch UI), applied after blackout so an
+        #     armed override genuinely wins outright. Limits multiply
+        #     (inhibitive submaster) in definition order; armed overrides
+        #     then stamp their value. The raw test (8b) stays above so the
+        #     fixture-discovery probe always works on the bench.
+        for f_mode, f_level, f_armed, f_keys in fader_specs:
+            if f_mode == "limit":
+                if f_level < 0.999:
+                    for k in f_keys:
+                        if k in frame:
+                            frame[k] *= f_level
+            elif f_armed:
+                v = f_level * 255.0
+                for k in f_keys:
+                    if k in frame:
+                        frame[k] = v
 
         # 8b. Raw channel test override (fixture builder discovery panel).
         #     Highest-priority layer, independent of any defined fixture so an
@@ -2561,6 +2730,11 @@ class LightingEngine:
                 "overlay_active":    self._overlay_target == 1.0,
                 "overlay_blend":     round(self._overlay_blend, 3),
                 "overlay_name":      self._current_overlay_name,
+                "faders": [
+                    {"id": fid, "mode": f["mode"],
+                     "level": round(f["level"], 3), "armed": f["armed"]}
+                    for fid, f in self._custom_faders.items()
+                ],
                 # Legacy single fields = topmost active of each stack (deprecated;
                 # prefer the motions/looks/effects lists above).
                 "current_motion":    top_motion["name"] if top_motion else None,
@@ -2797,6 +2971,8 @@ class LightingEngine:
             self._patched_channels    = self._get_all_patched_channels()
             self._cell_strips         = self._build_cell_strips_cache()
             self._rebuild_channel_caches()
+            # Re-resolve custom fader targets against the new show's patch
+            self._resolve_faders_locked(preserve=True)
         # Clear any leftover DMX output from previous show
         self._dmx.blackout()
         # Re-freeze the new show's static objects out of the GC scan set.

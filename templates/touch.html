@@ -200,6 +200,70 @@
     color: var(--dim);
     letter-spacing: 0.06em;
   }
+  /* ── Custom faders ── */
+  .fader-cell {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    padding: 4px;
+    gap: 4px;
+    position: relative;
+    user-select: none;
+    touch-action: none;
+    overflow: hidden;
+  }
+  .fader-cell.vert  { flex-direction: column; }
+  .fader-cell.horiz { flex-direction: row; align-items: stretch; }
+  .fader-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 4px; flex-shrink: 0; min-width: 0;
+  }
+  .fader-cell.horiz .fader-head {
+    flex-direction: column; justify-content: center; max-width: 34%;
+  }
+  .fader-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .fader-value {
+    font-size: 10px; font-family: 'Share Tech Mono', monospace;
+    color: var(--dim); flex-shrink: 0;
+  }
+  .fader-track {
+    position: relative; flex: 1;
+    background: #0d0d14;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+    min-height: 30px; min-width: 30px;
+  }
+  .fader-fill {
+    position: absolute; inset: 0;
+    background: var(--accent2);
+    opacity: 0.85;
+    transform-origin: bottom;
+  }
+  .fader-cell.horiz .fader-fill { transform-origin: left; }
+  .fader-cell.mode-override .fader-fill { background: var(--dim); opacity: 0.5; }
+  .fader-cell.mode-override.armed .fader-fill { background: var(--blackout); opacity: 0.9; }
+  .fader-cell.mode-override.armed {
+    border-color: var(--blackout);
+    box-shadow: 0 0 10px rgba(192,57,43,0.55);
+  }
+  .fader-arm {
+    flex-shrink: 0;
+    background: #1a1a24; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--dim);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    padding: 6px 8px;
+    cursor: pointer;
+  }
+  .fader-cell.armed .fader-arm {
+    background: var(--blackout); border-color: var(--blackout); color: #fff;
+  }
 </style>
 </head>
 <body>
@@ -261,11 +325,27 @@
   function buildGrid() {
     const grid = document.getElementById('scene-grid');
     grid.innerHTML = '';
-    const cols  = gridConfig.cols || 2;
-    const cells = (gridConfig.cells || []).filter(c => c && (c.scene_id || c.action));
+    const cols   = gridConfig.cols || 2;
+    const rows   = gridConfig.rows || 4;
+    const faders = {};
+    (gridConfig.faders || []).forEach(f => { faders[f.id] = f; });
+    const cells = (gridConfig.cells || [])
+      .filter(c => c && (c.scene_id || c.action || c.fader_id));
     grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    // Only pin row heights (needed for row-spanning faders) when a fader is
+    // present, so existing button-only grids keep the legacy compact layout.
+    if (cells.some(c => c.fader_id)) {
+      grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+      grid.style.gridAutoFlow     = 'row dense';
+      grid.style.alignContent     = 'stretch';
+    }
 
     cells.forEach(cell => {
+      if (cell.fader_id) {
+        const def = faders[cell.fader_id];
+        if (def) grid.appendChild(buildFader(def));
+        return;
+      }
       const btn = document.createElement('button');
       btn.className = 'scene-btn';
       btn.id = cell.scene_id ? 'scene-' + cell.scene_id : 'action-' + cell.action;
@@ -296,6 +376,121 @@
       'cycler':       '🔁 Cycler',
     };
     return labels[action] || action;
+  }
+
+  // ── Custom faders ─────────────────────────────────────────────────────
+  const faderState = {};   // id -> {level, armed, dragging, lastSent, timer}
+
+  function buildFader(def) {
+    const vert = (def.orientation || 'vertical') === 'vertical';
+    const el = document.createElement('div');
+    el.className = 'fader-cell ' + (vert ? 'vert' : 'horiz') +
+                   ' mode-' + (def.mode || 'limit');
+    el.id = 'fader-' + def.id;
+    el.style.gridColumn = 'span ' + Math.min(def.w || 1, gridConfig.cols || 2);
+    el.style.gridRow    = 'span ' + Math.min(def.h || 1, gridConfig.rows || 4);
+
+    const st = faderState[def.id] = faderState[def.id] ||
+      { level: (def.level !== undefined ? def.level : 1.0), armed: false,
+        dragging: false, lastSent: 0, timer: null };
+
+    const head = document.createElement('div');
+    head.className = 'fader-head';
+    head.innerHTML =
+      '<span class="fader-label">' + (def.label || 'FADER') + '</span>' +
+      '<span class="fader-value" id="fader-val-' + def.id + '"></span>';
+    const track = document.createElement('div');
+    track.className = 'fader-track';
+    const fill = document.createElement('div');
+    fill.className = 'fader-fill';
+    fill.id = 'fader-fill-' + def.id;
+    track.appendChild(fill);
+
+    el.appendChild(head);
+    el.appendChild(track);
+
+    if (def.mode === 'override') {
+      const arm = document.createElement('button');
+      arm.className = 'fader-arm';
+      arm.textContent = 'ARM';
+      arm.onclick = (e) => { e.stopPropagation(); toggleArm(def.id); };
+      el.appendChild(arm);
+    }
+
+    track.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      track.setPointerCapture(e.pointerId);
+      st.dragging = true;
+      dragFader(def, track, e, vert);
+    });
+    track.addEventListener('pointermove', e => {
+      if (st.dragging) dragFader(def, track, e, vert);
+    });
+    const end = () => {
+      if (!st.dragging) return;
+      st.dragging = false;
+      sendFaderLevel(def.id, st.level, true);   // final flush
+    };
+    track.addEventListener('pointerup', end);
+    track.addEventListener('pointercancel', end);
+
+    paintFader(def.id);
+    return el;
+  }
+
+  function dragFader(def, track, e, vert) {
+    const r = track.getBoundingClientRect();
+    let lv = vert ? 1 - (e.clientY - r.top) / r.height
+                  : (e.clientX - r.left) / r.width;
+    lv = Math.max(0, Math.min(1, lv));
+    faderState[def.id].level = lv;
+    paintFader(def.id);
+    sendFaderLevel(def.id, lv, false);
+  }
+
+  const FADER_SEND_MS = 50;   // ~20 posts/sec max while dragging
+  function sendFaderLevel(id, level, final) {
+    const st  = faderState[id];
+    const now = Date.now();
+    if (!final && now - st.lastSent < FADER_SEND_MS) {
+      // trailing send so the last drag position always lands
+      clearTimeout(st.timer);
+      st.timer = setTimeout(() => sendFaderLevel(id, st.level, true), FADER_SEND_MS);
+      return;
+    }
+    clearTimeout(st.timer);
+    st.lastSent = now;
+    fetch('/api/touch/fader/' + id + '/level', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({level: level})
+    }).catch(() => {});
+  }
+
+  async function toggleArm(id) {
+    const st = faderState[id];
+    st.armed = !st.armed;
+    paintFader(id);
+    try {
+      await fetch('/api/touch/fader/' + id + '/arm', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({armed: st.armed})
+      });
+    } catch(e) {}
+  }
+
+  function paintFader(id) {
+    const st   = faderState[id];
+    const cell = document.getElementById('fader-' + id);
+    const fill = document.getElementById('fader-fill-' + id);
+    const val  = document.getElementById('fader-val-' + id);
+    if (!st || !cell || !fill) return;
+    const vert = cell.classList.contains('vert');
+    fill.style.transform = vert ? 'scaleY(' + st.level + ')'
+                                : 'scaleX(' + st.level + ')';
+    cell.classList.toggle('armed', !!st.armed);
+    if (val) val.textContent = Math.round(st.level * 100) + '%';
   }
 
   // ── Actions ───────────────────────────────────────────────────────────
@@ -446,6 +641,15 @@
       // Cycler button: active while running
       const cEl = document.getElementById('action-cycler');
       if (cEl) cEl.classList.toggle('active', !!(data.cycler && data.cycler.active));
+
+      // Custom faders: follow server state unless actively dragging
+      (data.faders || []).forEach(f => {
+        const st = faderState[f.id];
+        if (!st || st.dragging) return;
+        st.level = f.level;
+        st.armed = f.armed;
+        paintFader(f.id);
+      });
     } catch(e) {}
   }
 

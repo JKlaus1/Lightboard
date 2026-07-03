@@ -256,6 +256,40 @@
     letter-spacing: 0.04em;
   }
   #label-input:focus { border-color: var(--accent); }
+  /* Fader editor */
+  .f-row { display: flex; gap: 0.5rem; margin-bottom: 0.6rem; }
+  .f-field { flex: 1; display: flex; flex-direction: column; gap: 0.25rem; }
+  .f-field input, .f-field select {
+    width: 100%;
+    padding: 0.5rem 0.6rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 700;
+    outline: none;
+  }
+  .f-field input:focus, .f-field select:focus { border-color: var(--accent); }
+  .check-list {
+    max-height: 9.5rem;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.25rem;
+    margin-bottom: 0.6rem;
+  }
+  .check-item {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.45rem 0.5rem;
+    font-size: 0.78rem; font-weight: 700;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .check-item:active { background: #1a1a2e; }
+  .check-item input { width: 1.05rem; height: 1.05rem; accent-color: var(--accent); }
+  .btn-danger { background: #3a1418; color: #e74c3c; }
+  .btn-save   { background: var(--accent); color: #000; }
 </style>
 </head>
 <body>
@@ -310,6 +344,80 @@
       <div class="picker-section-label">🎬 Scenes</div>
       <div id="scene-list"></div>
     </div>
+
+    <!-- Faders section -->
+    <div class="picker-section">
+      <div class="picker-section-label">🎚 Faders</div>
+      <div id="fader-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Fader editor modal -->
+<div class="modal-backdrop" id="fader-modal">
+  <div class="modal">
+    <h2 id="fader-modal-title">Fader</h2>
+
+    <div class="f-row">
+      <div class="f-field">
+        <div class="label">Label</div>
+        <input type="text" id="f-label" maxlength="24" placeholder="e.g. HOUSE">
+      </div>
+    </div>
+
+    <div class="f-row">
+      <div class="f-field">
+        <div class="label">Orientation</div>
+        <select id="f-orient">
+          <option value="vertical">Vertical</option>
+          <option value="horizontal">Horizontal</option>
+        </select>
+      </div>
+      <div class="f-field">
+        <div class="label">Mode</div>
+        <select id="f-mode">
+          <option value="limit">Limit (submaster)</option>
+          <option value="override">Override (park)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="f-row">
+      <div class="f-field">
+        <div class="label">Width (cols)</div>
+        <input type="number" id="f-w" min="1" max="12" value="1">
+      </div>
+      <div class="f-field">
+        <div class="label">Height (rows)</div>
+        <input type="number" id="f-h" min="1" max="12" value="1">
+      </div>
+    </div>
+
+    <div class="f-row">
+      <div class="f-field">
+        <div class="label">Channels</div>
+        <select id="f-chan-mode">
+          <option value="intensity">Intensity / dimmer</option>
+          <option value="custom">Custom offsets…</option>
+        </select>
+      </div>
+      <div class="f-field" id="f-chan-custom-wrap" style="display:none">
+        <div class="label">Offsets (1-indexed, csv)</div>
+        <input type="text" id="f-chan-custom" placeholder="e.g. 1,2,3">
+      </div>
+    </div>
+
+    <div class="label">Target Groups</div>
+    <div class="check-list" id="f-groups"></div>
+
+    <div class="label">Target Fixtures</div>
+    <div class="check-list" id="f-fixtures"></div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeFaderModal()">Cancel</button>
+      <button class="btn-danger" id="f-delete" onclick="deleteFader()">Delete</button>
+      <button class="btn-save" onclick="saveFaderDef()">Save Fader</button>
+    </div>
   </div>
 </div>
 
@@ -329,15 +437,24 @@
   let cells      = [];
   let scenes     = [];
   let editingIdx = null;
+  let faderDefs  = [];        // custom fader definitions
+  let fixtures   = [];        // [{id, name}] pickable targets
+  let groups     = [];        // [{id, name}]
+  let editingFader = null;    // fader id being edited, or null for new
 
   async function init() {
     try {
-      const [cfgRes, sceneRes] = await Promise.all([
+      const [cfgRes, sceneRes, fadRes] = await Promise.all([
         fetch('/api/touch/config'),
         fetch('/api/library/scenes'),
+        fetch('/api/touch/faders'),
       ]);
       const cfg = await cfgRes.json();
       scenes = await sceneRes.json();
+      const fad = await fadRes.json();
+      faderDefs = fad.faders   || [];
+      fixtures  = fad.fixtures || [];
+      groups    = fad.groups   || [];
 
       document.getElementById('cols-input').value = cfg.cols || 2;
       document.getElementById('rows-input').value = cfg.rows || 4;
@@ -375,7 +492,8 @@
       el.onclick = () => openModal(i);
 
       if (cell) {
-        const typeLabel = cell.action ? 'action' :
+        const typeLabel = cell.fader_id ? 'fader'  :
+                          cell.action   ? 'action' :
                           cell.scene_type === 'effect' ? 'effect' :
                           cell.scene_type === 'mover_motion' ? 'motion' :
                           cell.scene_type === 'mover_look'   ? 'look'   : 'scene';
@@ -431,6 +549,28 @@
       sceneList.appendChild(el);
     });
 
+    // Build fader list
+    const faderList = document.getElementById('fader-list');
+    faderList.innerHTML = '';
+    faderDefs.forEach(f => {
+      const el = document.createElement('div');
+      el.className = 'picker-item';
+      el.innerHTML = '<span class="pname">🎚 ' + (f.label || f.id) + '</span>' +
+                     '<span class="ptype">' + f.mode + ' · edit ✎</span>';
+      el.onclick = () => assignFader(f);
+      // long-ish tap alternative: the ✎ side opens the editor
+      el.querySelector('.ptype').onclick = (e) => {
+        e.stopPropagation();
+        openFaderModal(f.id);
+      };
+      faderList.appendChild(el);
+    });
+    const newEl = document.createElement('div');
+    newEl.className = 'picker-item';
+    newEl.innerHTML = '<span class="pname" style="color:var(--accent)">＋ New fader…</span>';
+    newEl.onclick = () => openFaderModal(null);
+    faderList.appendChild(newEl);
+
     document.getElementById('modal').classList.add('open');
   }
 
@@ -462,12 +602,138 @@
     buildGrid();
   }
 
+  function assignFader(f) {
+    cells[editingIdx] = { fader_id: f.id, name: f.label || f.id };
+    closeModal();
+    buildGrid();
+  }
+
+  // ── Fader editor ──────────────────────────────────────────────────────
+  function openFaderModal(fid) {
+    editingFader = fid;
+    const f = fid ? faderDefs.find(x => x.id === fid) : null;
+    document.getElementById('fader-modal-title').textContent =
+      f ? 'Edit Fader' : 'New Fader';
+    document.getElementById('f-label').value  = f ? (f.label || '') : '';
+    document.getElementById('f-orient').value = f ? (f.orientation || 'vertical') : 'vertical';
+    document.getElementById('f-mode').value   = f ? (f.mode || 'limit') : 'limit';
+    document.getElementById('f-w').value      = f ? (f.w || 1) : 1;
+    document.getElementById('f-h').value      = f ? (f.h || 1) : 1;
+    const custom = f && Array.isArray(f.channels);
+    document.getElementById('f-chan-mode').value  = custom ? 'custom' : 'intensity';
+    document.getElementById('f-chan-custom').value = custom ? f.channels.join(',') : '';
+    updateChanCustomVis();
+    buildCheckList('f-groups',   groups,   f ? (f.targets?.groups   || []) : []);
+    buildCheckList('f-fixtures', fixtures, f ? (f.targets?.fixtures || []) : []);
+    document.getElementById('f-delete').style.display = f ? '' : 'none';
+    document.getElementById('fader-modal').classList.add('open');
+  }
+
+  function updateChanCustomVis() {
+    document.getElementById('f-chan-custom-wrap').style.display =
+      document.getElementById('f-chan-mode').value === 'custom' ? '' : 'none';
+  }
+  document.getElementById('f-chan-mode').addEventListener('change', updateChanCustomVis);
+
+  function buildCheckList(elId, items, selected) {
+    const wrap = document.getElementById(elId);
+    wrap.innerHTML = '';
+    if (!items.length) {
+      wrap.innerHTML = '<div class="check-item" style="color:var(--dim)">— none in show —</div>';
+      return;
+    }
+    items.forEach(it => {
+      const row = document.createElement('label');
+      row.className = 'check-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = it.id;
+      cb.checked = selected.includes(it.id);
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(it.name || it.id));
+      wrap.appendChild(row);
+    });
+  }
+
+  function checkedIds(elId) {
+    return Array.from(document.querySelectorAll('#' + elId + ' input:checked'))
+                .map(cb => cb.value);
+  }
+
+  function saveFaderDef() {
+    const label = document.getElementById('f-label').value.trim().toUpperCase();
+    let channels = 'intensity';
+    if (document.getElementById('f-chan-mode').value === 'custom') {
+      const nums = document.getElementById('f-chan-custom').value
+        .split(',').map(s => parseInt(s.trim(), 10))
+        .filter(n => !isNaN(n) && n >= 1);
+      if (nums.length) channels = nums;
+    }
+    const def = {
+      id:          editingFader || ('f_' + Math.random().toString(36).slice(2, 9)),
+      label:       label,
+      orientation: document.getElementById('f-orient').value,
+      mode:        document.getElementById('f-mode').value,
+      w:           parseInt(document.getElementById('f-w').value, 10) || 1,
+      h:           parseInt(document.getElementById('f-h').value, 10) || 1,
+      channels:    channels,
+      targets: {
+        groups:   checkedIds('f-groups'),
+        fixtures: checkedIds('f-fixtures'),
+      },
+      level: 1.0,
+    };
+    const idx = faderDefs.findIndex(x => x.id === def.id);
+    if (idx >= 0) {
+      def.level = faderDefs[idx].level !== undefined ? faderDefs[idx].level : 1.0;
+      faderDefs[idx] = def;
+    } else {
+      faderDefs.push(def);
+    }
+    // Refresh any grid-cell names pointing at this fader
+    cells.forEach((c, i) => {
+      if (c && c.fader_id === def.id) cells[i] = { fader_id: def.id, name: def.label || def.id };
+    });
+    closeFaderModal();
+    // If we came here from an empty cell's "New fader…", assign it now
+    if (editingIdx !== null && (!cells[editingIdx] || !cells[editingIdx].fader_id)) {
+      assignFader(def);
+    } else {
+      buildGrid();
+      if (document.getElementById('modal').classList.contains('open')) closeModal();
+    }
+  }
+
+  function deleteFader() {
+    if (!editingFader) return;
+    faderDefs = faderDefs.filter(x => x.id !== editingFader);
+    cells.forEach((c, i) => { if (c && c.fader_id === editingFader) cells[i] = null; });
+    closeFaderModal();
+    closeModal();
+    buildGrid();
+  }
+
+  function closeFaderModal() {
+    document.getElementById('fader-modal').classList.remove('open');
+    editingFader = null;
+  }
+
+  document.getElementById('fader-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeFaderModal();
+  });
+
   async function saveConfig() {
     const cols    = parseInt(document.getElementById('cols-input').value) || 2;
     const rows    = parseInt(document.getElementById('rows-input').value) || 4;
     const payload = { cols, rows, cells };
     const msg     = document.getElementById('save-msg');
     try {
+      // Save fader definitions first so the grid's fader_id refs resolve
+      await fetch('/api/touch/faders', {
+        method:  'POST',
+        headers: {'Content-Type': 'application/json'},
+        body:    JSON.stringify({ faders: faderDefs }),
+      });
       const r = await fetch('/api/touch/config', {
         method:  'POST',
         headers: {'Content-Type': 'application/json'},
