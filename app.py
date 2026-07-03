@@ -13,6 +13,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 
 from dmx import EnttecOpenDMX
 from artnet import ArtNetDMX
+from artnet_receiver import ArtNetReceiver
 from sacn import SacnDMX
 from engine import LightingEngine
 import cell_strip
@@ -272,6 +273,17 @@ engine = LightingEngine(dmx, show_config)
 
 # Custom venue faders (touch UI) live in config.json, like touch_grid
 engine.set_custom_faders(config.get("custom_faders", []))
+
+# Art-Net remote mode (Phase 2): always-on listener on UDP 6454. A master
+# Pi streaming Art-Net at us engages remote mode automatically; the engine's
+# watchdog reverts to local control when the stream stops. Optional config
+# keys: remote_timeout_s (default 10), remote_universe_map ({"in": out}).
+engine.set_remote_options(
+    timeout_s=config.get("remote_timeout_s"),
+    universe_map=config.get("remote_universe_map"),
+)
+artnet_rx = ArtNetReceiver(engine.handle_remote_frame)
+artnet_rx.start()
 
 startup = show_config.get("startup_scene")
 if startup:

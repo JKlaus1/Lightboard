@@ -258,6 +258,19 @@ class LightingEngine:
         self._custom_faders     = {}   # id -> {mode, level, armed, keys}
         self._fader_snapshot    = ()   # tuple of (mode, level, armed, keys)
 
+        # Art-Net remote mode (Phase 2, venue master/slave). When a master Pi
+        # streams Art-Net at this Pi (via artnet_receiver.py), local rendering
+        # is suspended and incoming frames are piped straight to the output
+        # driver — master has total say, fader/blackout stages included. A
+        # watchdog in _output_loop reverts to local control when the stream
+        # goes silent, so the venue is never left with dead lights.
+        self.REMOTE_TIMEOUT_S   = 10.0   # stream silent this long → local
+        self._remote_active     = False
+        self._remote_last_rx    = 0.0
+        self._remote_src        = None        # master's IP (for UI/status)
+        self._remote_universes  = frozenset() # replaced atomically on new uni
+        self._remote_uni_map    = {}          # optional {incoming: local} remap
+
         # Output-loop timing diagnostics (see _output_loop; low-noise).
         self._tick_durs      = []
         self._tick_window_t  = time.time()
@@ -1027,6 +1040,60 @@ class LightingEngine:
                 for fid, f in self._custom_faders.items()
             ]
 
+    # ── Art-Net remote mode (Phase 2, master/slave) ───────────────────────
+
+    def set_remote_options(self, timeout_s=None, universe_map=None):
+        """Configure remote mode from config.json (optional keys
+        remote_timeout_s / remote_universe_map)."""
+        if timeout_s:
+            try:
+                self.REMOTE_TIMEOUT_S = max(1.0, float(timeout_s))
+            except (TypeError, ValueError):
+                pass
+        if universe_map:
+            try:
+                self._remote_uni_map = {int(k): int(v)
+                                        for k, v in universe_map.items()}
+            except (TypeError, ValueError, AttributeError):
+                log.warning("remote_universe_map malformed — ignored")
+
+    def handle_remote_frame(self, universe, data, src_ip=None):
+        """Called by ArtNetReceiver for every incoming ArtDmx packet.
+
+        Engages remote mode on the first packet and pipes the frame straight
+        to the local output driver, bypassing the entire local pipeline —
+        scenes, effects, faders, blackout. The driver has its own lock, so
+        writing from the receiver thread is safe alongside the output loop;
+        at most one local frame overlaps at engagement (~25 ms, invisible).
+        """
+        uni = self._remote_uni_map.get(universe, universe)
+        if not self._remote_active:
+            self._remote_src       = src_ip
+            self._remote_universes = frozenset()
+            self._remote_last_rx   = time.time()
+            self._remote_active    = True   # set last: gates _push_to_dmx
+            log.info("REMOTE control engaged — Art-Net from %s (universe %d)."
+                     " Local engine output suspended.", src_ip, uni)
+        else:
+            self._remote_last_rx = time.time()
+        if uni not in self._remote_universes:
+            # Atomic replacement so get_state() never iterates a mutating set
+            self._remote_universes = self._remote_universes | {uni}
+        # Straight pipe. Full-length write so channels the master clears
+        # actually go to 0 on the nodes.
+        self._dmx.set_channels(
+            {uni: {i + 1: data[i] for i in range(len(data))}})
+
+    def get_remote_state(self):
+        age = (time.time() - self._remote_last_rx) if self._remote_last_rx else None
+        return {
+            "active":    self._remote_active,
+            "source":    self._remote_src,
+            "universes": sorted(self._remote_universes),
+            "age":       round(age, 1) if age is not None else None,
+            "timeout_s": self.REMOTE_TIMEOUT_S,
+        }
+
     # ── Output loop (mixer) ───────────────────────────────────────────────
 
     def _rebuild_channel_caches(self):
@@ -1062,6 +1129,15 @@ class LightingEngine:
             self._tick_overlay_blend()
             self._tick_blackout_blend()
             self._tick_effect_blend()
+            # Remote-mode watchdog: master's stream gone silent → revert to
+            # local control. Cleared BEFORE _push_to_dmx so this same tick
+            # resumes local output — the venue is never left dark.
+            if self._remote_active and \
+                    (t0 - self._remote_last_rx) > self.REMOTE_TIMEOUT_S:
+                self._remote_active = False
+                log.info("REMOTE stream silent %.0fs — reverting to LOCAL "
+                         "control (source was %s)",
+                         self.REMOTE_TIMEOUT_S, self._remote_src)
             self._push_to_dmx()
             elapsed = time.time() - t0
             ms = elapsed * 1000.0
@@ -1165,6 +1241,13 @@ class LightingEngine:
                - 'full' : every patched channel → 0
         Result is sent in one shot so previously-set channels don't persist.
         """
+        # Remote mode (Phase 2): a master Pi owns the output — skip the whole
+        # local composite AND the send. Fader stage 8a lives inside this
+        # function, so limits/overrides are inherently bypassed too. Scene /
+        # blend ticks keep running in _output_loop, so on watchdog revert the
+        # local show resumes exactly where it should be.
+        if self._remote_active:
+            return
         # Compute composite of all active main scenes (or preview override)
         if self._preview_active:
             scene = dict(self._preview_dmx)
@@ -2735,6 +2818,8 @@ class LightingEngine:
                      "level": round(f["level"], 3), "armed": f["armed"]}
                     for fid, f in self._custom_faders.items()
                 ],
+                # Art-Net remote mode (Phase 2): touch UI banner + status
+                "remote": self.get_remote_state(),
                 # Legacy single fields = topmost active of each stack (deprecated;
                 # prefer the motions/looks/effects lists above).
                 "current_motion":    top_motion["name"] if top_motion else None,
