@@ -144,6 +144,23 @@
     line-height: 1;
   }
   .grid-cell .clear-btn:active { color: #e74c3c; }
+  /* Drag to reposition */
+  .grid-cell {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .grid-cell.drag-src {
+    opacity: 0.45;
+    transform: scale(0.96);
+    border-color: var(--accent);
+    border-style: solid;
+  }
+  .grid-cell.drop-target {
+    border-color: var(--success);
+    border-style: solid;
+    background: #10241a;
+  }
 
   /* Save status */
   #save-msg {
@@ -549,7 +566,8 @@
       if (covered.has(i)) return;   // inside a fader's footprint
       const el = document.createElement('div');
       el.className = 'grid-cell' + (cell ? ' filled' : '');
-      el.onclick = () => openModal(i);
+      el.onclick = () => { if (suppressTap) { suppressTap = false; return; } openModal(i); };
+      attachDrag(el, i, !!cell);
       el.style.gridColumn = String((i % cols) + 1);
       el.style.gridRow    = String(Math.floor(i / cols) + 1);
 
@@ -576,6 +594,107 @@
       wrap.appendChild(el);
     });
   }
+
+  // ── Drag to reposition ────────────────────────────────────────────────
+  // Long-press (~300ms) lifts a filled cell; drag over any slot and release
+  // to move, or swap if occupied. Faders re-validate their footprint at the
+  // destination. A quick tap (or a move before the hold completes, i.e. a
+  // scroll) never starts a drag.
+  let drag        = null;    // {srcIdx} while a drag is active
+  let suppressTap = false;   // swallow the click that follows a drag
+  const LONG_PRESS_MS = 300;
+  const DRAG_SLOP     = 12;  // px of movement that cancels the pending hold
+
+  function attachDrag(el, idx, filled) {
+    el.dataset.idx = idx;
+    if (!filled) return;     // empty cells are drop targets only
+    el.addEventListener('pointerdown', e => {
+      if (e.target.classList.contains('clear-btn')) return;
+      const sx = e.clientX, sy = e.clientY;
+      const timer = setTimeout(() => {
+        drag = { srcIdx: idx };
+        el.classList.add('drag-src');
+      }, LONG_PRESS_MS);
+      const move = ev => {
+        if (!drag) {
+          if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > DRAG_SLOP) {
+            clearTimeout(timer);   // finger is scrolling, not holding
+            cleanup();
+          }
+          return;
+        }
+        updateDropTarget(ev.clientX, ev.clientY, el);
+      };
+      const up = ev => {
+        clearTimeout(timer);
+        if (drag) {
+          const t = cellAt(ev.clientX, ev.clientY);
+          clearDropHighlights();
+          el.classList.remove('drag-src');
+          const src = drag.srcIdx;
+          drag = null;
+          suppressTap = true;
+          if (t && t !== el) tryMoveCell(src, parseInt(t.dataset.idx, 10));
+        }
+        cleanup();
+      };
+      const cleanup = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    });
+  }
+
+  function cellAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    return el ? el.closest('.grid-cell') : null;
+  }
+
+  function clearDropHighlights() {
+    document.querySelectorAll('.grid-cell.drop-target')
+      .forEach(c => c.classList.remove('drop-target'));
+  }
+
+  function updateDropTarget(x, y, srcEl) {
+    clearDropHighlights();
+    const t = cellAt(x, y);
+    if (t && t !== srcEl) t.classList.add('drop-target');
+  }
+
+  function tryMoveCell(srcIdx, dstIdx) {
+    if (isNaN(dstIdx) || srcIdx === dstIdx) return;
+    const src = cells[srcIdx];
+    if (!src) return;
+    const dst    = cells[dstIdx] || null;
+    const backup = cells.slice();
+    cells[srcIdx] = dst;       // move, or swap if dst was occupied
+    cells[dstIdx] = src;
+    const errs = [];
+    if (src.fader_id) {
+      const d = faderDefs.find(x => x.id === src.fader_id);
+      if (d) { const e = placementError(dstIdx, d, d.id); if (e) errs.push(e); }
+    }
+    if (dst && dst.fader_id) {
+      const d = faderDefs.find(x => x.id === dst.fader_id);
+      if (d) { const e = placementError(srcIdx, d, d.id); if (e) errs.push(e); }
+    }
+    if (errs.length) {
+      cells = backup;          // snap back
+      alert(errs[0]);
+      return;
+    }
+    buildGrid();
+  }
+
+  // Stop the page scrolling under an active drag (touch only). Harmless
+  // otherwise: preventDefault only fires while a drag is armed.
+  document.getElementById('grid-wrap').addEventListener('touchmove', e => {
+    if (drag) e.preventDefault();
+  }, { passive: false });
 
   function clearCell(i) {
     cells[i] = null;
