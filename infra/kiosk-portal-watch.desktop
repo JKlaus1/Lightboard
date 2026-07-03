@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Kiosk Portal Watcher
+Exec=/home/pi/kiosk_portal_watch.sh
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
