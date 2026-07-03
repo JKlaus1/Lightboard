@@ -136,37 +136,58 @@ via the Pi's own AP, or by driving the venue rig from his mixer-rack Pi as
 extra Art-Net universes. Local-only: **no Cloudflare tunnel** on venue installs
 (don't want to be on the hook for a business's connectivity).
 
-Build order: **1) custom faders → 2) Art-Net remote mode → 3) installer bundle.**
-Phase 1 is useful on the current rig immediately and needs no new hardware.
+Build order: **1) custom faders ✅ → 2) Art-Net remote mode (NEXT) → 3) installer bundle.**
 
-### Phase 1 — Custom fader system (touch UI) — AGREED SPEC
-- Faders are grid citizens in the existing `touch_grid` config that can **span
-  multiple rows/columns** (a vertical side fader = 1-wide, full-height cell).
-  Orientation (vertical/horizontal) + span are per-fader config. With the 7"
-  screen mounted landscape, Joseph expects a vertical fader on the side.
-- Fader definition: `id`, `label`, `targets` (single fixture, list, or group),
-  `channels` (`"dimmer"` default; any explicit channel offsets selectable),
-  `mode` (`"limit"` | `"override"`), persisted level. Stored in `config.json`;
-  live level set via a lightweight API endpoint (~20 posts/sec throttle).
-- **Limit mode** = inhibitive submaster: multiplies engine output for its target
-  channels. Full = invisible; pulled down = proportional cap on whatever the
-  show is doing.
-- **Override mode** = park: fader value wins outright for those channels,
-  ignoring all scene/effect output. Has an **arm/disarm toggle** — disarmed, the
-  fader does nothing (can't accidentally lock a channel at 0); armed at 0 it
-  deliberately turns the target off. Armed override must be **visually
-  unmistakable** on the venue screen (distinct color, e.g. red vs amber for
-  limit) so anyone looking at the panel can tell the show is being overridden.
-- Engine integration: new final stage in `_output_loop` composite, applied
-  AFTER blackout (step 7), just before the output dict is written — limit
-  multiplies, then armed overrides stamp values. No changes to scenes/effects/
-  `genEvalFixture`. Same ~25ms responsiveness as the master fader.
-- Files touched: `engine.py` (fader state + output stage), `app.py` (CRUD +
-  level endpoints), `touch_config.html` (fader builder: name, orientation,
-  span, target picker, channel selector, mode toggle), `touch.html` (render,
-  axis-aware drag, arm/disarm, mode colors).
+### Phase 1 — Custom fader system (touch UI) — ✅ SHIPPED (2026-07-03)
+Built to spec plus WYSIWYG/drag extensions. As-built reference:
 
-### Phase 2 — Art-Net remote mode (master/slave Pis)
+- **Data model:** fader defs live in `config.json` under `custom_faders`:
+  `{id, label, orientation, w, h, mode: "limit"|"override",
+  channels: "intensity"|[1-indexed offsets], targets: {fixtures:[], groups:[]},
+  level}`. Grid cells reference them as `{fader_id, name}` in `touch_grid.cells`.
+- **Channel resolution** (`engine._resolve_fader_channels`): `"intensity"` →
+  hardware dimmer channel if the fixture has one (engine parks it at 255, so a
+  limit there is a clean intensity scaler); fixtures with **no dimmer** (e.g.
+  Betopper LPC1818) → all pod color channels; movers → `channel_roles.dimmer`.
+  Explicit offset lists resolve per-fixture with out-of-range offsets ignored.
+  Groups expand to members at resolve time; re-resolved on `load_show`.
+- **Engine stage 8a** in `_push_to_dmx`: after blackout blend (8), before the
+  raw channel test (8b — kept on top so bench probing always works). Limits
+  multiply in definition order; armed overrides then stamp `level*255`.
+  **Armed override beats blackout by design.** Snapshot tuple rebuilt only on
+  change, read under the existing lock — no per-tick cost.
+- **Override arm/disarm:** disarmed = inert (can't accidentally park a channel
+  at 0). Armed = red cell + glow (limit = amber). Arm state deliberately does
+  NOT survive a restart; levels DO (2s debounced write-back to config.json —
+  no SD hammering at drag rate).
+- **API:** GET/POST `/api/touch/faders` (defs + live state + pickable
+  fixtures/groups), POST `/api/touch/fader/<id>/level`, `/arm`. Faders also in
+  `/api/state` and in GET `/api/touch/config` (single fetch for touch.html).
+- **WYSIWYG grid** (both `touch.html` and the builder): slot index i renders
+  at row ⌊i/cols⌋, col i%cols — gaps included; rows pinned `1fr`. Faders
+  occupy their true w×h footprint; covered slots aren't rendered/tappable.
+  `faderFootprint()` clamps spans to grid bounds; `placementError()` blocks
+  assign/resize that doesn't fit or overlaps (alert names the blockers).
+- **Builder drag-to-reposition:** long-press ~300ms (`LONG_PRESS_MS`) lifts a
+  cell; drop moves, or swaps with an occupied slot; faders re-validate at the
+  destination and snap back on error. Quick tap = assign modal; page scroll
+  unaffected (movement before the hold cancels it).
+- **Fader drag:** pointer-capture, axis-aware, ~50ms throttle
+  (`FADER_SEND_MS`) with trailing flush so the final position always lands.
+  `fetchState` syncs level/arm from the server unless actively dragging.
+- **Mobile viewport:** `touch.html` uses `100dvh` + safe-area padding so
+  phone-browser nav bars don't clip the grid (no effect on chromeless kiosk).
+- **Tests:** `test_faders.py` — 24 checks (resolution incl. dimmerless +
+  mover, limit/override semantics, override-beats-blackout, state survival
+  across reconfig and `load_show`). All prior suites still green.
+- Files touched: `engine.py`, `app.py`, `templates/touch.html`,
+  `templates/touch_config.html`, `test_faders.py` (new).
+- **Field-tuning knobs:** `LONG_PRESS_MS`, `FADER_SEND_MS`, fader track
+  min-sizes — revisit on the real 7" screen (only phone/iPad tested so far).
+
+### Phase 2 — Art-Net remote mode (master/slave Pis) — ⏭ NEXT
+(Buildable/testable now on the current rig over the wired network; does not
+wait on the AP dongle. Fire test Art-Net at the Pi from anything on the LAN.)
 - Venue Pi listens on UDP 6454 **always** (no toggle). Incoming Art-Net from
   the master engages remote mode automatically: local engine output suspended,
   frames piped straight to local output nodes, touchscreen shows "Remote
@@ -178,10 +199,23 @@ Phase 1 is useful on the current rig immediately and needs no new hardware.
   fan-out; its fixtures patched as extra universes, unicast to 10.42.0.1:6454.
 
 ### Network architecture (venue install)
-- **USB WiFi dongle = always-on AP.** Alfa AWUS036ACM (MT7612U — in-kernel
-  driver, proven AP mode, 2.4+5GHz) or AWUS036ACHM for max range. NOT the
-  AWUS036AXM (6GHz AP blocked by US regs; mt7921u BT-coex crashes on 6.6+
-  kernels). NM profile: `802-11-wireless.mode ap`, band a / ch 149,
+- **USB WiFi dongle = always-on AP.** ✅ ORDERED (2026-07-03): **Panda
+  Wireless PAU0B** (MT7610U, USB ID 0e8d:7610 — same chipset/driver as the
+  Alfa ACHM; in-kernel mt76, proven stable AP mode, detachable 5dBi RP-SMA).
+  AC600 (433Mbps @5GHz) is ample for control + a few unicast Art-Net
+  universes. Range-upgrade path: swap to AWUS036ACHM later = update the MAC
+  pin only (same driver). **On arrival: verify `lsusb` shows 0e8d:7610 and
+  mt76 binds.** Known quirk: low TX power (11dBm) until regulatory domain is
+  set — bake `country=US` into the Phase 3 AP profile. mt7610u has **no DFS
+  in AP mode** — fine, plan already pins non-DFS ch 149.
+  Adapters evaluated and REJECTED for AP duty (all client-grade on Linux):
+  AWUS036AXM/mt7921u (BT-coex kernel crashes on 6.6+, client-triggered AP
+  oopses reported on Pi 5 into 2026); TP-Link T3U Plus + Netgear A6150
+  (RTL8812BU — in-kernel rtw88 decent as of 6.12 but repeated Pi breakage
+  across kernel updates); Netgear A7500 (RTL8852AU), WNA3100 (Broadcom, no
+  AP); BrosTrend AC1L/AC5L/AX7PL (Realtek house; their "Linux support" =
+  client mode). Rule: **listing says chipset mt7612u/mt7610u or it's a no.**
+  NM profile: `802-11-wireless.mode ap`, band a / ch 149,
   `ipv4.method shared`, `ipv4.addresses 10.42.0.1/24` — venue Pi is always
   10.42.0.1 on its AP. **Pin the profile to the dongle by MAC**, not ifname
   (wlan0/wlan1 can swap on USB enumeration). 5GHz primary; drop to 2.4 if
