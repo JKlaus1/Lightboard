@@ -272,3 +272,60 @@ the AP profile and bench-test wired Art-Net end-to-end.
   infrastructure changes (edit script, push; no packaging/rebuild step).
 - Screen candidates: Pi official 7" DSI (800×480) or Waveshare 7" IPS
   (1024×600); `touch.html` grid/font sizes need upward scaling either way.
+
+### Phase 3 — session handoff 2026-07-03 (evening)
+Bench-verification session. Both pieces of Phase 3 hardware proven; no installer
+code written yet. Key decision: **rack Pi stays DHCP (portable); venue install
+gets static eth0.** So the eth0-static work belongs in `install.sh`, NOT on the
+rack Pi's `mixer-network` profile (which stays pure DHCP).
+
+**AP dongle (Panda PAU0B) — ✅ PROVEN end-to-end.**
+- Enumerates `0e8d:7610`, driver `mt76x0u` binds clean. It's **wlan1**, MAC
+  `9c:ef:d5:f6:19:35` (built-in radio is wlan0). Pin AP profile to this MAC —
+  both radios support AP, so ifname is unsafe.
+- `iw reg set US` unlocks ch149 TX power (12→15 dBm; world-domain throttle
+  confirmed as PLAN predicted). Reg domain is NOT persistent — installer must
+  bake `country=US` (NM `802-11-wireless.band a` + a persistent reg setting).
+- Working AP profile recipe (create, then deleted from rack Pi at session end):
+  `nmcli con add type wifi ifname '*' con-name venue-ap 802-11-wireless.ssid
+  <SSID> mode ap band a channel 149 mac-address 9C:EF:D5:F6:19:35
+  wifi-sec.key-mgmt wpa-psk proto rsn pairwise ccmp group ccmp psk <PSK>
+  ipv4.method shared ipv4.addresses 10.42.0.1/24`. Phone joined, got
+  10.42.0.51 via NM shared DHCP, reached :5000. NAT/dnsmasq all good.
+
+**CR011R wired Art-Net node — ✅ PROVEN it converts Art-Net→DMX.**
+- Lit a real fixture when fed valid unicast Art-Net (u0, full-on). Hardware and
+  DMX path are good. Every failure this session was Pi-side, not the node.
+- **MAC is IP-derived: last 3 MAC bytes = last 3 IP octets.** At 192.168.0.187
+  → MAC `02:4d:48:a8:00:bb` (`187`=bb, `168`=a8, `0`=00). Matches OLED. TRAP:
+  reading the MAC off another LAN (UniFi showed `a8:01:bb` at a .1.x IP) gives
+  the wrong value — the MAC follows the IP. Pinning the wrong MAC permanent is
+  what caused hours of "works after a ping, then goes deaf."
+- Node OLED submit gesture: click to select, **hold Enter ~3s to commit**.
+  Blue in/out LED: **off = standby (not committed), solid = Art-Net→DMX out,
+  blinking = DMX→Art-Net in.** Set Transmit mode = `Artnet → dmx`.
+- Node port-address net0/sub0/uni0 matches rig universe 0. Mask 255.255.255.0,
+  host octet can't be 0/255 (.187 fine).
+
+**Root cause of the whole evening (documented so we don't repeat it):** manual
+`ip addr add` on eth0 while NM owns it via the DHCP `mixer-network` profile.
+On a direct cable (no DHCP server) NM periodically reasserts the profile, tears
+down the manual IP + the 192.168.0.0/24 connected route, and Art-Net frames
+silently drop (non-blocking sendto). A `ping` transiently revived it → the
+misleading "ping makes DMX work for a bit" symptom. Even production dongles
+(.185/.186) showed ARP INCOMPLETE during the route collapse. Fix = a REAL
+static eth0, not a manual add.
+
+**Next session (Phase 3 build):**
+1. Bench: create `artnet-bench` NM profile (eth0, `autoconnect no`,
+   `ipv4.method manual 192.168.0.10/24`, `never-default yes`,
+   `ignore-auto-dns yes`, ipv6 disabled) — a dedicated static that does NOT
+   touch `mixer-network`. Bring up to finish/repeat node verification cleanly
+   (no ping babysitting). Tear down + `up mixer-network` when done.
+2. Write `install.sh`: eth0 static (venue), AP profile (country=US, ch149,
+   MAC-pinned, 10.42.0.1/24 shared), packages, systemd units, avahi, kiosk.
+   Node registration: venue nodes are just extra `artnet_target` entries;
+   remember IP-derived MAC when documenting per-node setup.
+3. Open q for install.sh: prefer broadcast Art-Net (no per-node ARP/MAC
+   dependency) vs unicast + static ARP? Broadcast is simpler for venue installs
+   — test both next session (`artblast2.py b ...` vs unicast).
