@@ -261,17 +261,70 @@ monitor + watchdog revert all confirmed). As-built reference:
   static in the rig scheme. Bench-configure before install day. Rescue paths:
   `nmap -sn` sweep; ArtIpProg (DMX-Workshop) for MAC-based IP reprogramming.
 
-### Phase 3 — Installer bundle — ⏭ NEXT
-Hardware on hand as of 2026-07-03: Panda PAU0B AP dongle **and** a PKnight
-CR011R Ethernet Art-Net node (wired venue output — same PKnight family as the
-rack's wireless dongles) both delivered/arriving today, so Phase 3 can bake in
-the AP profile and bench-test wired Art-Net end-to-end.
-- `install.sh` in-repo: packages, systemd units, avahi, AP profile,
-  touchscreen (DSI) setup, kiosk autostart. One-time setup only — installed
-  Pis update via `git pull && restart`, so the installer only changes when
-  infrastructure changes (edit script, push; no packaging/rebuild step).
-- Screen candidates: Pi official 7" DSI (800×480) or Waveshare 7" IPS
-  (1024×600); `touch.html` grid/font sizes need upward scaling either way.
+### Phase 3 — Installer bundle — ✅ SHIPPED (2026-07-04, commit bed3495)
+Scope grew (by design) from venue-only to ONE wizard-driven `install.sh` that
+builds EITHER Pi flavour from a fresh Pi OS image. As-built reference:
+
+- **Two roles:** `rack` (Lightboard + Stage Messenger + optional tunnel;
+  eth0 = DHCP `mixer-network`, WiFi-client uplink) and `venue` (Lightboard
+  only, local-only; eth0 static, broadcast Art-Net, own AP). Role sets
+  defaults; every option is individually overridable.
+- **Wizard = whiptail** (raspi-config's TUI; works over SSH, no X). Answers
+  saved to `install.conf` (gitignored, per-machine) → every install is
+  reproducible: `./install.sh --config install.conf --yes` rebuilds the same
+  rig non-interactively. `--check` validates a conf + prints the plan without
+  touching anything; `--wizard` forces re-asking. **A saved rack conf is the
+  rack Pi's disaster-recovery story.**
+- **Art-Net out (selectable):** `broadcast` (venue default) / `unicast` /
+  `keep` (config.json untouched — rack default). Broadcast = directed subnet
+  broadcast derived from the static eth0 /24 (e.g. .50 → .255); validator
+  refuses broadcast without static eth0 so limited-broadcast-out-the-wrong-
+  interface can't happen. `artnet.py` grew an unconditional `SO_BROADCAST`
+  setsockopt (permissive only — zero effect on the rack's unicast targets).
+  **Broadcast rationale:** every node on the segment hears every universe and
+  pulls its own port-address → add output by configuring the NODE's universe,
+  no per-node IP/MAC in Lightboard, no ARP — the entire CR011R failure class
+  (IP-derived MAC, ARP INCOMPLETE, ping-revival) is structurally gone.
+  → resolves the 2026-07-03 open question: **broadcast**, unicast retained
+  for the WiFi dongles.
+- **Network modules:** eth0 static `venue-artnet` OR DHCP `mixer-network`
+  (both never-default, ignore-auto-dns) or skip; optional WiFi-client profile
+  (autoconnect-retries 0 + powersave 2 + priority 20 — the hotspot fix baked
+  in); optional AP on ANY radio (internal or dongle) — wizard radiolists the
+  wlan MACs and pins the profile by MAC, 5GHz ch149 or 2.4GHz ch6, reg-domain
+  US persisted via raspi-config + a `wifi-regdom` oneshot before NM.
+- **Screens:** `dsi_auto` (official 7" AND official-protocol clones — Hosyond
+  5" IPS confirmed driver-free, so 5" is the minimum-viable venue screen at
+  zero extra code) / `dsi_waveshare` (needs its overlay — verify size tag per
+  model) / `hdmi` (any size; touch = standard USB HID; rotated-panel xinput
+  hook documented in the kiosk autostart) / `headless`. Kiosk (lightdm
+  autologin → openbox → chromium `--kiosk` :5000/touch) is a separate toggle.
+  **SPI screens dropped by design** — BOOT_FIX.md's no-dri-wait.conf is a
+  rack-SPI legacy fix and is deliberately NEVER installed by this script
+  (KMS displays must not have it).
+- **Messenger module:** clones/pulls StageMessenger to
+  `/home/pi/stage-messenger`, own venv, `stage-messenger` unit (PORT=3000
+  env → server.py).
+- **Tunnel module (optional, independent of role):** GUIDED, not automatic —
+  creds are secrets and can't live in the public repo. Installs cloudflared
+  (Cloudflare apt repo), writes ingress config.yml (root→3000 only if
+  messenger installed, admin.<domain>→5000, 404 catch-all), then restores
+  creds from a backup tarball OR prints the five one-time `cloudflared`
+  commands and leaves the service disabled until creds exist. Re-run with
+  `--config --yes` to finish after login.
+- **config.json handling:** when Art-Net mode ≠ keep, patches
+  dmx_driver/artnet_target then `git update-index --skip-worktree config.json`
+  so `git pull` never clobbers the per-machine config (repo's tracked
+  config.json is effectively the rack's). Undo to pull an upstream config
+  change: `--no-skip-worktree`.
+- **Fresh-bare-Pi path** (header of install.sh): Raspberry Pi Imager sets
+  hostname/user pi/SSH/WiFi in its own GUI → boot → apt install git → clone →
+  `./install.sh`. Imager covers the OS layer; the wizard covers the rest.
+- **Validated offline:** bash -n; venue-broadcast + rack-full confs through
+  `--check`; four illegal combos rejected (broadcast w/o static eth0, AP w/o
+  MAC, PSK <8, headless+kiosk); tunnel config.yml rendered both messenger
+  variants; kiosk autostart rendered + `sh -n`; SO_BROADCAST patch idempotent
+  + py_compile. NOT yet run on real hardware.
 
 ### Phase 3 — session handoff 2026-07-03 (evening)
 Bench-verification session. Both pieces of Phase 3 hardware proven; no installer
@@ -326,6 +379,35 @@ static eth0, not a manual add.
    MAC-pinned, 10.42.0.1/24 shared), packages, systemd units, avahi, kiosk.
    Node registration: venue nodes are just extra `artnet_target` entries;
    remember IP-derived MAC when documenting per-node setup.
-3. Open q for install.sh: prefer broadcast Art-Net (no per-node ARP/MAC
-   dependency) vs unicast + static ARP? Broadcast is simpler for venue installs
-   — test both next session (`artblast2.py b ...` vs unicast).
+3. Open q for install.sh: broadcast vs unicast — **RESOLVED 2026-07-04:
+   broadcast** (see Phase 3 as-built above). Unicast retained as a wizard
+   option for the WiFi dongles.
+
+### Phase 3 — session handoff 2026-07-04
+Installer-build session (remote, no hardware — Joseph on a gig). Shipped
+commit `bed3495`: wizard `install.sh` (as-built above), `artnet.py`
+SO_BROADCAST, `.gitignore` += install.conf. Note: the 07-03 session's venue-
+only installer + artnet patch were never pushed (gig week); this commit
+supersedes them — nothing from that build exists in history.
+
+**Decisions this session:**
+- Broadcast Art-Net = venue default (question resolved; rationale in Phase 3).
+- SPI screens killed permanently. Minimum viable screen = 5" DSI (Hosyond
+  IPS confirmed official-protocol/driver-free → covered by `dsi_auto`).
+  Bigger = HDMI, no ceiling (USB HID touch). "HDMI + keyboard for setup,
+  then pull it headless" works: kiosk with no display is harmless, or re-run
+  installer with SCREEN=headless.
+- Tunnel fully optional + role-independent (guided module, creds never in repo).
+
+**Next session (hardware bench):**
+1. Run the wizard for real on a spare/venue Pi from a fresh Pi OS image —
+   first end-to-end test (offline validation only so far). Watch: chromium
+   package name, cloudflared apt repo on trixie, AP radiolist output.
+2. Venue bring-up: broadcast → CR011R end-to-end (node needs only subnet +
+   universe + Artnet→dmx; no registration).
+3. Generate + stash a **rack install.conf** (disaster-recovery for the rack
+   Pi) — walk the wizard on the rack or hand-write from PI_INFRA.md.
+4. Deferred: INSTALL.md (Imager settings walkthrough) + optional first-boot
+   wizard hook; touch.html scaling pass on the real 5"/7" panel
+   (LONG_PRESS_MS / FADER_SEND_MS / track min-sizes); DMXRouter fan-out
+   (Opus-class) for master-side multi-output.
