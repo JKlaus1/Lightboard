@@ -4,3 +4,4 @@ __pycache__/
 *.log
 patch_*.py
 .DS_Store
+install.conf

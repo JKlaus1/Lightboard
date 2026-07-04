@@ -63,6 +63,13 @@ class ArtNetDMX:
                 self._socket.setblocking(False)
             except Exception:
                 pass
+            # Permit directed-broadcast targets (venue installs broadcast
+            # Art-Net to the subnet, sidestepping ARP/MAC entirely). No
+            # effect on unicast sends.
+            try:
+                self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            except Exception:
+                pass
             self.connected = True
             if not self.targets:
                 log.warning("Art-Net: no targets configured")
