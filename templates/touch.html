@@ -302,6 +302,23 @@
   }
   .nav-menu button:active { background: #262636; }
   .nav-menu button.nav-close { color: var(--dim); text-align: center; }
+  /* Corner dual-hold hint (3s reached in a corner: release=edit, hold=admin) */
+  #hold-hint {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    z-index: 1050;                     /* above banner, below gates */
+    display: none;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-radius: 20px; padding: 8px 18px;
+    font-family: 'Rajdhani', sans-serif; font-size: 13px; font-weight: 700;
+    letter-spacing: 0.04em; color: var(--text); white-space: nowrap;
+    box-shadow: 0 2px 14px rgba(0,0,0,0.7);
+  }
+  #hold-hint.show { display: block; }
+  /* Long-press hygiene: this is a control surface — no text selection or
+     touch callouts fighting the 3s/5s holds (kiosk chromium + iPad alike) */
+  #scene-grid button, .fader-cell, .grid-label, #header, #footer {
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
   /* ── Grid labels (static, non-interactive text/divider) ── */
   .grid-label {
     display: flex;
@@ -434,6 +451,8 @@
     </div>
   </div>
 </div>
+
+<div id="hold-hint">Release → Edit Scene&nbsp;&nbsp;·&nbsp;&nbsp;Keep holding → Admin</div>
 
 <script>
   let blackoutOn   = false;
@@ -583,6 +602,7 @@
       } else {
         btn.textContent = cell.label || cell.name || cell.scene_id;
         btn.onclick = () => toggleScene(cell.scene_id);
+        attachSceneHold(btn, cell.scene_id);   // 3s hold -> scene editor
       }
       grid.appendChild(btn);
     });
@@ -913,11 +933,25 @@
   // dead zones stealing touches from grid buttons — a hold that matures
   // swallows the release-click via gateSuppress.
   const CORNER_PX   = 90;      // corner hit zone (px from each corner)
-  const HOLD_MS     = 5000;    // gesture: 5s per design
-  const HOLD_SLOP   = 20;      // px of movement that cancels the hold
+  const HOLD_MS     = 5000;    // admin gesture: 5s per design
+  const EDIT_HOLD_MS = 3000;   // scene-button hold -> editor
+  const HOLD_SLOP   = 20;      // px of movement that cancels a hold
   let gateTimer     = null;
   let gateSuppress  = false;   // swallow the click after a matured hold
   let pinEntry      = '';
+  let gateTarget    = '';      // where a successful PIN goes ('' = nav menu)
+
+  function gatesOpen() {
+    return document.getElementById('pin-gate').classList.contains('open') ||
+           document.getElementById('nav-gate').classList.contains('open');
+  }
+
+  function showHoldHint(on) {
+    document.getElementById('hold-hint').classList.toggle('show', !!on);
+  }
+
+  // This is a control surface: no context menus fighting the 3s/5s holds
+  document.addEventListener('contextmenu', e => e.preventDefault());
 
   function inCorner(x, y) {
     const w = window.innerWidth, h = window.innerHeight;
@@ -926,10 +960,63 @@
     return nearX && nearY;
   }
 
+  // ── 3s scene-button hold -> editor ────────────────────────────────────
+  // Outside a corner: fires at 3s. Inside a corner both holds arm on the
+  // same press — at 3s a hint appears; releasing before 5s goes to the
+  // editor, reaching 5s lets the admin hold win (openGate hides the hint
+  // and the release handler sees the gate open and stands down).
+  function attachSceneHold(btn, sceneId) {
+    btn.addEventListener('pointerdown', e => {
+      if (gatesOpen()) return;
+      const sx = e.clientX, sy = e.clientY;
+      const corner = inCorner(sx, sy);
+      let editorArmed = false;
+      const t = setTimeout(() => {
+        if (corner) { editorArmed = true; showHoldHint(true); }
+        else        { gateSuppress = true; navigateEditor(sceneId); }
+      }, EDIT_HOLD_MS);
+      const move = ev => {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > HOLD_SLOP) cleanup();
+      };
+      const up = () => {
+        if (editorArmed && !gatesOpen()) {
+          gateSuppress = true;
+          navigateEditor(sceneId);
+        }
+        cleanup();
+      };
+      const cleanup = () => {
+        clearTimeout(t);
+        showHoldHint(false);
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', cleanup);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', cleanup);
+    });
+  }
+
+  async function navigateEditor(sceneId) {
+    const dest = '/editor/' + sceneId;
+    let required = false;
+    try {
+      const r = await fetch('/api/touch/unlock');
+      required = (await r.json()).pin_required;
+    } catch (e) {}
+    if (required) {
+      gateTarget = dest;
+      pinEntry = ''; paintPin(); buildPinPad();
+      document.getElementById('pin-gate').classList.add('open');
+    } else {
+      location.href = dest;
+    }
+  }
+
   document.addEventListener('pointerdown', e => {
     if (!inCorner(e.clientX, e.clientY)) return;
-    if (document.getElementById('pin-gate').classList.contains('open') ||
-        document.getElementById('nav-gate').classList.contains('open')) return;
+    if (gatesOpen()) return;
     const sx = e.clientX, sy = e.clientY;
     clearTimeout(gateTimer);
     gateTimer = setTimeout(() => { gateSuppress = true; openGate(); }, HOLD_MS);
@@ -953,6 +1040,8 @@
   }, true);
 
   async function openGate() {
+    showHoldHint(false);   // admin wins the corner dual-hold
+    gateTarget = '';
     let required = false;
     try {
       const r = await fetch('/api/touch/unlock');
@@ -967,6 +1056,7 @@
     document.getElementById('pin-gate').classList.remove('open');
     document.getElementById('nav-gate').classList.remove('open');
     pinEntry = '';
+    gateTarget = '';
   }
 
   function buildPinPad() {
@@ -1000,8 +1090,10 @@
       });
       const d = await r.json();
       if (d.ok) {
+        const dest = gateTarget;      // capture before closeGates resets it
         closeGates();
-        document.getElementById('nav-gate').classList.add('open');
+        if (dest) location.href = dest;
+        else document.getElementById('nav-gate').classList.add('open');
       } else {
         flashPinError();
       }

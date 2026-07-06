@@ -570,25 +570,46 @@ def api_touch_config_set():
     return jsonify({"ok": True})
 
 # ── Kiosk admin gate ────────────────────────────────────────────────────────
-# The kiosk touch UI hides an admin gate behind a 5s corner hold. If
-# config.json carries a non-empty "kiosk_pin" (string), the gate asks for it;
-# unset/empty = the hold alone opens the nav. This gates the PHYSICAL SCREEN
-# only — anyone on the rig WiFi can reach /settings from their own browser,
-# same as before (existing posture, unchanged).
+# The kiosk touch UI hides an admin gate behind a 5s corner hold, and scene
+# buttons open the editor on a 3s hold. If config.json carries a non-empty
+# "kiosk_pin" (string), both ask for it; unset/empty = the hold alone opens.
+# A successful unlock starts a sliding 60s grace window: gated actions within
+# the window skip the PIN and renew it, so back-to-back scene edits don't
+# re-prompt. This gates the PHYSICAL SCREEN only — anyone on the rig WiFi can
+# reach /settings from their own browser, same as before (existing posture).
+
+_KIOSK_GRACE_S = 60
+_kiosk_unlock_until = 0.0
+
+def _kiosk_pin_required():
+    """True if a PIN is configured AND the grace window has lapsed.
+    Checking inside the window renews it (sliding)."""
+    global _kiosk_unlock_until
+    import time
+    if not str(config.get("kiosk_pin", "") or "").strip():
+        return False
+    now = time.time()
+    if now < _kiosk_unlock_until:
+        _kiosk_unlock_until = now + _KIOSK_GRACE_S   # renew on use
+        return False
+    return True
 
 @app.route("/api/touch/unlock", methods=["GET"])
 def api_touch_unlock_status():
-    """Whether the kiosk admin gate needs a PIN. Never returns the PIN."""
-    return jsonify({"pin_required": bool(str(config.get("kiosk_pin", "") or "").strip())})
+    """Whether the kiosk gate needs a PIN right now. Never returns the PIN."""
+    return jsonify({"pin_required": _kiosk_pin_required()})
 
 @app.route("/api/touch/unlock", methods=["POST"])
 def api_touch_unlock():
-    """Verify the kiosk admin PIN (timing-safe). No PIN configured = open."""
+    """Verify the kiosk PIN (timing-safe). Success opens the grace window."""
+    global _kiosk_unlock_until
+    import time
     required = str(config.get("kiosk_pin", "") or "").strip()
     if not required:
         return jsonify({"ok": True})
     attempt = str((request.json or {}).get("pin", "") or "").strip()
     if attempt and secrets.compare_digest(attempt, required):
+        _kiosk_unlock_until = time.time() + _KIOSK_GRACE_S
         return jsonify({"ok": True})
     return jsonify({"ok": False}), 403
 
