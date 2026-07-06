@@ -45,11 +45,22 @@ def _clamp_font(v, dflt):
         return dflt
     return max(8, min(72, n))
 
+def _clean_hex(v):
+    """'#rrggbb' passthrough; anything else -> ''."""
+    if isinstance(v, str) and len(v) == 7 and v[0] == "#":
+        try:
+            int(v[1:], 16)
+            return v.lower()
+        except ValueError:
+            pass
+    return ""
+
 def _clean_cell(c):
     """Light normalization for one touch-grid cell: clamp w/h to sane bounds
-    (1-12, matching the fader-def convention) and font_size to 8-72px
-    (0/absent = inherit the global size), leaving everything else
-    untouched. Empty slots (None) pass through as-is."""
+    (1-12, matching the fader-def convention), font_size to 8-72px
+    (0/absent = inherit the global size), and color/auto_color to valid
+    '#rrggbb' hex (else ''), leaving everything else untouched. Empty
+    slots (None) pass through as-is."""
     if not isinstance(c, dict):
         return c
     out = dict(c)
@@ -59,6 +70,8 @@ def _clean_cell(c):
         except (TypeError, ValueError):
             out[k] = 1
     out["font_size"] = _clamp_font(c.get("font_size", 0), 0)
+    out["color"] = _clean_hex(c.get("color", ""))
+    out["auto_color"] = _clean_hex(c.get("auto_color", ""))
     return out
 
 @app.route("/api/touch/config", methods=["POST"])

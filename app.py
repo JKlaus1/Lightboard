@@ -134,6 +134,76 @@ def load_library_scene(scene_id):
 def save_library_scene(scene_id, data):
     save_json(library_path(scene_id), data)
 
+def _pod_hex(c):
+    """Pod/color dict (r/g/b/a/w/uv/l, 0-255) -> '#rrggbb' or None.
+    Python port of editor.html's podCssColor(): linear additive emitter
+    mix -> sRGB, hue-preserving normalization when the mix exceeds full
+    intensity, gamma-encoded. Keep the two in sync."""
+    if not isinstance(c, dict):
+        return None
+    E = {"r": (1, 0, 0), "g": (0, 1, 0), "b": (0, 0, 1), "a": (1, 0.45, 0),
+         "w": (1, 0.92, 0.78), "uv": (0.40, 0, 0.72), "l": (0.72, 1, 0)}
+    R = G = B = 0.0
+    lit = False
+    for k, (er, eg, eb) in E.items():
+        try:
+            v = (c.get(k) or 0) / 255.0
+        except TypeError:
+            v = 0.0
+        if v > 0:
+            lit = True
+        R += v * er
+        G += v * eg
+        B += v * eb
+    if not lit:
+        return None
+    mx = max(R, G, B, 1.0)
+    R, G, B = R / mx, G / mx, B / mx
+
+    def enc(x):
+        x = min(1.0, max(0.0, x))
+        x = 12.92 * x if x <= 0.0031308 else 1.055 * (x ** (1 / 2.4)) - 0.055
+        return round(x * 255)
+    return "#{:02x}{:02x}{:02x}".format(enc(R), enc(G), enc(B))
+
+def _scene_color(data):
+    """Representative display color for a scene ('#rrggbb'), or None.
+    Effect scenes: their primary color. Static scenes: dimmer-weighted
+    average of every non-null pod in the first step. Fixtures carrying
+    color keys directly (no pods) are treated as a single pod."""
+    if data.get("scene_type") == "effect":
+        return _pod_hex(data.get("primary"))
+    steps = data.get("steps") or []
+    if not steps:
+        return None
+    acc = {}
+    wsum = 0.0
+    color_keys = ("r", "g", "b", "a", "w", "uv", "l")
+    for fx in (steps[0].get("fixtures") or {}).values():
+        if not isinstance(fx, dict):
+            continue
+        try:
+            wt = (fx.get("dimmer", 255) or 0) / 255.0
+        except TypeError:
+            wt = 0.0
+        if wt <= 0:
+            continue
+        pods = fx.get("pods")
+        if not pods and any(k in fx for k in color_keys):
+            pods = [fx]
+        for pod in (pods or []):
+            if not isinstance(pod, dict):
+                continue
+            for k in color_keys:
+                try:
+                    acc[k] = acc.get(k, 0.0) + (pod.get(k) or 0) * wt
+                except TypeError:
+                    pass
+            wsum += wt
+    if wsum <= 0:
+        return None
+    return _pod_hex({k: v / wsum for k, v in acc.items()})
+
 def list_library_scenes():
     """All scenes in library, with metadata."""
     scenes = []
@@ -146,6 +216,7 @@ def list_library_scenes():
                 "folder":     data.get("folder", ""),
                 "steps":      len(data.get("steps", [])),
                 "scene_type": data.get("scene_type", "main"),
+                "color":      _scene_color(data),
             }
             # Effect scenes have no steps — surface the effect id so the
             # library list can show "🌀 Comet" instead of "0 steps".
@@ -454,10 +525,21 @@ def _clamp_font(v, dflt):
         return dflt
     return max(8, min(72, n))
 
+def _clean_hex(v):
+    """'#rrggbb' passthrough; anything else -> ''."""
+    if isinstance(v, str) and len(v) == 7 and v[0] == "#":
+        try:
+            int(v[1:], 16)
+            return v.lower()
+        except ValueError:
+            pass
+    return ""
+
 def _clean_cell(c):
     """Light normalization for one touch-grid cell: clamp w/h to sane bounds
-    (1-12, matching the fader-def convention) and font_size to 8-72px
-    (0/absent = inherit the global size), leaving everything else
+    (1-12, matching the fader-def convention), font_size to 8-72px
+    (0/absent = inherit the global size), and color/auto_color to valid
+    '#rrggbb' hex (else ''), leaving everything else
     (scene_id/action/fader_id/type/label/etc.) untouched. Empty slots (None)
     pass through as-is so grid position is preserved."""
     if not isinstance(c, dict):
@@ -469,6 +551,8 @@ def _clean_cell(c):
         except (TypeError, ValueError):
             out[k] = 1
     out["font_size"] = _clamp_font(c.get("font_size", 0), 0)
+    out["color"] = _clean_hex(c.get("color", ""))
+    out["auto_color"] = _clean_hex(c.get("auto_color", ""))
     return out
 
 @app.route("/api/touch/config", methods=["POST"])

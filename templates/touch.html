@@ -227,6 +227,18 @@
     50%      { box-shadow: 0 0 22px rgba(231,76,60,0.85); }
   }
 
+  /* ── Per-cell colors (scene auto-color or manual pick) ──
+     Declared AFTER the type-* variants so a manual color overrides them. */
+  .scene-btn.colored {
+    border-color: var(--cell-color);
+    background: var(--cell-bg);
+  }
+  .scene-btn.colored.active {
+    border-color: var(--cell-color);
+    background: var(--cell-bg-active);
+    box-shadow: 0 0 12px var(--cell-glow);
+  }
+
   /* ── Footer / IP ── */
   #footer {
     flex-shrink: 0;
@@ -459,6 +471,7 @@
         lbl.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
         lbl.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
         if (cell.font_size) lbl.style.fontSize = cell.font_size + 'px';
+        if (cell.color) lbl.style.color = cell.color;
         lbl.textContent = cell.label || '';
         grid.appendChild(lbl);
         return;
@@ -470,6 +483,16 @@
       btn.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
       if (cell.font_size) btn.style.fontSize = cell.font_size + 'px';
       btn.className = 'scene-btn';
+
+      // Manual color beats scene auto-color beats default/type styling
+      const cc = cell.color || cell.auto_color;
+      if (cc) {
+        btn.classList.add('colored');
+        btn.style.setProperty('--cell-color',     cc);
+        btn.style.setProperty('--cell-bg',        cc + '1a');   // ~10% wash
+        btn.style.setProperty('--cell-bg-active', cc + '33');   // ~20% when lit
+        btn.style.setProperty('--cell-glow',      cc + '80');   // 50% glow
+      }
       btn.id = cell.scene_id ? 'scene-' + cell.scene_id : 'action-' + cell.action;
 
       if (cell.action) {
