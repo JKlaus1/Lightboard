@@ -259,6 +259,8 @@
     transition: border-color 0.1s, background 0.1s;
   }
   .picker-item:active { background: #1a1a2e; border-color: var(--accent); }
+  .picker-item.sel    { background: #16162a; border-color: var(--accent); }
+  .picker-item.sel .ptype::after { content: ' ✓'; color: var(--accent); }
   .picker-item .pname {
     font-size: 0.82rem;
     font-weight: 700;
@@ -359,9 +361,9 @@
 <button class="hbtn accent" style="width:100%;padding:0.75rem;font-size:0.85rem;" onclick="saveConfig()">Save Configuration</button>
 
 <!-- Picker modal -->
-<div class="modal-backdrop" id="modal">
+<div class="modal-backdrop" id="modal" onclick="if (event.target === this) dismissModal()">
   <div class="modal">
-    <h2>Assign Button</h2>
+    <h2 id="modal-title">Assign Button</h2>
 
     <div id="label-wrap">
       <div class="label">Custom Label (optional)</div>
@@ -391,7 +393,7 @@
     </div>
 
     <div class="modal-btns">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-cancel" id="modal-dismiss" onclick="dismissModal()">Cancel</button>
     </div>
 
     <!-- Action buttons section -->
@@ -868,6 +870,14 @@
 
   function openModal(i) {
     editingIdx = i;
+    const cur = cells[i] || null;
+    // Filled cells open in edit mode: tap-off / Done applies field changes
+    // to the existing assignment (see dismissModal). Empty slots keep the
+    // old semantics: dismiss = cancel, nothing assigned.
+    document.getElementById('modal-title').textContent =
+      cur ? 'Edit Button' : 'Assign Button';
+    document.getElementById('modal-dismiss').textContent =
+      cur ? 'Done' : 'Cancel';
     document.getElementById('label-input').value = cells[i]?.label || '';
     document.getElementById('cell-w').value = cells[i]?.w || 1;
     document.getElementById('cell-h').value = cells[i]?.h || 1;
@@ -882,6 +892,7 @@
       const el = document.createElement('div');
       el.className = 'picker-item';
       el.innerHTML = `<span class="pname">${a.label}</span><span class="ptype">action</span>`;
+      if (cur && cur.action === a.action) el.classList.add('sel');
       el.onclick = () => assignAction(a);
       actionList.appendChild(el);
     });
@@ -907,6 +918,7 @@
           scene.color + ';margin-right:6px;vertical-align:baseline;"></span>'
         : '';
       el.innerHTML = `<span class="pname">${dot}${scene.name || scene.id}</span><span class="ptype">${typeLabel}</span>`;
+      if (cur && cur.scene_id === scene.id) el.classList.add('sel');
       el.onclick = () => assignScene(scene);
       sceneList.appendChild(el);
     });
@@ -919,6 +931,7 @@
       el.className = 'picker-item';
       el.innerHTML = '<span class="pname">🎚 ' + (f.label || f.id) + '</span>' +
                      '<span class="ptype">' + f.mode + ' · edit ✎</span>';
+      if (cur && cur.fader_id === f.id) el.classList.add('sel');
       el.onclick = () => assignFader(f);
       // long-ish tap alternative: the ✎ side opens the editor
       el.querySelector('.ptype').onclick = (e) => {
@@ -941,6 +954,7 @@
     labelEl.className = 'picker-item';
     labelEl.innerHTML = '<span class="pname">🏷 Add as label</span>' +
                          '<span class="ptype">uses text above</span>';
+    if (cur && cur.type === 'label') labelEl.classList.add('sel');
     labelEl.onclick = () => assignLabel();
     labelList.appendChild(labelEl);
 
@@ -950,6 +964,31 @@
   function closeModal() {
     document.getElementById('modal').classList.remove('open');
     editingIdx = null;
+  }
+
+  // Dismiss = tap-off the backdrop or the bottom button. For a FILLED
+  // scene/action/label cell this APPLIES the field edits (label, w/h,
+  // font, color) onto the existing assignment — no need to re-pick the
+  // scene just to change a color. Empty slots and fader cells keep the
+  // old behavior (plain close; fader properties live in the fader editor).
+  function dismissModal() {
+    const cur = editingIdx !== null ? cells[editingIdx] : null;
+    if (!cur || cur.fader_id) { closeModal(); return; }
+    const w = parseInt(document.getElementById('cell-w').value, 10) || 1;
+    const h = parseInt(document.getElementById('cell-h').value, 10) || 1;
+    const font_size = parseInt(document.getElementById('cell-font').value, 10) || 0;
+    const err = footprintError(editingIdx, { w, h });
+    if (err) { alert(err); return; }            // keep modal open to fix
+    const raw = document.getElementById('label-input').value.trim();
+    if (cur.type === 'label') {
+      if (!raw) { alert('Enter the label text in "Custom Label" above first.'); return; }
+      cells[editingIdx] = { ...cur, label: raw, color: pickedColor, w, h, font_size };
+    } else {
+      // scene/action: same uppercase custom-label semantics as assign*()
+      cells[editingIdx] = { ...cur, label: raw.toUpperCase(), color: pickedColor, w, h, font_size };
+    }
+    closeModal();
+    buildGrid();
   }
 
   function assignAction(a) {
