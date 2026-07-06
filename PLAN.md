@@ -481,3 +481,47 @@ agent tool, but Posh-SSH's in-process .NET SSH does.
 2. Rack install.conf disaster-recovery capture (still outstanding from 07-04).
 3. touch.html fader scaling on the real panel; venue `remote_universe_map` if an
    independent venue universe is wanted.
+
+### Phase 3 — session handoff 2026-07-06 (AP-radio fix + rack disaster recovery)
+Remote session (laptop, no hardware). Closes both open items from 07-05.
+
+**Shipped this session:**
+- `install.sh` AP-radio-pick fix (commit `def8de1`): `pick_wifi_radio` now
+  detects each `wl*` interface's bus via `/sys/class/net/$iface/device` (USB
+  dongle vs. onboard SDIO/mmc) and pre-selects the first USB radio as the
+  whiptail default, instead of always defaulting to the first interface
+  `ip -o link show` happens to list (usually onboard `wlan0` — the bug that
+  bit the venue build). If the onboard radio is picked anyway and more than
+  one radio was on offer, a hard `whiptail --yesno` confirmation is required.
+  Falls back to the first entry, no warning, when only one radio exists
+  (bench Pi with no dongle attached). Verified via mocked bash logic tests
+  (onboard-first, dongle-first, onboard-only orderings) — real whiptail
+  dialog not exercised (no hardware this session).
+- Rack Pi (`Lights`) disaster-recovery `install.conf` drafted and stashed
+  locally (off-repo, gitignored — same handling as the Venue Pi's). Captures
+  role=rack, eth0 dhcp (`mixer-network`), unicast Art-Net targets including
+  the manually-added `10.42.0.1:0` venue-link line, Stage Messenger + tunnel
+  enabled. `WIFI_SSID`/`WIFI_PSK` deliberately left blank in the stashed
+  file — not writing credentials into a generated file unprompted.
+- PI_INFRA.md += "Rack Pi disaster recovery" section: documents the WiFi
+  multi-profile gap (installer only recreates one of the rack's three client
+  profiles — `netplan-wlan0-Lindentree`, `android-hotspot`, `venue-link` —
+  the other two need manual `nmcli` re-add post-restore) and the Cloudflare
+  tunnel restore procedure (no creds tarball kept, so interactive
+  `cloudflared tunnel login` + `tunnel token --cred-file` against the
+  *existing* `stage-messenger` tunnel — not `tunnel create`, which would
+  orphan current DNS + Access bindings).
+
+**New installer gap found (not fixed, logged for later):** `install.sh`'s own
+guided tunnel setup, when no creds are found, prints `cloudflared tunnel
+create ${TUNNEL_NAME}` as step 2 — correct for a genuinely new tunnel, wrong
+for restoring an existing one. TODO: have the guided message distinguish
+new-tunnel vs. restore-existing-tunnel.
+
+**Next session:**
+1. touch.html fader scaling on the real panel; venue `remote_universe_map` if
+   an independent venue universe is wanted.
+2. Installer TODO: distinguish new-tunnel vs. restore-existing-tunnel in the
+   guided Cloudflare tunnel setup message (see above).
+3. Fill in `WIFI_SSID`/`WIFI_PSK` on the stashed rack-install.conf by hand
+   (not committed — local file only) so it's actually restore-ready.

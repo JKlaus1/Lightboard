@@ -108,3 +108,38 @@ on home WiFi during the bench.
   includes `10.42.0.1:0` (universe-0-only).
 - No routing/NAT: the rack only ever talks to the venue Pi's AP-side IP, never
   the venue's 192.168.0.x Art-Net LAN.
+
+## Rack Pi disaster recovery (install.conf)
+Unlike the Venue Pi, the rack (`Lights`) was built before `install.sh` existed,
+so it never had a saved `install.conf`. A `rack-install.conf` is stashed
+locally (off-repo, gitignored like the Venue Pi's) so a dead SD card can be
+rebuilt with `./install.sh --config rack-install.conf --yes` instead of
+re-deriving the config from memory. Two gaps the wizard model doesn't cover:
+
+- **WiFi client profiles**: the live rack Pi runs three —
+  `netplan-wlan0-Lindentree` (home), `android-hotspot` (gig internet uplink),
+  `venue-link` (venue AP client, added by hand 2026-07-05 for two-Pi remote
+  control). `install.sh`'s `WIFI_CLIENT` wizard step only creates one profile.
+  After a `--config` restore, the other two need to be re-added by hand via
+  `nmcli` — the stashed conf intentionally leaves `WIFI_SSID`/`WIFI_PSK` blank
+  rather than embedding credentials in a generated file.
+- **Cloudflare tunnel, no creds backup kept**: restore via interactive login,
+  reusing the *existing* `stage-messenger` tunnel rather than creating a new
+  one (a new tunnel would orphan the current DNS records + Access app
+  bindings):
+    1. `cloudflared tunnel login` — opens an authorize URL; approve from any
+       browser signed into the Cloudflare account; `cert.pem` lands in
+       `~/.cloudflared/` on the Pi.
+    2. `cloudflared tunnel list` — confirms `stage-messenger` is visible, and
+       gives its UUID.
+    3. `sudo cloudflared tunnel token --cred-file /etc/cloudflared/<UUID>.json stage-messenger`
+       — regenerates the credentials JSON for the *existing* tunnel (same
+       UUID/DNS/Access bindings). Do **not** run `cloudflared tunnel create`
+       here — that mints a new tunnel and orphans the current one.
+    4. Re-run `./install.sh --config rack-install.conf --yes` — it finds the
+       creds file and finishes writing `config.yml` + enabling the service.
+  Note: `install.sh`'s own printed guided steps (when no creds are found)
+  say to run `tunnel create` — correct for a brand-new tunnel, wrong for
+  restoring this one. Installer TODO: distinguish new-tunnel vs.
+  restore-existing-tunnel in the guided message.
+
