@@ -520,6 +520,7 @@ mod_screen() {
 
 mod_kiosk() {
   [ "$KIOSK" = "yes" ] || return 0
+  sudo systemctl set-default graphical.target
   log "Kiosk: lightdm autologin -> openbox -> chromium (${KIOSK_URL})"
   sudo mkdir -p /etc/lightdm/lightdm.conf.d
   sudo tee /etc/lightdm/lightdm.conf.d/50-lightboard-autologin.conf >/dev/null <<'CONF'
