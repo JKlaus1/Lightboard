@@ -461,6 +461,7 @@
 <div id="hold-hint">Release → Edit Scene&nbsp;&nbsp;·&nbsp;&nbsp;Keep holding → Admin</div>
 
 <script src="/static/dialogs.js"></script>
+<script src="/static/kiosk_sfx.js"></script>
 <script>
   let blackoutOn   = false;
   let singerOn     = false;
@@ -476,6 +477,7 @@
     try {
       const res  = await fetch('/api/touch/config');
       gridConfig = await res.json();
+      kioskSfx.configure(gridConfig.sfx);
       buildGrid();
       await fetchState();
       document.getElementById('status-dot').className = 'ok';
@@ -752,6 +754,7 @@
 
   // ── Actions ───────────────────────────────────────────────────────────
   async function doAction(action, btn) {
+    kioskSfx.click();
     try {
       if (action === 'blackout') {
         await fetch('/api/blackout', {
@@ -833,10 +836,11 @@
 
   // ── Preset recall (momentary) ─────────────────────────────────────────
   async function recallPreset(id, btn) {
+    kioskSfx.click();
     try {
       const r = await fetch('/api/preset/' + id + '/recall', { method: 'POST' });
       const d = await r.json();
-      if (!d.ok) { alert('Recall failed: ' + (d.error || '')); return; }
+      if (!d.ok) { kioskSfx.err(); alert('Recall failed: ' + (d.error || '')); return; }
       flashBtn(btn);
       fetchState();   // reflect the recalled scenes/levels promptly
     } catch (e) {}
@@ -844,6 +848,7 @@
 
   // ── Toggle scene ──────────────────────────────────────────────────────
   async function toggleScene(id) {
+    kioskSfx.click();
     try {
       if (activeScenes.has(id)) {
         await fetch('/api/stop/' + id, { method: 'POST' });
@@ -1101,9 +1106,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ capture: true, name: v.name || 'Preset' }) });
       const d = await r.json();
-      if (!d.ok) { alert('Capture failed: ' + (d.error || '')); return; }
+      if (!d.ok) { kioskSfx.err(); alert('Capture failed: ' + (d.error || '')); return; }
+      kioskSfx.ok();
       closeGates();
-    } catch (e) { alert('Capture failed'); }
+    } catch (e) { kioskSfx.err(); alert('Capture failed'); }
   }
 
   function buildPinPad() {
@@ -1115,6 +1121,7 @@
       b.textContent = k;
       if (k === 'CLR') b.classList.add('pin-fn');
       b.onclick = () => {
+        kioskSfx.click();
         if (k === 'OK')  { tryUnlock(); return; }
         if (k === 'CLR') { pinEntry = ''; paintPin(); return; }
         if (pinEntry.length >= 8) return;
@@ -1137,11 +1144,13 @@
       });
       const d = await r.json();
       if (d.ok) {
+        kioskSfx.ok();
         const dest = gateTarget;      // capture before closeGates resets it
         closeGates();
         if (dest) location.href = dest;
         else document.getElementById('nav-gate').classList.add('open');
       } else {
+        kioskSfx.err();
         flashPinError();
       }
     } catch (e) {}
