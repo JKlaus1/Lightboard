@@ -1078,9 +1078,15 @@ function recallPreset(id) {
     .catch(() => {});
 }
 
-function capturePreset() {
-  const name = prompt('Name this preset (saves the current live look):', '');
-  if (name === null) return;   // cancelled
+async function capturePreset() {
+  const v = await formDialog({
+    title: 'Name this preset',
+    hint: 'Saves the current live look',
+    ok: 'Save',
+    fields: [{ key: 'name', label: 'Name', value: '', placeholder: 'Preset' }],
+  });
+  if (v === null) return;   // cancelled
+  const name = v.name;
   fetch('/api/presets', { method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ capture: true, name: name || 'Preset' }) })
@@ -1990,6 +1996,7 @@ function closeDmxMonitor() {
   fetch('/api/messenger-config').then(function(r){return r.json();}).then(connect).catch(function(){});
 })();
 </script>
+<script src="/static/dialogs.js"></script>
 <script src="/static/kiosk_nav.js"></script>
 </body>
 </html>

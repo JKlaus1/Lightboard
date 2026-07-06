@@ -1726,12 +1726,18 @@ async function slotCommit(role, opts){
   renderSlots();
   return true;
 }
-function slotAddManual(role){
-  const label = prompt('Slot label (e.g. Stars):', '');
-  if (label === null) return;
-  const lo = prompt('Range low (0–255):', '0'); if (lo === null) return;
-  const hi = prompt('Range high (0–255):', lo); if (hi === null) return;
-  slotCommit(role, {label: label, lo: lo, hi: hi, file: null});
+async function slotAddManual(role){
+  const v = await formDialog({
+    title: 'Add slot',
+    ok: 'Add',
+    fields: [
+      {key:'label', label:'Slot label (e.g. Stars)', value:'', placeholder:'Label'},
+      {key:'lo', label:'Range low (0–255)', type:'number', min:0, max:255, value:0},
+      {key:'hi', label:'Range high (0–255)', type:'number', min:0, max:255, value:255},
+    ],
+  });
+  if (v === null) return;
+  slotCommit(role, {label: v.label, lo: v.lo, hi: v.hi, file: null});
 }
 function slotSetPhoto(role, idx){
   const s = (fbSlots[role] || [])[idx];
@@ -2261,6 +2267,7 @@ function deletePresetFromEditor(){
 
 renderPalette();
 </script>
+<script src="/static/dialogs.js"></script>
 <script src="/static/kiosk_nav.js"></script>
 </body>
 </html>
