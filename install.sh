@@ -99,17 +99,43 @@ w_input() { whiptail --title "Lightboard installer" --inputbox "$1" 12 74 "$2" 3
 w_yesno() { whiptail --title "Lightboard installer" --yesno "$1" 12 74; }
 
 pick_wifi_radio() {  # radiolist of wlan interfaces -> echoes chosen MAC
-  local args=() line iface mac first=ON
+  local args=() line iface mac bus onboard_mac="" usb_idx=-1 n=0
   while read -r line; do
     iface=$(echo "$line" | awk -F': ' '{print $2}')
     mac=$(echo "$line" | grep -oE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | head -1)
     [ -n "$mac" ] || continue
-    args+=("$mac" "$iface" "$first"); first=OFF
+    bus=$(readlink -f "/sys/class/net/$iface/device" 2>/dev/null)
+    args+=("$mac" "$iface" "OFF")
+    if [[ "$bus" == *"/usb"* ]]; then
+      # External dongle. Remember the first one — that's our default pick.
+      [ "$usb_idx" -lt 0 ] && usb_idx=$n
+    else
+      # Onboard radio (SDIO/mmc on a Pi) — never the preferred AP default.
+      onboard_mac="$mac"
+    fi
+    n=$((n + 1))
   done < <(ip -o link show | grep -E ': wl')
   [ ${#args[@]} -gt 0 ] || { warn "No WiFi interfaces found."; return 1; }
-  whiptail --title "Lightboard installer" --radiolist \
+
+  # Pre-select the first external USB radio; fall back to the first entry
+  # found (e.g. bench-testing with no dongle attached).
+  local default=$(( usb_idx >= 0 ? usb_idx : 0 ))
+  args[$((default * 3 + 2))]="ON"
+
+  local choice
+  choice=$(whiptail --title "Lightboard installer" --radiolist \
     "Which radio hosts the AP?\n(Pinned by MAC — interface names can swap on USB enumeration. The external dongle is the one that disappears when unplugged.)" \
-    18 74 6 "${args[@]}" 3>&1 1>&2 2>&3
+    18 74 6 "${args[@]}" 3>&1 1>&2 2>&3) || return 1
+
+  # Hard-warn if the onboard radio got picked anyway and there was another
+  # option — this is the mistake that pinned the AP to wlan0 on the venue
+  # build (07-05 session).
+  if [ -n "$onboard_mac" ] && [ "$choice" = "$onboard_mac" ] && [ ${#args[@]} -gt 3 ]; then
+    whiptail --title "Check radio choice" --yesno \
+      "You selected the onboard WiFi radio ($choice) to host the AP.\n\nThis is usually wrong: the onboard radio is typically needed for the WiFi client/internet uplink, and pinning the AP here has caused a failed install before.\n\nUse the onboard radio for the AP anyway?" \
+      12 74 || return 1
+  fi
+  echo "$choice"
 }
 
 run_wizard() {
