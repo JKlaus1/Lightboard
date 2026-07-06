@@ -161,6 +161,10 @@
     border-style: solid;
     background: #10241a;
   }
+  .grid-cell.drop-target.drop-invalid {
+    border-color: #e74c3c;
+    background: #2a1214;
+  }
 
   /* Save status */
   #save-msg {
@@ -328,6 +332,10 @@
     <div class="label">Rows</div>
     <input type="number" id="rows-input" min="1" max="8" value="4" onchange="rebuildGrid()">
   </div>
+  <div class="size-field">
+    <div class="label">Font (px)</div>
+    <input type="number" id="font-input" min="8" max="72" value="13">
+  </div>
 </div>
 
 <div class="label">Button Grid — tap a cell to assign</div>
@@ -354,6 +362,10 @@
       <div class="f-field">
         <div class="label">Height (rows)</div>
         <input type="number" id="cell-h" min="1" max="12" value="1">
+      </div>
+      <div class="f-field">
+        <div class="label">Font px (0 = global)</div>
+        <input type="number" id="cell-font" min="0" max="72" value="0">
       </div>
     </div>
 
@@ -492,6 +504,7 @@
 
       document.getElementById('cols-input').value = cfg.cols || 2;
       document.getElementById('rows-input').value = cfg.rows || 4;
+      document.getElementById('font-input').value = cfg.font_size || 13;
       cells = cfg.cells || [];
 
       const total = (cfg.cols || 2) * (cfg.rows || 4);
@@ -692,13 +705,58 @@
 
   function clearDropHighlights() {
     document.querySelectorAll('.grid-cell.drop-target')
-      .forEach(c => c.classList.remove('drop-target'));
+      .forEach(c => c.classList.remove('drop-target', 'drop-invalid'));
+  }
+
+  // Same swap-and-validate as tryMoveCell, but read-only: returns the error
+  // string a real drop would produce, or null if it would succeed.
+  function moveWouldFail(srcIdx, dstIdx) {
+    if (isNaN(dstIdx) || srcIdx === dstIdx) return null;
+    const src = cells[srcIdx];
+    if (!src) return null;
+    const dst    = cells[dstIdx] || null;
+    const backup = cells.slice();
+    cells[srcIdx] = dst;
+    cells[dstIdx] = src;
+    let err = null;
+    const srcSize = cellSize(src);
+    if (srcSize) err = footprintError(dstIdx, srcSize, src.fader_id || null);
+    if (!err && dst) {
+      const dstSize = cellSize(dst);
+      if (dstSize) err = footprintError(srcIdx, dstSize, dst.fader_id || null);
+    }
+    cells = backup;
+    return err;
   }
 
   function updateDropTarget(x, y, srcEl) {
     clearDropHighlights();
     const t = cellAt(x, y);
-    if (t && t !== srcEl) t.classList.add('drop-target');
+    if (!t || t === srcEl || !drag) return;
+    const dstIdx = parseInt(t.dataset.idx, 10);
+    if (isNaN(dstIdx)) return;
+
+    // Footprint the dragged cell would occupy anchored at the hovered slot
+    const { cols, rows } = gridDims();
+    const size = cellSize(cells[drag.srcIdx]) || { w: 1, h: 1 };
+    const fp = faderFootprint(dstIdx, size, cols, rows);
+    const invalid = moveWouldFail(drag.srcIdx, dstIdx) !== null;
+
+    // Highlight every rendered cell whose own footprint intersects the
+    // dragged footprint. (Slots hidden inside another big cell's footprint
+    // have no element of their own — their anchor element lights up
+    // instead, which correctly shows what the drop would collide with.)
+    document.querySelectorAll('.grid-cell').forEach(el => {
+      if (el === srcEl) return;
+      const i = parseInt(el.dataset.idx, 10);
+      if (isNaN(i)) return;
+      const elSize = cellSize(cells[i]) || { w: 1, h: 1 };
+      const elFp = faderFootprint(i, elSize, cols, rows);
+      if (elFp.slots.some(s => fp.slots.includes(s))) {
+        el.classList.add('drop-target');
+        if (invalid) el.classList.add('drop-invalid');
+      }
+    });
   }
 
   function tryMoveCell(srcIdx, dstIdx) {
@@ -744,6 +802,7 @@
     document.getElementById('label-input').value = cells[i]?.label || '';
     document.getElementById('cell-w').value = cells[i]?.w || 1;
     document.getElementById('cell-h').value = cells[i]?.h || 1;
+    document.getElementById('cell-font').value = cells[i]?.font_size || 0;
 
     // Build action list
     const actionList = document.getElementById('action-list');
@@ -822,13 +881,14 @@
     const customLabel = document.getElementById('label-input').value.trim().toUpperCase();
     const w = parseInt(document.getElementById('cell-w').value, 10) || 1;
     const h = parseInt(document.getElementById('cell-h').value, 10) || 1;
+    const font_size = parseInt(document.getElementById('cell-font').value, 10) || 0;
     const err = footprintError(editingIdx, { w, h });
     if (err) { alert(err); return; }
     cells[editingIdx] = {
       action: a.action,
       name:   a.label,
       label:  customLabel || '',
-      w, h,
+      w, h, font_size,
     };
     closeModal();
     buildGrid();
@@ -838,6 +898,7 @@
     const customLabel = document.getElementById('label-input').value.trim().toUpperCase();
     const w = parseInt(document.getElementById('cell-w').value, 10) || 1;
     const h = parseInt(document.getElementById('cell-h').value, 10) || 1;
+    const font_size = parseInt(document.getElementById('cell-font').value, 10) || 0;
     const err = footprintError(editingIdx, { w, h });
     if (err) { alert(err); return; }
     cells[editingIdx] = {
@@ -845,7 +906,7 @@
       name:       scene.name || scene.id,
       label:      customLabel || '',
       scene_type: scene.scene_type,
-      w, h,
+      w, h, font_size,
     };
     closeModal();
     buildGrid();
@@ -867,9 +928,10 @@
     if (!text) { alert('Enter the label text in "Custom Label" above first.'); return; }
     const w = parseInt(document.getElementById('cell-w').value, 10) || 1;
     const h = parseInt(document.getElementById('cell-h').value, 10) || 1;
+    const font_size = parseInt(document.getElementById('cell-font').value, 10) || 0;
     const err = footprintError(editingIdx, { w, h });
     if (err) { alert(err); return; }
-    cells[editingIdx] = { type: 'label', label: text, w, h };
+    cells[editingIdx] = { type: 'label', label: text, w, h, font_size };
     closeModal();
     buildGrid();
   }
@@ -998,7 +1060,8 @@
   async function saveConfig() {
     const cols    = parseInt(document.getElementById('cols-input').value) || 2;
     const rows    = parseInt(document.getElementById('rows-input').value) || 4;
-    const payload = { cols, rows, cells };
+    const font_size = parseInt(document.getElementById('font-input').value) || 13;
+    const payload = { cols, rows, font_size, cells };
     const msg     = document.getElementById('save-msg');
     try {
       // Save fader definitions first so the grid's fader_id refs resolve

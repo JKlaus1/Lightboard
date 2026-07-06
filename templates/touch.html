@@ -117,7 +117,7 @@
     border-radius: 6px;
     color: var(--text);
     font-family: 'Rajdhani', sans-serif;
-    font-size: 13px;
+    font-size: var(--grid-font, 13px);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -243,7 +243,7 @@
     justify-content: center;
     text-align: center;
     font-family: 'Rajdhani', sans-serif;
-    font-size: 13px;
+    font-size: var(--grid-font, 13px);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -426,6 +426,7 @@
     grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
     grid.style.gridTemplateRows    = `repeat(${rows}, 1fr)`;
     grid.style.alignContent        = 'stretch';
+    grid.style.setProperty('--grid-font', (gridConfig.font_size || 13) + 'px');
 
     // Slots covered by any multi-cell footprint (beyond its own anchor slot)
     const covered = new Set();
@@ -457,6 +458,7 @@
         lbl.className = 'grid-label';
         lbl.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
         lbl.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
+        if (cell.font_size) lbl.style.fontSize = cell.font_size + 'px';
         lbl.textContent = cell.label || '';
         grid.appendChild(lbl);
         return;
@@ -466,6 +468,7 @@
       const btn = document.createElement('button');
       btn.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
       btn.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
+      if (cell.font_size) btn.style.fontSize = cell.font_size + 'px';
       btn.className = 'scene-btn';
       btn.id = cell.scene_id ? 'scene-' + cell.scene_id : 'action-' + cell.action;
 

@@ -443,9 +443,21 @@ def api_touch_config_get():
     cfg["faders"] = config.get("custom_faders", [])
     return jsonify(cfg)
 
+def _clamp_font(v, dflt):
+    """Clamp a font-size value to 8-72px. 0/blank/invalid -> dflt
+    (per-cell dflt of 0 means 'inherit the global size')."""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return dflt
+    if n == 0:
+        return dflt
+    return max(8, min(72, n))
+
 def _clean_cell(c):
     """Light normalization for one touch-grid cell: clamp w/h to sane bounds
-    (1-12, matching the fader-def convention) and leave everything else
+    (1-12, matching the fader-def convention) and font_size to 8-72px
+    (0/absent = inherit the global size), leaving everything else
     (scene_id/action/fader_id/type/label/etc.) untouched. Empty slots (None)
     pass through as-is so grid position is preserved."""
     if not isinstance(c, dict):
@@ -456,6 +468,7 @@ def _clean_cell(c):
             out[k] = max(1, min(12, int(c.get(k, 1))))
         except (TypeError, ValueError):
             out[k] = 1
+    out["font_size"] = _clamp_font(c.get("font_size", 0), 0)
     return out
 
 @app.route("/api/touch/config", methods=["POST"])
@@ -463,9 +476,10 @@ def api_touch_config_set():
     """Save the touch screen grid config into config.json."""
     data = request.json or {}
     config["touch_grid"] = {
-        "cols":  int(data.get("cols", 2)),
-        "rows":  int(data.get("rows", 6)),
-        "cells": [_clean_cell(c) for c in data.get("cells", [])],
+        "cols":      int(data.get("cols", 2)),
+        "rows":      int(data.get("rows", 6)),
+        "font_size": _clamp_font(data.get("font_size", 13), 13),
+        "cells":     [_clean_cell(c) for c in data.get("cells", [])],
     }
     save_json(CONFIG_PATH, config)
     log.info("Touch grid config saved.")
