@@ -81,3 +81,30 @@ Pi are unchanged and are what BOOT_FIX.md / this doc describe:
   infra/50-lightboard-nm.rules     -> /etc/polkit-1/rules.d/
   infra/kiosk_portal_watch.sh      -> /home/pi/
   infra/kiosk-portal-watch.desktop -> /home/pi/.config/autostart/
+
+## Venue-install Pi (as-built 2026-07-05, first field-style build)
+Separate Pi from the rack `Lights`. Bench unit: Pi 4B, hostname `Venue`, Trixie,
+built by the wizard `install.sh` (ROLE=venue). Was reachable at `192.168.1.84`
+on home WiFi during the bench.
+- eth0: static `192.168.0.50/24`, profile `venue-artnet`, never-default. Art-Net
+  **broadcast** `192.168.0.255`; CR011R (PKnight) lives on this segment.
+- wlan1 = Panda MT7610U (MAC `9c:ef:d5:f6:19:35`): AP `Lights-Rig` / PSK
+  `HarwoodLights01`, profile `venue-ap`, `10.42.0.1/24` (ipv4 shared). MUST be
+  MAC-pinned to the Panda — the wizard mis-pinned it to onboard wlan0 on the
+  first run (see PLAN.md 2026-07-05). Correct with:
+    nmcli con modify venue-ap 802-11-wireless.mac-address 9C:EF:D5:F6:19:35
+- wlan0 = onboard radio: optional house-WiFi client (bench: joined `Lindentree`).
+- Boot: `KIOSK=yes` needs `systemctl set-default graphical.target` (now in
+  install.sh `d6de8a6`); lightdm → openbox → chromium at :5000/touch.
+- SSH: pubkey-only. authorized_keys = `josep@MSI`, `termux@phone`.
+
+## Rack <-> Venue remote control (two-Pi link, validated 2026-07-05)
+- Rack Pi (`Lights`) joins the venue AP as a WiFi client: profile `venue-link`
+  (wlan0, ssid `Lights-Rig`, `ipv4.never-default yes`, autoconnect-priority 5).
+  Gets a `10.42.0.x` lease; eth0 stays on the rack/mixer network.
+- Master/slave: the rack Lightboard unicasts to `10.42.0.1:6454`; the venue's
+  always-on artnet_receiver engages remote mode and re-outputs to its own CR011R
+  (10 s of silence → auto-revert to local). Rack `config.json` `artnet_target`
+  includes `10.42.0.1:0` (universe-0-only).
+- No routing/NAT: the rack only ever talks to the venue Pi's AP-side IP, never
+  the venue's 192.168.0.x Art-Net LAN.

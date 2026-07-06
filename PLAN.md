@@ -411,3 +411,73 @@ supersedes them — nothing from that build exists in history.
    wizard hook; touch.html scaling pass on the real 5"/7" panel
    (LONG_PRESS_MS / FADER_SEND_MS / track min-sizes); DMXRouter fan-out
    (Opus-class) for master-side multi-output.
+
+### Phase 3 — session handoff 2026-07-05 (first hardware bench + two-Pi validation)
+First real hardware run of the wizard installer on a fresh Pi OS Lite (Trixie,
+Pi 4B, hostname `Venue`). All four bench gates passed and the two-Pi remote-
+control chain — the whole point of the venue project — is proven end to end.
+
+**Shipped this session:**
+- `install.sh` kiosk fix (commit `d6de8a6`): `mod_kiosk()` never ran
+  `systemctl set-default graphical.target`, so a `KIOSK=yes` build installed and
+  enabled the full lightdm/openbox/chromium stack yet still booted to a bare
+  `multi-user.target` console. One line added right after the `KIOSK=yes` guard.
+  Every prior kiosk install would have hit this.
+
+**Bench results (Venue Pi, Pi 4B, Trixie aarch64):**
+- Gate 1 (pre-probe): Panda MT7610U = **wlan1**, MAC `9c:ef:d5:f6:19:35`, USB
+  `0e8d:7610`; onboard radio = wlan0 (`dc:a6:32:f7:38:bd`). Trixie confirmed.
+- Gate 2 (wizard): ran clean. As-built install.conf deviated from the headless
+  bench plan (HDMI monitor was attached): `SCREEN=hdmi`, `KIOSK=yes`,
+  `WIFI_CLIENT=yes` (joined home WiFi `Lindentree`). ROLE=venue, eth0 static
+  `192.168.0.50`, ARTNET broadcast.
+- Gate 3 (verify): lightboard enabled-but-not-started post-install (expected —
+  see reboot note); started clean, Art-Net out `192.168.0.255`, :5000 up.
+- Gate 4 (DMX): CR011R → real fixture, correct output. End to end.
+
+**KNOWN INSTALLER ISSUE — AP pinned to the wrong radio (NOT yet fixed in code):**
+`pick_wifi_radio` pre-selects (`ON`) the *first* wlan interface in the radiolist,
+which is the onboard `wlan0`. The wizard was accepted on that default, so
+`venue-ap` pinned to `dc:a6:32:f7:38:bd` (wlan0) instead of the Panda. wlan0 was
+also the WiFi client, so the AP couldn't activate there and wlan1 sat NO-CARRIER.
+Fixed by hand:
+    nmcli con modify venue-ap 802-11-wireless.mac-address 9C:EF:D5:F6:19:35
+    nmcli con up venue-ap
+Installer TODO: default the radiolist `ON` to the *external* dongle (the non-
+built-in radio), or hard-warn when the chosen AP MAC equals the onboard radio's.
+This will bite every venue build until fixed.
+
+**Reboot behaviour (by design, confirmed):** `mod_enable` only `enable`s units;
+`mod_eth0` deliberately doesn't force-activate profiles mid-script (won't drop an
+eth0 SSH session). Everything comes up on the final `sudo reboot`. Confirmed:
+after reboot, lightboard + AP + eth0 static all came up unattended once the two
+manual fixes (graphical.target, AP MAC) were applied — one now in code, one TODO.
+
+**Two-Pi remote control — VALIDATED (closes the Phase 2/3 goal):**
+Primary topology (not the dispatcher-swap alternative):
+- Venue Pi always hosts `Lights-Rig` on the Panda (wlan1, `10.42.0.1`).
+- Rack Pi (`Lights`) joins Lights-Rig as a plain NM client — new profile
+  `venue-link` (wlan0, `ipv4.never-default yes`, autoconnect-priority 5). Leased
+  `10.42.0.181`. eth0 hardwired to home LAN for the bench (mixer-rack net in field).
+- Master/slave bridge (artnet_receiver remote mode): rack unicasts universe 0 at
+  `10.42.0.1:6454`; venue receiver engages remote mode and re-outputs to its own
+  CR011R. No routing/NAT — rack never touches the 192.168.0.x Art-Net LAN.
+- Rack `config.json`: `artnet_target` += `10.42.0.1:0` (universe-0-only; leaves
+  the rack's own rig targets untouched). Betopper LPC1818 (7ch @ addr 164)
+  patched on the rack; a rack scene drove the venue fixture live. Confirmed:
+  `REMOTE control engaged — Art-Net from 10.42.0.181 (universe 0)`.
+- Deploy caveat: `10.42.0.1:0` carries the rack's real universe 0, so the venue
+  mirrors whatever the rack has at those addresses. For an independent venue rig,
+  give it its own universe + venue `remote_universe_map`.
+
+**SSH / tooling:** Venue Pi is pubkey-only (password auth off). authorized_keys =
+`josep@MSI` (laptop) + `termux@phone`. From the laptop, Pi is driven via
+PowerShell Posh-SSH — Windows `ssh.exe` yields no capturable output under the
+agent tool, but Posh-SSH's in-process .NET SSH does.
+
+**Next session:**
+1. Fix the AP-radio-pick issue in install.sh (default `ON` to external dongle /
+   warn on onboard-MAC collision).
+2. Rack install.conf disaster-recovery capture (still outstanding from 07-04).
+3. touch.html fader scaling on the real panel; venue `remote_universe_map` if an
+   independent venue universe is wanted.
