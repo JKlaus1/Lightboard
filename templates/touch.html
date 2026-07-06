@@ -153,6 +153,11 @@
   .scene-btn.active::before { opacity: 1; }
 
   /* Action button variants */
+  .scene-btn.type-preset {
+    background: #241d08;
+    border-color: #55471a;
+    color: #f0d080;
+  }
   .scene-btn.type-blackout {
     background: #2a0a0a;
     border-color: #5a1a1a;
@@ -447,6 +452,7 @@
       <button onclick="location.href='/editor'">✏️ Scene Editor</button>
       <button onclick="location.href='/settings'">⚙️ Settings</button>
       <button onclick="location.href='/wifi'">📶 WiFi</button>
+      <button onclick="kioskCaptureLook()">⭐ Capture Look</button>
       <button class="nav-close" onclick="closeGates()">✕ Back to Show</button>
     </div>
   </div>
@@ -454,6 +460,7 @@
 
 <div id="hold-hint">Release → Edit Scene&nbsp;&nbsp;·&nbsp;&nbsp;Keep holding → Admin</div>
 
+<script src="/static/dialogs.js"></script>
 <script>
   let blackoutOn   = false;
   let singerOn     = false;
@@ -550,7 +557,7 @@
 
     cells.forEach((cell, i) => {
       if (!cell || i >= cols * rows || covered.has(i)) return;
-      if (!(cell.scene_id || cell.action || cell.fader_id || cell.type === 'label')) return;
+      if (!(cell.scene_id || cell.action || cell.preset_id || cell.fader_id || cell.type === 'label')) return;
 
       if (cell.fader_id) {
         const def = faders[cell.fader_id];
@@ -592,13 +599,19 @@
         btn.style.setProperty('--cell-bg-active', cc + '33');   // ~20% when lit
         btn.style.setProperty('--cell-glow',      cc + '80');   // 50% glow
       }
-      btn.id = cell.scene_id ? 'scene-' + cell.scene_id : 'action-' + cell.action;
+      btn.id = cell.scene_id ? 'scene-' + cell.scene_id :
+               cell.preset_id ? 'preset-' + cell.preset_id : 'action-' + cell.action;
 
       if (cell.action) {
         btn.classList.add('type-' + cell.action);
         btn.textContent = cell.label || actionLabel(cell.action);
         btn.dataset.baseLabel = btn.textContent;
         btn.onclick = () => doAction(cell.action, btn);
+      } else if (cell.preset_id) {
+        // Presets are momentary recalls (no persistent lit state)
+        btn.classList.add('type-preset');
+        btn.textContent = cell.label || cell.name || cell.preset_id;
+        btn.onclick = () => recallPreset(cell.preset_id, btn);
       } else {
         btn.textContent = cell.label || cell.name || cell.scene_id;
         btn.onclick = () => toggleScene(cell.scene_id);
@@ -816,6 +829,17 @@
   function flashBtn(btn) {
     btn.classList.add('active');
     setTimeout(() => btn.classList.remove('active'), 200);
+  }
+
+  // ── Preset recall (momentary) ─────────────────────────────────────────
+  async function recallPreset(id, btn) {
+    try {
+      const r = await fetch('/api/preset/' + id + '/recall', { method: 'POST' });
+      const d = await r.json();
+      if (!d.ok) { alert('Recall failed: ' + (d.error || '')); return; }
+      flashBtn(btn);
+      fetchState();   // reflect the recalled scenes/levels promptly
+    } catch (e) {}
   }
 
   // ── Toggle scene ──────────────────────────────────────────────────────
@@ -1057,6 +1081,29 @@
     document.getElementById('nav-gate').classList.remove('open');
     pinEntry = '';
     gateTarget = '';
+  }
+
+  // ── Capture Look (admin menu) ─────────────────────────────────────────
+  // Snapshots the live scene/level composition as a recallable preset via
+  // the existing capture API. The formDialog (dialogs.js) uses real DOM
+  // inputs so the kiosk OSK can serve the name field. Assign the new
+  // preset to a grid button in Touch Config to recall it from the show.
+  async function kioskCaptureLook() {
+    const v = await formDialog({
+      title: 'Capture current look',
+      hint: 'Saves the live scenes and levels as a recallable preset',
+      ok: 'Save',
+      fields: [{ key: 'name', label: 'Name', value: '', placeholder: 'Preset' }],
+    });
+    if (v === null) return;
+    try {
+      const r = await fetch('/api/presets', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ capture: true, name: v.name || 'Preset' }) });
+      const d = await r.json();
+      if (!d.ok) { alert('Capture failed: ' + (d.error || '')); return; }
+      closeGates();
+    } catch (e) { alert('Capture failed'); }
   }
 
   function buildPinPad() {

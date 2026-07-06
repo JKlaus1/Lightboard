@@ -410,6 +410,11 @@
 
     <!-- Faders section -->
     <div class="picker-section">
+      <div class="picker-section-label">⭐ Presets</div>
+      <div id="preset-list"></div>
+    </div>
+
+    <div class="picker-section">
       <div class="picker-section-label">🎚 Faders</div>
       <div id="fader-list"></div>
     </div>
@@ -505,6 +510,7 @@
 
   let cells      = [];
   let scenes     = [];
+  let presets    = [];        // live-look snapshots (recallable from the grid)
   let editingIdx = null;
   let faderDefs  = [];        // custom fader definitions
   let fixtures   = [];        // [{id, name}] pickable targets
@@ -515,14 +521,16 @@
 
   async function init() {
     try {
-      const [cfgRes, sceneRes, fadRes, palRes] = await Promise.all([
+      const [cfgRes, sceneRes, fadRes, palRes, preRes] = await Promise.all([
         fetch('/api/touch/config'),
         fetch('/api/library/scenes'),
         fetch('/api/touch/faders'),
         fetch('/api/palette'),
+        fetch('/api/presets'),
       ]);
       const cfg = await cfgRes.json();
       scenes = await sceneRes.json();
+      try { presets = (await preRes.json()).presets || []; } catch (e) { presets = []; }
       const fad = await fadRes.json();
       faderDefs = fad.faders   || [];
       fixtures  = fad.fixtures || [];
@@ -659,6 +667,7 @@
         let typeLabel = cell.fader_id ? 'fader'  :
                         cell.type === 'label' ? 'label' :
                         cell.action   ? 'action' :
+                        cell.preset_id ? 'preset' :
                         cell.scene_type === 'effect' ? 'effect' :
                         cell.scene_type === 'mover_motion' ? 'motion' :
                         cell.scene_type === 'mover_look'   ? 'look'   : 'scene';
@@ -923,6 +932,25 @@
       sceneList.appendChild(el);
     });
 
+    // Build preset list (live-look snapshots — capture from the kiosk admin
+    // menu or the show board; a grid tap recalls one onto the live engine)
+    const presetList = document.getElementById('preset-list');
+    presetList.innerHTML = '';
+    if (!presets.length) {
+      const none = document.createElement('div');
+      none.className = 'picker-item';
+      none.innerHTML = '<span class="pname" style="color:var(--dim)">— none captured yet —</span>';
+      presetList.appendChild(none);
+    }
+    presets.forEach(p => {
+      const el = document.createElement('div');
+      el.className = 'picker-item';
+      el.innerHTML = `<span class="pname">⭐ ${p.name || p.id}</span><span class="ptype">preset</span>`;
+      if (cur && cur.preset_id === p.id) el.classList.add('sel');
+      el.onclick = () => assignPreset(p);
+      presetList.appendChild(el);
+    });
+
     // Build fader list
     const faderList = document.getElementById('fader-list');
     faderList.innerHTML = '';
@@ -1023,6 +1051,24 @@
       scene_type: scene.scene_type,
       color:      pickedColor,
       auto_color: scene.color || '',
+      w, h, font_size,
+    };
+    closeModal();
+    buildGrid();
+  }
+
+  function assignPreset(p) {
+    const customLabel = document.getElementById('label-input').value.trim().toUpperCase();
+    const w = parseInt(document.getElementById('cell-w').value, 10) || 1;
+    const h = parseInt(document.getElementById('cell-h').value, 10) || 1;
+    const font_size = parseInt(document.getElementById('cell-font').value, 10) || 0;
+    const err = footprintError(editingIdx, { w, h });
+    if (err) { alert(err); return; }
+    cells[editingIdx] = {
+      preset_id: p.id,
+      name:      p.name || p.id,
+      label:     customLabel || '',
+      color:     pickedColor,
       w, h, font_size,
     };
     closeModal();

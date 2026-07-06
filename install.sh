@@ -320,6 +320,8 @@ mod_packages() {
   sudo apt-get install -y python3-venv python3-pip git network-manager avahi-daemon iw whiptail
   if [ "$KIOSK" = "yes" ]; then
     sudo apt-get install -y lightdm openbox xserver-xorg xinit x11-xserver-utils unclutter
+    # UI emoji glyphs (🎛 📚 📶 …) render as tofu boxes without a color emoji font
+    sudo apt-get install -y fonts-noto-color-emoji
     # Chromium package name differs across Pi OS releases (Trixie: chromium).
     sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser || \
       warn "Could not install chromium; install it manually before the kiosk will work."
