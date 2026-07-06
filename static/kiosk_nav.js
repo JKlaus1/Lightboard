@@ -43,6 +43,12 @@
       window.addEventListener(ev, resetIdle, { passive: true });
     });
     resetIdle();
+
+    // On-screen keyboard for text/number inputs (kiosk has no hardware
+    // keyboard). Injected here so every page carrying kiosk_nav.js gets it.
+    var osk = document.createElement('script');
+    osk.src = '/static/kiosk_osk.js';
+    document.body.appendChild(osk);
   }
 
   if (document.readyState === 'loading') {
