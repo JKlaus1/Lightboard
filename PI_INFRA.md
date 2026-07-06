@@ -138,8 +138,7 @@ re-deriving the config from memory. Two gaps the wizard model doesn't cover:
        here — that mints a new tunnel and orphans the current one.
     4. Re-run `./install.sh --config rack-install.conf --yes` — it finds the
        creds file and finishes writing `config.yml` + enabling the service.
-  Note: `install.sh`'s own printed guided steps (when no creds are found)
-  say to run `tunnel create` — correct for a brand-new tunnel, wrong for
-  restoring this one. Installer TODO: distinguish new-tunnel vs.
-  restore-existing-tunnel in the guided message.
+  Note: `install.sh`'s guided tunnel steps (printed when no creds are found)
+  now fork on this — step 2 checks `tunnel list`, with a 3a restore-existing
+  path (`tunnel token`) and a 3b new-tunnel path (`tunnel create`).
 

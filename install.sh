@@ -401,12 +401,23 @@ mod_tunnel() {
   if [ -z "$creds_json" ]; then
     warn "No tunnel credentials found. One-time manual steps (interactive):"
     cat <<STEPS
-    1. cloudflared tunnel login                 # opens a URL; auth in any browser
-    2. cloudflared tunnel create ${TUNNEL_NAME} # writes ~/.cloudflared/<UUID>.json
-    3. sudo cp ~/.cloudflared/*.json /etc/cloudflared/
-    4. cloudflared tunnel route dns ${TUNNEL_NAME} ${TUNNEL_DOMAIN}
-       cloudflared tunnel route dns ${TUNNEL_NAME} admin.${TUNNEL_DOMAIN}
-    5. Re-run this installer (--config install.conf --yes) to finish.
+    1. cloudflared tunnel login          # opens a URL; auth in any browser
+    2. cloudflared tunnel list           # does '${TUNNEL_NAME}' already exist?
+
+    IF IT EXISTS (restoring/rebuilding this Pi — the usual disaster-recovery
+    case): reuse it. Creating a new tunnel here would mint a new UUID and
+    orphan the existing DNS records + Cloudflare Access bindings.
+    3a. sudo cloudflared tunnel token --cred-file /etc/cloudflared/<UUID>.json ${TUNNEL_NAME}
+        (regenerates creds for the EXISTING tunnel; <UUID> from step 2's list)
+        DNS routes already point at it — skip straight to step 4.
+
+    IF IT DOES NOT EXIST (genuinely new tunnel):
+    3b. cloudflared tunnel create ${TUNNEL_NAME}   # writes ~/.cloudflared/<UUID>.json
+        sudo cp ~/.cloudflared/*.json /etc/cloudflared/
+        cloudflared tunnel route dns ${TUNNEL_NAME} ${TUNNEL_DOMAIN}
+        cloudflared tunnel route dns ${TUNNEL_NAME} admin.${TUNNEL_DOMAIN}
+
+    4. Re-run this installer (--config install.conf --yes) to finish.
 STEPS
     warn "Tunnel config written with a placeholder — service NOT enabled until creds exist."
   fi
