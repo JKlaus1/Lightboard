@@ -569,6 +569,29 @@ def api_touch_config_set():
     log.info("Touch grid config saved.")
     return jsonify({"ok": True})
 
+# ── Kiosk admin gate ────────────────────────────────────────────────────────
+# The kiosk touch UI hides an admin gate behind a 5s corner hold. If
+# config.json carries a non-empty "kiosk_pin" (string), the gate asks for it;
+# unset/empty = the hold alone opens the nav. This gates the PHYSICAL SCREEN
+# only — anyone on the rig WiFi can reach /settings from their own browser,
+# same as before (existing posture, unchanged).
+
+@app.route("/api/touch/unlock", methods=["GET"])
+def api_touch_unlock_status():
+    """Whether the kiosk admin gate needs a PIN. Never returns the PIN."""
+    return jsonify({"pin_required": bool(str(config.get("kiosk_pin", "") or "").strip())})
+
+@app.route("/api/touch/unlock", methods=["POST"])
+def api_touch_unlock():
+    """Verify the kiosk admin PIN (timing-safe). No PIN configured = open."""
+    required = str(config.get("kiosk_pin", "") or "").strip()
+    if not required:
+        return jsonify({"ok": True})
+    attempt = str((request.json or {}).get("pin", "") or "").strip()
+    if attempt and secrets.compare_digest(attempt, required):
+        return jsonify({"ok": True})
+    return jsonify({"ok": False}), 403
+
 # ── Custom venue faders (touch UI) ─────────────────────────────────────────
 
 _fader_persist_timer = None

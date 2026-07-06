@@ -248,6 +248,60 @@
     color: var(--dim);
     letter-spacing: 0.06em;
   }
+  /* ── Kiosk admin gate (5s corner hold → PIN? → nav) ── */
+  .gate-backdrop {
+    position: fixed; inset: 0; z-index: 1100;   /* above #remote-banner (1000) */
+    background: rgba(0,0,0,0.82);
+    display: none;
+    align-items: center; justify-content: center;
+  }
+  .gate-backdrop.open { display: flex; }
+  .gate-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    width: min(340px, 92vw);
+    max-height: 90dvh;
+    overflow-y: auto;
+  }
+  .gate-panel h2 {
+    margin: 0 0 12px;
+    font-size: 15px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text); text-align: center;
+  }
+  #pin-dots {
+    display: flex; justify-content: center; gap: 10px; margin-bottom: 14px;
+    min-height: 14px;
+  }
+  #pin-dots span {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 1px solid var(--dim); background: transparent;
+  }
+  #pin-dots span.on { background: var(--accent); border-color: var(--accent); }
+  #pin-dots.err span { border-color: #e74c3c; background: #e74c3c; }
+  .pin-pad {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  }
+  .pin-pad button {
+    min-height: 54px;
+    background: #1a1a24; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font-family: 'Rajdhani', sans-serif;
+    font-size: 20px; font-weight: 700; cursor: pointer;
+  }
+  .pin-pad button:active { background: #262636; }
+  .pin-pad button.pin-fn { font-size: 13px; color: var(--dim); }
+  .nav-menu { display: flex; flex-direction: column; gap: 8px; }
+  .nav-menu button {
+    min-height: 52px;
+    background: #1a1a24; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font-family: 'Rajdhani', sans-serif;
+    font-size: 16px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; cursor: pointer; text-align: left;
+    padding: 0 16px;
+  }
+  .nav-menu button:active { background: #262636; }
+  .nav-menu button.nav-close { color: var(--dim); text-align: center; }
   /* ── Grid labels (static, non-interactive text/divider) ── */
   .grid-label {
     display: flex;
@@ -353,6 +407,32 @@
   <div class="rb-dot"></div>
   <div class="rb-title">Remote Control Active</div>
   <div class="rb-sub" id="remote-sub">local controls bypassed</div>
+</div>
+
+<!-- Kiosk admin gate: opened by a 5s hold in any screen corner. PIN pad
+     only shows when config.json has kiosk_pin set. Markup must stay ABOVE
+     the script tag (getElementById runs during parse). -->
+<div class="gate-backdrop" id="pin-gate">
+  <div class="gate-panel">
+    <h2>Admin PIN</h2>
+    <div id="pin-dots"></div>
+    <div class="pin-pad" id="pin-pad"></div>
+  </div>
+</div>
+
+<div class="gate-backdrop" id="nav-gate">
+  <div class="gate-panel">
+    <h2>Admin</h2>
+    <div class="nav-menu">
+      <button onclick="location.href='/'">🎛 Show Board</button>
+      <button onclick="location.href='/touch-config'">🔧 Touch Config</button>
+      <button onclick="location.href='/library'">📚 Scene Library</button>
+      <button onclick="location.href='/editor'">✏️ Scene Editor</button>
+      <button onclick="location.href='/settings'">⚙️ Settings</button>
+      <button onclick="location.href='/wifi'">📶 WiFi</button>
+      <button class="nav-close" onclick="closeGates()">✕ Back to Show</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -825,6 +905,134 @@
     } catch(e) {}
   }
   setInterval(checkReload, 3000);
+
+  // ── Kiosk admin gate ──────────────────────────────────────────────────
+  // 5-second hold in any screen corner opens the gate: PIN pad if the Pi
+  // has kiosk_pin configured, straight to the nav menu otherwise. The
+  // corner hit-test rides on a document-level listener so there are no
+  // dead zones stealing touches from grid buttons — a hold that matures
+  // swallows the release-click via gateSuppress.
+  const CORNER_PX   = 90;      // corner hit zone (px from each corner)
+  const HOLD_MS     = 5000;    // gesture: 5s per design
+  const HOLD_SLOP   = 20;      // px of movement that cancels the hold
+  let gateTimer     = null;
+  let gateSuppress  = false;   // swallow the click after a matured hold
+  let pinEntry      = '';
+
+  function inCorner(x, y) {
+    const w = window.innerWidth, h = window.innerHeight;
+    const nearX = x <= CORNER_PX || x >= w - CORNER_PX;
+    const nearY = y <= CORNER_PX || y >= h - CORNER_PX;
+    return nearX && nearY;
+  }
+
+  document.addEventListener('pointerdown', e => {
+    if (!inCorner(e.clientX, e.clientY)) return;
+    if (document.getElementById('pin-gate').classList.contains('open') ||
+        document.getElementById('nav-gate').classList.contains('open')) return;
+    const sx = e.clientX, sy = e.clientY;
+    clearTimeout(gateTimer);
+    gateTimer = setTimeout(() => { gateSuppress = true; openGate(); }, HOLD_MS);
+    const move = ev => {
+      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > HOLD_SLOP) cancel();
+    };
+    const cancel = () => {
+      clearTimeout(gateTimer);
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', cancel);
+      document.removeEventListener('pointercancel', cancel);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', cancel);
+    document.addEventListener('pointercancel', cancel);
+  });
+  // A matured hold releases over whatever button sat under the finger —
+  // capture-phase swallow so that button doesn't fire.
+  document.addEventListener('click', e => {
+    if (gateSuppress) { gateSuppress = false; e.stopPropagation(); e.preventDefault(); }
+  }, true);
+
+  async function openGate() {
+    let required = false;
+    try {
+      const r = await fetch('/api/touch/unlock');
+      required = (await r.json()).pin_required;
+    } catch (e) {}
+    if (required) { pinEntry = ''; paintPin(); buildPinPad();
+                    document.getElementById('pin-gate').classList.add('open'); }
+    else          { document.getElementById('nav-gate').classList.add('open'); }
+  }
+
+  function closeGates() {
+    document.getElementById('pin-gate').classList.remove('open');
+    document.getElementById('nav-gate').classList.remove('open');
+    pinEntry = '';
+  }
+
+  function buildPinPad() {
+    const pad = document.getElementById('pin-pad');
+    if (pad.childElementCount) return;   // build once
+    const keys = ['1','2','3','4','5','6','7','8','9','CLR','0','OK'];
+    keys.forEach(k => {
+      const b = document.createElement('button');
+      b.textContent = k;
+      if (k === 'CLR') b.classList.add('pin-fn');
+      b.onclick = () => {
+        if (k === 'OK')  { tryUnlock(); return; }
+        if (k === 'CLR') { pinEntry = ''; paintPin(); return; }
+        if (pinEntry.length >= 8) return;
+        pinEntry += k;
+        paintPin();
+      };
+      pad.appendChild(b);
+    });
+  }
+
+  let unlockBusy = false;
+  async function tryUnlock() {
+    if (unlockBusy || !pinEntry) return;
+    unlockBusy = true;
+    try {
+      const r = await fetch('/api/touch/unlock', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ pin: pinEntry }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        closeGates();
+        document.getElementById('nav-gate').classList.add('open');
+      } else {
+        flashPinError();
+      }
+    } catch (e) {}
+    unlockBusy = false;
+  }
+
+  function paintPin() {
+    const dots = document.getElementById('pin-dots');
+    dots.classList.remove('err');
+    dots.innerHTML = '';
+    for (let i = 0; i < pinEntry.length; i++) {
+      const s = document.createElement('span');
+      s.className = 'on';
+      dots.appendChild(s);
+    }
+  }
+
+  function flashPinError() {
+    const dots = document.getElementById('pin-dots');
+    dots.classList.add('err');
+    setTimeout(() => { pinEntry = ''; paintPin(); }, 500);
+  }
+
+  // Tap outside the panel closes either gate (matches config-page modals)
+  ['pin-gate', 'nav-gate'].forEach(id => {
+    document.getElementById(id).addEventListener('click', function (e) {
+      if (e.target === this) closeGates();
+    });
+  });
+
   boot();
 </script>
 </body>
