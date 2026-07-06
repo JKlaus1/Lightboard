@@ -236,6 +236,26 @@
     color: var(--dim);
     letter-spacing: 0.06em;
   }
+  /* ── Grid labels (static, non-interactive text/divider) ── */
+  .grid-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    border-bottom: 1px solid var(--border);
+    padding: 0 4px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    user-select: none;
+    pointer-events: none;
+  }
   /* ── Custom faders ── */
   .fader-cell {
     background: var(--surface);
@@ -369,8 +389,9 @@
   // ── Build grid from config ────────────────────────────────────────────
   // WYSIWYG: slot index i maps to a fixed grid position (row ⌊i/cols⌋,
   // col i%cols), so cells land exactly where the builder placed them —
-  // gaps included. Faders occupy their full w×h footprint; slots inside a
-  // footprint are skipped defensively if anything is stored there.
+  // gaps included. Any cell (fader, scene/action button, or label) can
+  // occupy a w×h footprint; slots inside a footprint are skipped
+  // defensively if anything is stored there.
   function faderFootprint(idx, def, cols, rows) {
     const col = idx % cols, row = Math.floor(idx / cols);
     const w = Math.max(1, Math.min(def.w || 1, cols - col));
@@ -380,6 +401,18 @@
       for (let dc = 0; dc < w; dc++)
         slots.push(idx + dr * cols + dc);
     return { col, row, w, h, slots };
+  }
+
+  // {w,h} footprint for any populated cell — a fader's size lives on its
+  // shared definition (looked up via `faders`); every other type (scene/
+  // action/label) carries its own w/h directly.
+  function cellSize(cell, faders) {
+    if (!cell) return null;
+    if (cell.fader_id) {
+      const d = faders[cell.fader_id];
+      return d ? { w: d.w || 1, h: d.h || 1 } : { w: 1, h: 1 };
+    }
+    return { w: cell.w || 1, h: cell.h || 1 };
   }
 
   function buildGrid() {
@@ -394,18 +427,18 @@
     grid.style.gridTemplateRows    = `repeat(${rows}, 1fr)`;
     grid.style.alignContent        = 'stretch';
 
-    // Slots covered by a fader footprint (beyond its own anchor slot)
+    // Slots covered by any multi-cell footprint (beyond its own anchor slot)
     const covered = new Set();
     cells.forEach((cell, i) => {
-      if (!cell || !cell.fader_id || !faders[cell.fader_id]) return;
-      faderFootprint(i, faders[cell.fader_id], cols, rows).slots
-        .forEach(s => { if (s !== i) covered.add(s); });
+      const size = cellSize(cell, faders);
+      if (size && (size.w > 1 || size.h > 1))
+        faderFootprint(i, size, cols, rows).slots
+          .forEach(s => { if (s !== i) covered.add(s); });
     });
 
     cells.forEach((cell, i) => {
       if (!cell || i >= cols * rows || covered.has(i)) return;
-      if (!(cell.scene_id || cell.action || cell.fader_id)) return;
-      const col = i % cols, row = Math.floor(i / cols);
+      if (!(cell.scene_id || cell.action || cell.fader_id || cell.type === 'label')) return;
 
       if (cell.fader_id) {
         const def = faders[cell.fader_id];
@@ -417,9 +450,22 @@
         grid.appendChild(el);
         return;
       }
+
+      if (cell.type === 'label') {
+        const fp = faderFootprint(i, cell, cols, rows);
+        const lbl = document.createElement('div');
+        lbl.className = 'grid-label';
+        lbl.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
+        lbl.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
+        lbl.textContent = cell.label || '';
+        grid.appendChild(lbl);
+        return;
+      }
+
+      const fp = faderFootprint(i, cell, cols, rows);
       const btn = document.createElement('button');
-      btn.style.gridColumn = String(col + 1);
-      btn.style.gridRow    = String(row + 1);
+      btn.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
+      btn.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
       btn.className = 'scene-btn';
       btn.id = cell.scene_id ? 'scene-' + cell.scene_id : 'action-' + cell.action;
 

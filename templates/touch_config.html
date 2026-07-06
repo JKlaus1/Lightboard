@@ -346,6 +346,17 @@
       <input type="text" id="label-input" placeholder="Leave blank for default" maxlength="24">
     </div>
 
+    <div class="f-row">
+      <div class="f-field">
+        <div class="label">Width (cols)</div>
+        <input type="number" id="cell-w" min="1" max="12" value="1">
+      </div>
+      <div class="f-field">
+        <div class="label">Height (rows)</div>
+        <input type="number" id="cell-h" min="1" max="12" value="1">
+      </div>
+    </div>
+
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
     </div>
@@ -366,6 +377,12 @@
     <div class="picker-section">
       <div class="picker-section-label">🎚 Faders</div>
       <div id="fader-list"></div>
+    </div>
+
+    <!-- Label section -->
+    <div class="picker-section">
+      <div class="picker-section-label">🏷 Label</div>
+      <div id="label-list"></div>
     </div>
   </div>
 </div>
@@ -515,29 +532,45 @@
     return { col, row, w, h, slots };
   }
 
-  // Returns an error string if placing fader `def` with its anchor at slot
-  // `idx` won't fit the grid or would overlap other cells; null if OK.
-  function placementError(idx, def, selfId) {
+  // Returns the {w,h} footprint size for any populated cell — a fader's
+  // size lives on its shared definition; every other type (scene/action/
+  // label) carries its own w/h directly. Null for an empty slot.
+  function cellSize(cell) {
+    if (!cell) return null;
+    if (cell.fader_id) {
+      const d = faderDefById(cell.fader_id);
+      return d ? { w: d.w || 1, h: d.h || 1 } : { w: 1, h: 1 };
+    }
+    return { w: cell.w || 1, h: cell.h || 1 };
+  }
+
+  function faderDefById(id) {
+    return faderDefs.find(x => x.id === id);
+  }
+
+  // Returns an error string if placing something of `size` with its anchor
+  // at slot `idx` won't fit the grid or would overlap another populated
+  // cell; null if OK. `selfFaderId`, when given, excludes that fader's own
+  // other anchor entry from the overlap scan (defensive — a fader normally
+  // has exactly one anchor cell). Works uniformly across faders, scenes,
+  // actions, and labels since it re-derives every other cell's own current
+  // footprint rather than special-casing fader cells.
+  function footprintError(idx, size, selfFaderId) {
     const { cols, rows } = gridDims();
     const col = idx % cols, row = Math.floor(idx / cols);
-    const w = def.w || 1, h = def.h || 1;
+    const w = size.w || 1, h = size.h || 1;
     if (w > cols - col || h > rows - row)
-      return 'Fader is ' + w + '\u00d7' + h + ' and doesn\u2019t fit at this position.';
-    const fp = faderFootprint(idx, def, cols, rows);
+      return 'This is ' + w + '\u00d7' + h + ' and doesn\u2019t fit at this position.';
+    const fp = faderFootprint(idx, size, cols, rows);
     const blockers = [];
-    fp.slots.forEach(s => {
-      if (s === idx) return;
-      const c = cells[s];
-      if (c && c.fader_id !== selfId)
-        blockers.push(c.label || c.name || c.action || ('cell ' + (s + 1)));
-    });
-    // other faders' footprints overlapping ours
     cells.forEach((c, i) => {
-      if (!c || !c.fader_id || i === idx || c.fader_id === selfId) return;
-      const d = faderDefs.find(x => x.id === c.fader_id);
-      if (!d) return;
-      if (faderFootprint(i, d, cols, rows).slots.some(s => fp.slots.includes(s)))
-        blockers.push(c.name || c.fader_id);
+      if (!c || i === idx) return;
+      if (selfFaderId && c.fader_id === selfFaderId) return;
+      const otherSize = cellSize(c);
+      if (!otherSize) return;
+      const otherFp = faderFootprint(i, otherSize, cols, rows);
+      if (otherFp.slots.some(s => fp.slots.includes(s)))
+        blockers.push(c.label || c.name || c.action || ('cell ' + (i + 1)));
     });
     if (blockers.length)
       return 'Overlaps: ' + Array.from(new Set(blockers)).join(', ') +
@@ -551,19 +584,19 @@
     wrap.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
     wrap.style.gridTemplateRows    = `repeat(${rows}, minmax(52px, auto))`;
     wrap.innerHTML = '';
-    const fadersById = {};
-    faderDefs.forEach(f => { fadersById[f.id] = f; });
 
-    // Slots covered by fader footprints (beyond their anchor slot)
+    // Slots covered by any multi-cell footprint (fader, or a resized
+    // scene/action/label), beyond their own anchor slot.
     const covered = new Set();
     cells.forEach((cell, i) => {
-      if (cell && cell.fader_id && fadersById[cell.fader_id])
-        faderFootprint(i, fadersById[cell.fader_id], cols, rows).slots
+      const size = cellSize(cell);
+      if (size && (size.w > 1 || size.h > 1))
+        faderFootprint(i, size, cols, rows).slots
           .forEach(s => { if (s !== i) covered.add(s); });
     });
 
     cells.forEach((cell, i) => {
-      if (covered.has(i)) return;   // inside a fader's footprint
+      if (covered.has(i)) return;   // inside another cell's footprint
       const el = document.createElement('div');
       el.className = 'grid-cell' + (cell ? ' filled' : '');
       el.onclick = () => { if (suppressTap) { suppressTap = false; return; } openModal(i); };
@@ -573,16 +606,19 @@
 
       if (cell) {
         let typeLabel = cell.fader_id ? 'fader'  :
+                        cell.type === 'label' ? 'label' :
                         cell.action   ? 'action' :
                         cell.scene_type === 'effect' ? 'effect' :
                         cell.scene_type === 'mover_motion' ? 'motion' :
                         cell.scene_type === 'mover_look'   ? 'look'   : 'scene';
-        if (cell.fader_id && fadersById[cell.fader_id]) {
-          const d  = fadersById[cell.fader_id];
-          const fp = faderFootprint(i, d, cols, rows);
-          el.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
-          el.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
-          typeLabel = 'fader \u00b7 ' + fp.w + '\u00d7' + fp.h + ' \u00b7 ' + d.mode;
+        const size = cellSize(cell);
+        const fp = faderFootprint(i, size, cols, rows);
+        el.style.gridColumn = (fp.col + 1) + ' / span ' + fp.w;
+        el.style.gridRow    = (fp.row + 1) + ' / span ' + fp.h;
+        if (fp.w > 1 || fp.h > 1) typeLabel += ' \u00b7 ' + fp.w + '\u00d7' + fp.h;
+        if (cell.fader_id) {
+          const d = faderDefById(cell.fader_id);
+          if (d) typeLabel += ' \u00b7 ' + d.mode;
         }
         el.innerHTML = `
           <span class="cell-name">${cell.label || cell.name || cell.action || ''}</span>
@@ -674,13 +710,15 @@
     cells[srcIdx] = dst;       // move, or swap if dst was occupied
     cells[dstIdx] = src;
     const errs = [];
-    if (src.fader_id) {
-      const d = faderDefs.find(x => x.id === src.fader_id);
-      if (d) { const e = placementError(dstIdx, d, d.id); if (e) errs.push(e); }
+    const srcSize = cellSize(src);
+    if (srcSize) {
+      const e = footprintError(dstIdx, srcSize, src.fader_id || null);
+      if (e) errs.push(e);
     }
-    if (dst && dst.fader_id) {
-      const d = faderDefs.find(x => x.id === dst.fader_id);
-      if (d) { const e = placementError(srcIdx, d, d.id); if (e) errs.push(e); }
+    const dstSize = cellSize(dst);
+    if (dstSize) {
+      const e = footprintError(srcIdx, dstSize, dst.fader_id || null);
+      if (e) errs.push(e);
     }
     if (errs.length) {
       cells = backup;          // snap back
@@ -704,6 +742,8 @@
   function openModal(i) {
     editingIdx = i;
     document.getElementById('label-input').value = cells[i]?.label || '';
+    document.getElementById('cell-w').value = cells[i]?.w || 1;
+    document.getElementById('cell-h').value = cells[i]?.h || 1;
 
     // Build action list
     const actionList = document.getElementById('action-list');
@@ -759,6 +799,17 @@
     newEl.onclick = () => openFaderModal(null);
     faderList.appendChild(newEl);
 
+    // Build label option — a static, non-interactive text/divider cell.
+    // Uses the Custom Label field above as its display text.
+    const labelList = document.getElementById('label-list');
+    labelList.innerHTML = '';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'picker-item';
+    labelEl.innerHTML = '<span class="pname">🏷 Add as label</span>' +
+                         '<span class="ptype">uses text above</span>';
+    labelEl.onclick = () => assignLabel();
+    labelList.appendChild(labelEl);
+
     document.getElementById('modal').classList.add('open');
   }
 
@@ -769,10 +820,15 @@
 
   function assignAction(a) {
     const customLabel = document.getElementById('label-input').value.trim().toUpperCase();
+    const w = parseInt(document.getElementById('cell-w').value, 10) || 1;
+    const h = parseInt(document.getElementById('cell-h').value, 10) || 1;
+    const err = footprintError(editingIdx, { w, h });
+    if (err) { alert(err); return; }
     cells[editingIdx] = {
       action: a.action,
       name:   a.label,
       label:  customLabel || '',
+      w, h,
     };
     closeModal();
     buildGrid();
@@ -780,20 +836,40 @@
 
   function assignScene(scene) {
     const customLabel = document.getElementById('label-input').value.trim().toUpperCase();
+    const w = parseInt(document.getElementById('cell-w').value, 10) || 1;
+    const h = parseInt(document.getElementById('cell-h').value, 10) || 1;
+    const err = footprintError(editingIdx, { w, h });
+    if (err) { alert(err); return; }
     cells[editingIdx] = {
       scene_id:   scene.id,
       name:       scene.name || scene.id,
       label:      customLabel || '',
       scene_type: scene.scene_type,
+      w, h,
     };
     closeModal();
     buildGrid();
   }
 
   function assignFader(f) {
-    const err = placementError(editingIdx, f, f.id);
+    const err = footprintError(editingIdx, f, f.id);
     if (err) { alert(err); return; }
     cells[editingIdx] = { fader_id: f.id, name: f.label || f.id };
+    closeModal();
+    buildGrid();
+  }
+
+  // A static, non-interactive text/divider cell — no scene/action/fader
+  // behind it, just a label spanning its own footprint. Text comes from
+  // the shared Custom Label field.
+  function assignLabel() {
+    const text = document.getElementById('label-input').value.trim();
+    if (!text) { alert('Enter the label text in "Custom Label" above first.'); return; }
+    const w = parseInt(document.getElementById('cell-w').value, 10) || 1;
+    const h = parseInt(document.getElementById('cell-h').value, 10) || 1;
+    const err = footprintError(editingIdx, { w, h });
+    if (err) { alert(err); return; }
+    cells[editingIdx] = { type: 'label', label: text, w, h };
     closeModal();
     buildGrid();
   }
@@ -877,7 +953,7 @@
     // footprint still fits and doesn't overlap anything.
     const anchorIdx = cells.findIndex(c => c && c.fader_id === def.id);
     if (anchorIdx >= 0) {
-      const err = placementError(anchorIdx, def, def.id);
+      const err = footprintError(anchorIdx, def, def.id);
       if (err) { alert('Can\u2019t save: ' + err); return; }
     }
     const idx = faderDefs.findIndex(x => x.id === def.id);

@@ -443,6 +443,21 @@ def api_touch_config_get():
     cfg["faders"] = config.get("custom_faders", [])
     return jsonify(cfg)
 
+def _clean_cell(c):
+    """Light normalization for one touch-grid cell: clamp w/h to sane bounds
+    (1-12, matching the fader-def convention) and leave everything else
+    (scene_id/action/fader_id/type/label/etc.) untouched. Empty slots (None)
+    pass through as-is so grid position is preserved."""
+    if not isinstance(c, dict):
+        return c
+    out = dict(c)
+    for k in ("w", "h"):
+        try:
+            out[k] = max(1, min(12, int(c.get(k, 1))))
+        except (TypeError, ValueError):
+            out[k] = 1
+    return out
+
 @app.route("/api/touch/config", methods=["POST"])
 def api_touch_config_set():
     """Save the touch screen grid config into config.json."""
@@ -450,7 +465,7 @@ def api_touch_config_set():
     config["touch_grid"] = {
         "cols":  int(data.get("cols", 2)),
         "rows":  int(data.get("rows", 6)),
-        "cells": data.get("cells", []),
+        "cells": [_clean_cell(c) for c in data.get("cells", [])],
     }
     save_json(CONFIG_PATH, config)
     log.info("Touch grid config saved.")
