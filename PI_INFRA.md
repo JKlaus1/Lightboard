@@ -96,6 +96,17 @@ on home WiFi during the bench.
 - wlan0 = onboard radio: optional house-WiFi client (bench: joined `Lindentree`).
 - Boot: `KIOSK=yes` needs `systemctl set-default graphical.target` (now in
   install.sh `d6de8a6`); lightdm → openbox → chromium at :5000/touch.
+- Kiosk admin gate (2026-07-06): 5s hold in any screen corner → optional PIN
+  → nav to /, /touch-config, /library, /editor, /settings, /wifi. 3s hold on
+  a scene button → that scene's editor (corner: release 3-5s = editor, 5s =
+  admin). PIN = `kiosk_pin` (string) in config.json, unset = open; restart
+  lightboard after changing. Sliding 60s unlock grace (server-side).
+  Admin pages show a kiosk-only "← SHOW" button + 5-min idle return, and an
+  on-screen keyboard — all gated on `location.hostname === 'localhost'`
+  (`static/kiosk_nav.js` + `static/kiosk_osk.js`), so browsers on the rig
+  WiFi are unaffected. The PIN gates the physical screen only; LAN access to
+  /settings is open as before. KNOWN GAP: native prompt() dialogs (preset
+  naming, channel-slot label/range) can't be typed into on the kiosk.
 - SSH: pubkey-only. authorized_keys = `josep@MSI`, `termux@phone`.
 
 ## Rack <-> Venue remote control (two-Pi link, validated 2026-07-05)

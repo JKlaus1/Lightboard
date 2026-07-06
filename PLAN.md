@@ -525,3 +525,94 @@ new-tunnel vs. restore-existing-tunnel.
    guided Cloudflare tunnel setup message (see above).
 3. Fill in `WIFI_SSID`/`WIFI_PSK` on the stashed rack-install.conf by hand
    (not committed — local file only) so it's actually restore-ready.
+
+### Phase 3 — session handoff 2026-07-06 later session (kiosk touch-UI buildout)
+Long laptop session (PowerShell git — dedup rules apply to Downloads folder
+the same as Termux). Ten commits, every one verified byte-identical between
+GitHub HEAD and the validated build before proceeding. Closes prior items 1
+(fader scaling: 44px fix shipped; Joseph confirmed LONG_PRESS_MS=300 and
+FADER_SEND_MS=50 feel right on the real panel — no tuning needed) and 2
+(tunnel-restore message, commit `828a5f5`). Item 3 (rack-install.conf WiFi
+creds) still on Joseph.
+
+**Shipped this session (`4bcf48f`..`c8e9428`), in order:**
+- `4bcf48f` touch.html: fader-track min touch target 30->44px (matches the
+  scene-btn 44px convention).
+- `a0433dd` **Generalized footprint model**: any grid cell (scene, action,
+  new `label` type, fader) carries w/h 1-12 and spans its footprint in both
+  the kiosk (`touch.html`) and the builder (`touch_config.html`).
+  `footprintError` validates fit/overlap uniformly; `_clean_cell` in app.py
+  clamps w/h server-side. New cell type `{type:"label", label, w, h}` —
+  static, non-interactive divider/heading; `.grid-label` CSS in touch.html.
+- `8294134` **Font sizing + drag preview**: `touch_grid.font_size` (global,
+  8-72, default 13, drives `--grid-font` CSS var) + per-cell `font_size`
+  (0 = inherit). Builder drag now previews the FULL footprint at the hovered
+  anchor, green=valid / red=invalid via read-only `moveWouldFail` (same
+  swap-and-validate as the real drop).
+- `337befd` **Per-button colors**: `list_library_scenes` derives `color` per
+  scene — `_pod_hex` is a Python port of editor.html's podCssColor emitter
+  mix (KEEP THE TWO IN SYNC); effect scenes use `primary`, static scenes use
+  dimmer-weighted pod average of step 1. Builder modal: AUTO chip / palette
+  swatches (from /api/palette rgb recipes, #000000 filtered) / native custom
+  picker. Cells store `color` (manual) + `auto_color` (snapshot at assign
+  time, same staleness semantics as `name` — re-assign to refresh). Kiosk:
+  `.colored` class + CSS vars for border/wash/active-glow; 8-digit-hex alpha
+  tints (`cc+'1a'/'33'/'80'`); declared after type-* variants so manual color
+  overrides them. `_clean_hex` validates '#rrggbb' server-side.
+- `828a5f5` install.sh guided tunnel steps fork: step 2 = `tunnel list`;
+  3a restore-existing (`tunnel token --cred-file`, skip DNS) / 3b new
+  (`tunnel create` + `route dns`). PI_INFRA TODO cleared.
+- `7ff4c99` **Kiosk admin gate**: 5s hold in any screen corner (90px zones,
+  document-level listener — no dead zones; matured hold swallows the release
+  click) -> PIN pad if config.json `kiosk_pin` set (string; unset/empty =
+  open) -> nav overlay (Show Board / Touch Config / Library / Editor /
+  Settings / WiFi). `GET/POST /api/touch/unlock` (timing-safe via
+  secrets.compare_digest; PIN never leaves server). NEW `static/` dir (Flask
+  default serving): `kiosk_nav.js` included on all 7 admin templates —
+  activates ONLY when `location.hostname === 'localhost'` (i.e. only the
+  kiosk chromium, which loads localhost:5000) — floating "<- SHOW" button +
+  5-min idle auto-return to /touch. iPads via lights.local see nothing.
+  Gate z-index 1100 sits above the remote banner (1000); corner hold still
+  works during remote mode (banner events bubble to document).
+- `98d8441` **3s scene-hold -> editor + grace window**: 3s hold on a scene
+  button opens /editor/<id> (route auto-picks static vs effect editor).
+  Corner dual-threshold: both holds arm on one press; at 3s a hint pill
+  shows ("Release -> Edit Scene · Keep holding -> Admin"); release 3-5s =
+  editor, 5s = admin wins. PIN (when set) gates the editor hold too, via
+  `gateTarget` on the PIN flow. Server-side SLIDING 60s grace window
+  (`_kiosk_unlock_until`): successful unlock opens it, every gated check
+  inside renews it — back-to-back edits skip the PIN; re-locks 60s after
+  last gated use. Server-side because the kiosk runs --incognito.
+  Context-menu suppressed + user-select/touch-callout off on the touch
+  surface (kiosk and iPad).
+- `c8e9428` **On-screen keyboard** `static/kiosk_osk.js`, injected by
+  kiosk_nav.js (kiosk-only, zero template churn): document-level focusin
+  delegation (dynamic modal inputs work automatically); QWERTY + one-shot
+  shift + symbols layer; numeric pad for type=number; keys are
+  pointerdown+preventDefault so focus never drops; edits fire real `input`
+  events; Chromium number/email inputs lack selection APIs -> append/trim-
+  at-end fallback. Body padding + scrollIntoView keep the field visible.
+
+**Testing discipline established this session:** exact expected diffstat is
+computed with `git diff --stat` against the parent commit BEFORE delivery
+(estimates once mismatched and tripped the dedup check — `98d8441`).
+Every push verified: fresh clone of HEAD, `tr -d '\r'` byte-diff against the
+validated build (PowerShell/CRLF normalization is expected and harmless).
+
+**Venue Pi config knobs added:** `kiosk_pin` (string) in config.json —
+set + `sudo systemctl restart lightboard` to arm the gate; grace window is
+`_KIOSK_GRACE_S = 60` in app.py.
+
+**Next session — PHASE B (kiosk hands-on usability):**
+1. Joseph exercises editor/settings/library/wifi on the real 7" 1024x600
+   panel via the gate and reports what's unusable — targeted fixes follow.
+   Known candidates: editor density at 7", modal sizing, OSK overlap in
+   dense modals.
+2. **prompt() refactor (4 call sites)**: index.html:1082 (preset naming),
+   settings.html:1730/1732/1733 (channel-slot label + range lo/hi). Native
+   prompt() dialogs cannot be served by any JS keyboard — refactor to async
+   in-page dialogs (which kiosk_osk.js then serves automatically).
+3. Backlog: Phase C "capture current live look as scene" quick-save in the
+   admin nav (engine-side work); venue `remote_universe_map` if an
+   independent venue universe is wanted; rack-install.conf WiFi creds
+   (Joseph, local file).
