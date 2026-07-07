@@ -940,6 +940,7 @@ class LightingEngine:
                 lvl = 1.0
             new[fid] = {
                 "mode":  mode,
+                "system": (d.get("system") if d.get("system") in ("master", "singer") else None),
                 "level": prev["level"] if prev else lvl,
                 "armed": prev["armed"] if prev else False,
                 "keys":  self._resolve_fader_channels(d),
@@ -1014,12 +1015,21 @@ class LightingEngine:
 
     def set_fader_level(self, fid, level):
         level = max(0.0, min(1.0, float(level)))
+        system = None
         with self._lock:
             f = self._custom_faders.get(fid)
             if f is None:
                 return False
-            f["level"] = level
-            self._rebuild_fader_snapshot_locked()
+            system = f.get("system")
+            if not system:
+                f["level"] = level
+                self._rebuild_fader_snapshot_locked()
+        # System faders drive the global scalar, not DMX channels. Call the
+        # setter outside the lock (set_master/set_singer_level take their own).
+        if system == "master":
+            self.set_master(level)
+        elif system == "singer":
+            self.set_singer_level(level)
         return True
 
     def set_fader_armed(self, fid, armed):
@@ -1032,13 +1042,22 @@ class LightingEngine:
         return True
 
     def get_fader_state(self):
-        """Live level / arm per fader id (for /api/state and the touch UI)."""
+        """Live level / arm per fader id (for /api/state and the touch UI).
+        System faders report the live engine scalar so the fader mirrors the
+        Show Board (incl. clear-all's reset)."""
         with self._lock:
-            return [
-                {"id": fid, "mode": f["mode"],
-                 "level": round(f["level"], 3), "armed": f["armed"]}
-                for fid, f in self._custom_faders.items()
-            ]
+            out = []
+            for fid, f in self._custom_faders.items():
+                system = f.get("system")
+                if system == "master":
+                    lvl = self._master_level
+                elif system == "singer":
+                    lvl = self._singer_level
+                else:
+                    lvl = f["level"]
+                out.append({"id": fid, "mode": f["mode"], "system": system,
+                            "level": round(lvl, 3), "armed": f["armed"]})
+            return out
 
     # ── Art-Net remote mode (Phase 2, master/slave) ───────────────────────
 

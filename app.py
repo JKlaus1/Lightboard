@@ -643,9 +643,12 @@ def _schedule_fader_persist():
 
 def _clean_fader_def(d):
     """Validate/normalize one fader definition from the builder."""
+    system = d.get("system") if d.get("system") in ("master", "singer") else None
     mode   = d.get("mode") if d.get("mode") in ("limit", "override") else "limit"
     orient = (d.get("orientation")
               if d.get("orientation") in ("vertical", "horizontal") else "vertical")
+    if system:
+        mode = "override"          # a system fader directly sets the scalar
     chans = d.get("channels", "intensity")
     if isinstance(chans, (list, tuple)):
         out = []
@@ -676,6 +679,7 @@ def _clean_fader_def(d):
         "w":           _num(d.get("w", 1), 1, 12, 1),
         "h":           _num(d.get("h", 1), 1, 12, 1),
         "mode":        mode,
+        "system":      system,
         "channels":    chans,
         "targets": {
             "fixtures": [str(x) for x in (targets.get("fixtures") or [])],

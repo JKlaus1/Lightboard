@@ -454,13 +454,24 @@
 
     <div class="f-row">
       <div class="f-field">
+        <div class="label">System dimmer</div>
+        <select id="f-system">
+          <option value="">— None (fixture fader) —</option>
+          <option value="master">Master (Colour Dimmer)</option>
+          <option value="singer">Singer Dimmer</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="f-row">
+      <div class="f-field">
         <div class="label">Orientation</div>
         <select id="f-orient">
           <option value="vertical">Vertical</option>
           <option value="horizontal">Horizontal</option>
         </select>
       </div>
-      <div class="f-field">
+      <div class="f-field" id="f-mode-field">
         <div class="label">Mode</div>
         <select id="f-mode">
           <option value="limit">Limit (submaster)</option>
@@ -480,7 +491,7 @@
       </div>
     </div>
 
-    <div class="f-row">
+    <div class="f-row" id="f-chan-row">
       <div class="f-field">
         <div class="label">Channels</div>
         <select id="f-chan-mode">
@@ -494,11 +505,13 @@
       </div>
     </div>
 
+    <div id="f-targets-wrap">
     <div class="label">Target Groups</div>
     <div class="check-list" id="f-groups"></div>
 
     <div class="label">Target Fixtures</div>
     <div class="check-list" id="f-fixtures"></div>
+    </div>
 
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeFaderModal()">Cancel</button>
@@ -1127,6 +1140,8 @@
     document.getElementById('f-chan-mode').value  = custom ? 'custom' : 'intensity';
     document.getElementById('f-chan-custom').value = custom ? f.channels.join(',') : '';
     updateChanCustomVis();
+    document.getElementById('f-system').value = f ? (f.system || '') : '';
+    updateSystemVis();
     buildCheckList('f-groups',   groups,   f ? (f.targets?.groups   || []) : []);
     buildCheckList('f-fixtures', fixtures, f ? (f.targets?.fixtures || []) : []);
     document.getElementById('f-delete').style.display = f ? '' : 'none';
@@ -1138,6 +1153,17 @@
       document.getElementById('f-chan-mode').value === 'custom' ? '' : 'none';
   }
   document.getElementById('f-chan-mode').addEventListener('change', updateChanCustomVis);
+
+  // System faders (Master / Singer dimmer) drive a global engine scalar, so
+  // mode / channels / fixture targets don't apply — hide them.
+  function updateSystemVis() {
+    const sys = document.getElementById('f-system').value;
+    const hide = sys ? 'none' : '';
+    document.getElementById('f-mode-field').style.display   = hide;
+    document.getElementById('f-chan-row').style.display     = hide;
+    document.getElementById('f-targets-wrap').style.display = hide;
+  }
+  document.getElementById('f-system').addEventListener('change', updateSystemVis);
 
   function buildCheckList(elId, items, selected) {
     const wrap = document.getElementById(elId);
@@ -1173,15 +1199,17 @@
         .filter(n => !isNaN(n) && n >= 1);
       if (nums.length) channels = nums;
     }
+    const system = document.getElementById('f-system').value || null;
     const def = {
       id:          editingFader || ('f_' + Math.random().toString(36).slice(2, 9)),
       label:       label,
       orientation: document.getElementById('f-orient').value,
-      mode:        document.getElementById('f-mode').value,
+      mode:        system ? 'override' : document.getElementById('f-mode').value,
+      system:      system,
       w:           parseInt(document.getElementById('f-w').value, 10) || 1,
       h:           parseInt(document.getElementById('f-h').value, 10) || 1,
-      channels:    channels,
-      targets: {
+      channels:    system ? 'intensity' : channels,
+      targets:     system ? { groups: [], fixtures: [] } : {
         groups:   checkedIds('f-groups'),
         fixtures: checkedIds('f-fixtures'),
       },

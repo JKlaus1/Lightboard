@@ -667,7 +667,7 @@
     el.appendChild(head);
     el.appendChild(track);
 
-    if (def.mode === 'override') {
+    if (def.mode === 'override' && !def.system) {
       const arm = document.createElement('button');
       arm.className = 'fader-arm';
       arm.textContent = 'ARM';
