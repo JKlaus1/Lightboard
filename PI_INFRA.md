@@ -105,8 +105,13 @@ on home WiFi during the bench.
   on-screen keyboard — all gated on `location.hostname === 'localhost'`
   (`static/kiosk_nav.js` + `static/kiosk_osk.js`), so browsers on the rig
   WiFi are unaffected. The PIN gates the physical screen only; LAN access to
-  /settings is open as before. KNOWN GAP: native prompt() dialogs (preset
-  naming, channel-slot label/range) can't be typed into on the kiosk.
+  /settings is open as before. The former native-prompt() gap is closed
+  (2026-07-06): those dialogs are in-page formDialogs served by the OSK, and
+  kiosk_osk.js now also loads on the show page (touch.html) so the admin-menu
+  "Capture Look" name dialog gets a keyboard too. Leaving Touch Config with
+  unsaved grid edits prompts (Save/Discard/Stay); the idle return auto-saves.
+  Touch Config faders can also target the Master (Colour) or Singer dimmer
+  directly (system faders), not just fixtures/groups.
 - SSH: pubkey-only. authorized_keys = `josep@MSI`, `termux@phone`.
 
 ## Rack <-> Venue remote control (two-Pi link, validated 2026-07-05)

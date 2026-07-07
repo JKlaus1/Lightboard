@@ -616,3 +616,81 @@ set + `sudo systemctl restart lightboard` to arm the gate; grace window is
    admin nav (engine-side work); venue `remote_universe_map` if an
    independent venue universe is wanted; rack-install.conf WiFi creds
    (Joseph, local file).
+
+### Phase 3 — session handoff 2026-07-06 (evening — touch-UI validation + faders + exit guard)
+Hardware bench session on the Venue Pi (`192.168.1.84`, 7" 1024x600 panel).
+Validated the three previously-shipped-but-unvalidated touch-UI commits,
+scrapped the audio experiment, fixed three UX papercuts found on the real
+panel, and shipped two new features. Origin HEAD `da88fa3`; every push
+byte-verified against the validated build.
+
+**Validated on hardware (no code change):**
+- `7fa2ead` touch-config edit mode — tapping a filled cell reopens it with the
+  current assignment prefilled/highlighted; edits apply on tap-off.
+- `504d2d4` OSK-compatible formDialog replacing native prompt() — preset naming
+  + settings channel-slot label/range now type via the kiosk on-screen keyboard.
+- `a20a9c5` Capture Look (admin menu) + preset-as-grid-button — capture a live
+  look, place it as a grid button, recall it from the show. Full gauntlet green.
+
+**Scrapped:**
+- `fc09ad4` kiosk_sfx audio feedback — worked, but the 52Pi panel speakers are
+  far too quiet to hear in a bar even at max volume. Reverted whole (`ec02a3e`).
+  Settles the audio-path question: don't rely on panel audio. `aplay -l` showed
+  the card enumerating and `speaker-test -D default` produced tone (hardware
+  fine), so no ALSA default override was pursued — it's a loudness dead-end.
+
+**Fixes (papercuts found on the real panel):**
+- `4ff0381` Touch Config grid canvas — was trapped in the body's 480px centred
+  column, so a large (e.g. 20x20) grid started ~1/4 in from the left and ran off
+  the right. Now the canvas breaks out to full viewport width in a horizontal
+  scroller (`#grid-scroll`), columns fixed at 72px, grid `width:max-content;
+  margin:0 auto` — centres when it fits, scrolls with BOTH edges reachable when
+  it doesn't. Controls/size-fields stay in the tidy 480 column.
+- `9cb9885` Show-page OSK — `kiosk_osk.js` shipped on the 7 admin templates but
+  NOT touch.html, so the admin-menu "Capture Look" name dialog (which lives on
+  the show page) had no keyboard. Added the include; it self-gates on localhost,
+  so iPads via lights.local are unaffected.
+- `dcd9829` Admin-menu single-tap — the 5s corner-hold armed `gateSuppress` to
+  swallow the release-click, but a long press often emits NO click, leaving the
+  flag set to eat the user's first menu tap ("tap twice to open"). Now
+  auto-clears 700ms after the hold matures.
+
+**New features:**
+- `952bea8` Master / Singer **system dimmer faders**. A fader def may carry a
+  `system` field (`"master"`|`"singer"`); such a fader drives the engine scalar
+  directly — same path as the Show Board sliders (`set_master` /
+  `set_singer_level`) — instead of resolving DMX channels.
+  `_resolve_fader_channels` yields empty keys (never touches DMX stage 8a);
+  `set_fader_level` routes system faders to the scalar setter with the lock
+  released first (no deadlock); `get_fader_state` reports their level straight
+  from `_master_level`/`_singer_level`, so the fader mirrors the Show Board live
+  and follows clear-all's reset to 100%. No ARM button (it IS the live control;
+  mode is forced to override). Touch Config's fader editor gained a **System
+  dimmer** picker that hides mode/channels/targets when set. `test_faders.py`
+  +7 assertions (all 31 pass). Files: engine.py, app.py, templates/touch.html,
+  templates/touch_config.html, test_faders.py.
+- `da88fa3` Touch Config **unsaved-changes exit guard**. Leaving the builder via
+  the kiosk "← SHOW" button with pending grid edits now prompts
+  (Stay / Discard & Exit / Save & Exit); the 5-minute idle auto-return saves
+  silently instead of losing work. Dirty is detected by snapshotting exactly
+  what saveConfig persists (`{cols,rows,font_size,cells,faders}`) and comparing
+  — no per-edit instrumentation to slip past. Generic hooks in kiosk_nav.js
+  (`window.kioskExitGuard` veto + `window.kioskIdleSave` idle-save); only Touch
+  Config sets them today — other admin pages exit as before. Files:
+  static/kiosk_nav.js, templates/touch_config.html.
+
+**Phase B status:** both Phase-B items from the prior handoff are done — the
+usability pass surfaced the three papercuts above (all fixed) and the prompt()
+refactor is validated live (504d2d4 + the show-page OSK include). No further
+editor/settings density issues reported this session.
+
+**Next session:**
+1. Field/venue install of the Venue Pi rig — installer + two-Pi remote chain are
+   validated; the physical venue install is the remaining milestone.
+2. Optional polish: extend the unsaved-changes guard to the editor/settings
+   pages if wanted; label auto-suggest ("MASTER"/"SINGER") when a system dimmer
+   is picked in the fader editor.
+3. Backlog carried forward: Phase C "capture live look as scene" quick-save in
+   the admin nav; venue `remote_universe_map` for an independent venue universe;
+   rack-install.conf WiFi creds (Joseph, local file); INSTALL.md Imager
+   walkthrough; DMXRouter master-side fan-out (Opus-class).
