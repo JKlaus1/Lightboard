@@ -664,6 +664,13 @@ def api_set_pi_role():
         return jsonify({"ok": False, "error": str(e)}), 500
     return jsonify({"ok": True, "role": role, "restart_required": True})
 
+@app.route("/api/remote-state")
+def api_remote_state():
+    """Art-Net remote (master/slave) status: whether a master Pi is
+    currently streaming, its source IP, the OUTPUT universes in use (after
+    any remote_universe_map remap), and the age of the last frame."""
+    return jsonify({"ok": True, **engine.get_remote_state()})
+
 # ── Kiosk admin gate ────────────────────────────────────────────────────────
 # The kiosk touch UI hides an admin gate behind a 5s corner hold, and scene
 # buttons open the editor on a 3s hold. If config.json carries a non-empty
