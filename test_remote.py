@@ -27,10 +27,10 @@ from artnet_receiver import (ArtNetReceiver, parse_artdmx, build_artdmx,
 # ── Manual blast mode ──────────────────────────────────────────────────────
 if len(sys.argv) > 1 and sys.argv[1] == "--blast":
     ip   = sys.argv[2]
-    uni  = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+    unis = [int(x) for x in (sys.argv[3] if len(sys.argv) > 3 else "0").split(",") if x.strip()]
     secs = float(sys.argv[4]) if len(sys.argv) > 4 else 15.0
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    print(f"Blasting Art-Net at {ip}:6454 universe {uni} for {secs:.0f}s "
+    print(f"Blasting Art-Net at {ip}:6454 universe(s) {unis} for {secs:.0f}s "
           f"(red chase on ch1-24) …")
     t0, seq = time.time(), 0
     while time.time() - t0 < secs:
@@ -39,7 +39,8 @@ if len(sys.argv) > 1 and sys.argv[1] == "--blast":
         for pod in range(8):
             frame[pod * 3] = 255 if pod == hot else 20  # R channels 1,4,7…
         seq = (seq % 255) + 1
-        s.sendto(build_artdmx(uni, frame, seq), (ip, 6454))
+        for u in unis:                                  # fan out to every universe
+            s.sendto(build_artdmx(u, frame, seq), (ip, 6454))
         time.sleep(0.033)                               # ~30 fps
     print("Done — watchdog should revert the Pi to local in ~10s.")
     sys.exit(0)
@@ -167,6 +168,48 @@ tx.sendto(build_artdmx(1, bytes(64)), ("127.0.0.1", 16454))
 time.sleep(0.3)
 check("own-IP guard drops local sender", len(hits) == 1)
 rx.stop()
+
+print("9. Multi-universe pass-through + selective remap")
+# An accumulating stub so writes to different universes don't clobber each
+# other (the base StubDMX only keeps the most recent frame).
+class MultiStub(StubDMX):
+    def __init__(self):
+        super().__init__()
+        self.all = {}
+    def set_channels(self, by_uni):
+        super().set_channels(by_uni)
+        for u, frame in by_uni.items():
+            for ch, v in frame.items():
+                self.all[(u, ch)] = v
+
+# (a) No map: the rack pushes universes 2, 3, 5 at once -> each passes
+# straight through to the venue driver on its own universe.
+mstub = MultiStub()
+meng  = LightingEngine(mstub, SHOW)
+meng.set_remote_options(timeout_s=10)              # no universe_map
+for u in (2, 3, 5):
+    meng.handle_remote_frame(u, bytes([u, 0, 0] + [0] * 509), src_ip="10.42.0.2")
+check("three universes engaged at once",
+      meng.get_remote_state()["universes"] == [2, 3, 5])
+check("uni 2 passes through unchanged", mstub.all.get((2, 1)) == 2)
+check("uni 3 passes through unchanged", mstub.all.get((3, 1)) == 3)
+check("uni 5 passes through unchanged", mstub.all.get((5, 1)) == 5)
+meng._output_running = False
+
+# (b) Partial remap: rack universes 2,3 -> venue boxes on 0,1; uni 4 has no
+# mapping and passes through untouched. Proves selective routing.
+rstub = MultiStub()
+reng  = LightingEngine(rstub, SHOW)
+reng.set_remote_options(timeout_s=10, universe_map={"2": 0, "3": 1})
+reng.handle_remote_frame(2, bytes([22, 0, 0] + [0] * 509), src_ip="10.42.0.2")
+reng.handle_remote_frame(3, bytes([33, 0, 0] + [0] * 509), src_ip="10.42.0.2")
+reng.handle_remote_frame(4, bytes([44, 0, 0] + [0] * 509), src_ip="10.42.0.2")
+check("uni 2 -> 0 remapped", rstub.all.get((0, 1)) == 22)
+check("uni 3 -> 1 remapped", rstub.all.get((1, 1)) == 33)
+check("uni 4 unmapped passes through", rstub.all.get((4, 1)) == 44)
+check("output universes are the remapped set",
+      reng.get_remote_state()["universes"] == [0, 1, 4])
+reng._output_running = False
 
 eng._output_running = False
 print(f"\n{passed} passed, {failed} failed")
