@@ -694,3 +694,75 @@ editor/settings density issues reported this session.
    the admin nav; venue `remote_universe_map` for an independent venue universe;
    rack-install.conf WiFi creds (Joseph, local file); INSTALL.md Imager
    walkthrough; DMXRouter master-side fan-out (Opus-class).
+
+
+### Phase 3 — session handoff 2026-07-07 (preset management + per-Pi roles + multi-universe proof)
+Feature session on the Venue Pi (`192.168.1.84`). Ten commits shipped
+(`966f34d`..`caa0f41`), each byte-verified; docs updated at close-out.
+
+**Polish (#4) — shipped & validated on the panel:**
+- `966f34d` Touch Config fader editor auto-suggests **MASTER**/**SINGER** as the
+  label when a system dimmer is picked (fills only an empty field or its own
+  prior suggestion; never clobbers a typed label).
+- `09b3e27` Scene **editor** unsaved-changes exit guard via the kiosk_nav hooks.
+  `saveScene()` refactored into a pure `buildScenePayload()` + navigation-free
+  `persistScene()` so the dirty-check serialises exactly what a save writes;
+  mover-scene fixture padding runs synchronously in init() before the baseline
+  snapshot (no false-dirty on open).
+- `335717f` **Settings** exit guard — scoped to the top "Save Show" payload only
+  (modals + DMX "Save & Apply" commit immediately, so they never false-prompt).
+- `db34fc1` **OSK DONE click-through fix** (surfaced during guard testing): the
+  on-screen keyboard's DONE key sat over the editor's fixed Save bar, so
+  dismissing the keyboard fell through into a save. kiosk_osk.js now swallows one
+  click in the keyboard's former band right after DONE — general fix for any page
+  with a bottom-fixed action bar.
+
+**Preset management (reshaped from the "capture live look as scene" backlog):**
+- `c506672` **Deploy 1** — presets gain a scene-like model: global library
+  (`presets.json`) + per-show `enabled_presets` (ordered) in show.json, a
+  `/api/show/enabled-presets` endpoint, a migration enabling all existing presets
+  in every show, auto-enable-on-Capture, and a **✎ Edit list** overlay on the
+  home Presets section (tick to enable + arrows to order).
+- `7c5d95b` **Deploy 2** — full structured **preset editor** (✎ per preset): edit
+  name, exclusive, per-category items (add/remove + arrows = fire order), level
+  values, and a per-value **Apply** scope toggle (off = the preset leaves that
+  live value alone). Saves via the existing `PUT /api/presets/<id>`
+  (`normalize_preset` already supported the full shape). Frontend-only.
+
+**Per-Pi role model (the config half of "venue runs its own universe"):**
+- `e9aa64e` + `1f68683` — one committed `config.json` drives both Pis via a
+  `roles.{rack,venue}` block overlaid at load; active role = gitignored `pi_role`
+  file (absent -> rack). Runtime saves fold into `roles[active]`. Settings ->
+  **This Pi** selector; `GET/POST /api/pi-role`. Backward-compatible (no `roles`
+  block behaves as before). See PI_INFRA "Per-Pi role model".
+- `49b5b4f` — **sudoers drop-in** (`infra/lightboard-restart.sudoers`) so the UI
+  Restart / role-change restart actually work; they need passwordless
+  `systemctl restart`, and without it the process silently never restarted (the
+  "role change won't stick" symptom). Installed on the venue. See PI_INFRA.
+
+**Multi-universe remote link (#3 — already-capable + config, not new engine code):**
+- The engine already passes every incoming universe straight through
+  (`handle_remote_frame`: `uni = _remote_uni_map.get(universe, universe)`) and
+  the venue's Art-Net driver is multi-universe. So pushing several universes over
+  the link is a **config** exercise: rack `artnet_target` += `10.42.0.1:2,
+  10.42.0.1:3`; set venue box universes to match; leave `remote_universe_map`
+  unset (match-the-box; remap only as a fallback). See PI_INFRA.
+- `caa0f41` **/api/remote-state** — read-only remote status (active / source /
+  universes / age) to verify the link without watching a fixture.
+- **PENDING PUSH:** `test_remote.py` section 9 (multi-universe pass-through +
+  selective remap) and the multi-universe `--blast` — validated 32/32 but not yet
+  pushed; see close-out.
+- An errant venue `remote_universe_map {"0":1}` was set then **reverted** (the
+  CR011R is on universe 0 — no remap wanted).
+
+**Next session:**
+1. Field/venue install of the Venue Pi rig — the remaining physical milestone.
+2. Push the multi-universe test if not done at close-out; wire the venue's real
+   multi-universe config when the rack is available (rack sends 2/3, venue boxes
+   set to match).
+3. Optional: unify `config.json` across both Pis into one committed file with
+   `roles.rack`/`roles.venue` (bigger migration — touches the rack's live config,
+   so do it deliberately).
+4. Backlog: rack-install.conf WiFi creds; INSTALL.md Imager walkthrough;
+   DMXRouter master-side fan-out (Opus-class); venue local-show universe (patch
+   venue fixtures to the box universe if standalone use on universe !=0 is wanted).

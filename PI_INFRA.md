@@ -125,6 +125,61 @@ on home WiFi during the bench.
 - No routing/NAT: the rack only ever talks to the venue Pi's AP-side IP, never
   the venue's 192.168.0.x Art-Net LAN.
 
+- **Multiple universes over the link (2026-07-07):** the receiver handles each
+  ArtDmx packet independently, so the rack can push several universes at once -
+  just target them: `artnet_target` += `10.42.0.1:2, 10.42.0.1:3` sends
+  universes 2 and 3 across while 0/1 stay local. The venue passes each straight
+  through (no map: `uni = universe`) to its Art-Net driver, which broadcasts
+  them; set each venue box's universe to match the rack's number and it works.
+  **Match the box universe to the rack's; use `remote_universe_map` only as a
+  fallback** (a box physically stuck on a universe it cannot change).
+  `remote_universe_map` is a per-universe `{"in": out}` remap, e.g. `{"2":0}`
+  emits rack universe 2 as venue universe 0; leave it unset for pass-through.
+  Proven by test_remote.py section 9; demo live:
+  `python3 test_remote.py --blast <venue-ip> 2,3 20` then
+  `curl localhost:5000/api/remote-state` shows `universes:[2,3]`.
+- `/api/remote-state` (2026-07-07): read-only JSON - `active`, `source` (master
+  IP), `universes` (output universes after any remap), `age`, `timeout_s`.
+
+## Per-Pi role model (config.json roles + pi_role, 2026-07-07)
+One committed `config.json` can drive both Pis. Top-level keys are shared
+defaults (currently the rack baseline); an optional `"roles": {"rack": {..},
+"venue": {..}}` block holds per-Pi overrides overlaid at load
+(`effective = top-level (+) roles[active]`). No `roles` block => behaves exactly
+as before (backward-compatible).
+- **Active role** = a gitignored one-word `pi_role` file at the repo root
+  (`/home/pi/lightboard/pi_role`); absent => **rack**. It is the ONLY per-Pi
+  local state, so `git pull` never collides with the choice.
+- **Set it** in Settings -> **This Pi** -> Rack/Venue -> Restart (merge happens
+  at boot). Or `POST /api/pi-role {"role":"venue"}` then restart; read with
+  `GET /api/pi-role`.
+- **Runtime saves** (touch grid, faders, DMX config, active show) fold their
+  per-Pi keys into `roles[active]` (`save_config` / `CONFIG_ROLE_KEYS`),
+  preserving the shared defaults and the other role's block.
+- **Workflow nuance:** per-Pi runtime edits live in the role block *in the
+  committed file*, so a `git pull` that changes the tracked `config.json`
+  overwrites uncommitted local role-block edits. Commit `config.json` to
+  distribute per-Pi settings; the shared top-level defaults stay stable.
+- Files: app.py (`read_pi_role`/`_merge_role`/`save_config`, `/api/pi-role`,
+  `/api/remote-state`), templates/settings.html (This Pi card), `.gitignore`
+  (`pi_role`). Venue `remote_universe_map` stays UNSET (mirrors on universe 0 to
+  its CR011R); an errant `{"0":1}` was set then reverted this session.
+
+## UI restart needs passwordless sudo (infra/lightboard-restart.sudoers, 2026-07-07)
+The web UI Restart button and the role-change "Restart now" call `/api/restart`,
+which runs `sudo systemctl restart lightboard.service` with no TTY. Without a
+sudoers grant that fails silently - the process never restarts and the UI
+reconnects to the stale one (this was why a Rack->Venue change appeared not to
+take). Fix (installed on the venue 2026-07-07):
+    sudo install -m 0440 -o root -g root \
+      /home/pi/lightboard/infra/lightboard-restart.sudoers \
+      /etc/sudoers.d/lightboard-restart
+    sudo visudo -c
+Grants ONLY `systemctl restart` for `lightboard.service` and
+`stage-messenger.service`. Deployed filename must have NO dot (files with `.`
+in /etc/sudoers.d are ignored) -> `/etc/sudoers.d/lightboard-restart`. Confirm
+the rule's path matches `command -v systemctl` (Debian Trixie: /usr/bin).
+
 ## Rack Pi disaster recovery (install.conf)
 Unlike the Venue Pi, the rack (`Lights`) was built before `install.sh` existed,
 so it never had a saved `install.conf`. A `rack-install.conf` is stashed
