@@ -31,10 +31,7 @@ def api_touch_info():
 @app.route("/api/touch/config", methods=["GET"])
 def api_touch_config_get():
     """Return the current touch screen grid config."""
-    cfg = dict(config.get("touch_grid", {"cols": 2, "rows": 6, "cells": []}))
-    # Read-only extra for the kiosk page (kiosk_sfx.js audio feedback);
-    # dict() copy above keeps this off the persisted touch_grid object.
-    cfg["sfx"] = config.get("kiosk_sfx", {"enabled": True, "volume": 0.5})
+    cfg = config.get("touch_grid", {"cols": 2, "rows": 6, "cells": []})
     return jsonify(cfg)
 
 def _clamp_font(v, dflt):
