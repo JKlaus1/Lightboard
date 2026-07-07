@@ -87,7 +87,14 @@
     if (!curInput) return;
     if (k === 'SHIFT') { shift = !shift; render(); return; }
     if (k === 'BKSP')  { backspace(curInput); return; }
-    if (k === 'DONE')  { var el = curInput; hideKb(); el.blur(); return; }
+    if (k === 'DONE')  {
+      var el = curInput;
+      var koskRect = kb ? kb.getBoundingClientRect() : null;
+      hideKb();
+      el.blur();
+      swallowFallThroughClick(koskRect);
+      return;
+    }
     if (k === '123')   { layer = 'sym';  render(); return; }
     if (k === 'ABC')   { layer = 'text'; render(); return; }
     var ch = (k === 'SPACE') ? ' ' : k;
@@ -164,6 +171,26 @@
     kb.classList.remove('show');
     document.body.style.paddingBottom = '';
     curInput = null;
+  }
+
+  // After DONE dismisses the keyboard, the tap's trailing click would fall
+  // through onto whatever control sat beneath it (e.g. the editor's fixed
+  // Save bar, which shares the bottom edge). Eat exactly one click that lands
+  // in the keyboard's former band within a short window; taps elsewhere or
+  // later pass through untouched.
+  function swallowFallThroughClick(rect) {
+    if (!rect) return;
+    var cleanup = function () {
+      document.removeEventListener('click', swallow, true);
+      clearTimeout(t);
+    };
+    var swallow = function (ev) {
+      var inBand = ev.clientY >= rect.top;
+      cleanup();
+      if (inBand) { ev.preventDefault(); ev.stopPropagation(); }
+    };
+    var t = setTimeout(cleanup, 400);
+    document.addEventListener('click', swallow, true);
   }
 
   document.addEventListener('focusin', function (e) {
