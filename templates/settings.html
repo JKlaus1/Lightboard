@@ -545,6 +545,29 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
 </div>
 
 <div id="toast"></div>
+<!-- Kiosk unsaved-changes exit prompt (shown only via kiosk_nav's ← SHOW / idle) -->
+<div id="kiosk-exit-modal" style="display:none;position:fixed;inset:0;z-index:100000;
+     background:rgba(0,0,0,0.72);align-items:center;justify-content:center;
+     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="background:#13131c;border:1px solid #e8630a;border-radius:12px;
+       padding:22px 24px;max-width:420px;width:calc(100% - 48px);
+       box-shadow:0 8px 40px rgba(0,0,0,0.7);color:#d4d4e8;">
+    <div style="font-size:18px;font-weight:700;margin-bottom:8px;">Unsaved changes</div>
+    <div style="font-size:14px;color:#9a9ab0;margin-bottom:18px;">
+      This show has config changes that haven’t been saved.</div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+      <button onclick="hideExitPrompt()" style="min-height:44px;padding:10px 16px;
+        background:#23232e;color:#d4d4e8;border:1px solid #3a3a48;border-radius:8px;
+        font-size:14px;font-weight:700;cursor:pointer;">Stay</button>
+      <button onclick="discardExit()" style="min-height:44px;padding:10px 16px;
+        background:#3a1410;color:#ff9a7a;border:1px solid #7a2a1a;border-radius:8px;
+        font-size:14px;font-weight:700;cursor:pointer;">Discard &amp; Exit</button>
+      <button onclick="saveAndExit()" style="min-height:44px;padding:10px 16px;
+        background:#e8630a;color:#fff;border:none;border-radius:8px;
+        font-size:14px;font-weight:700;cursor:pointer;">Save &amp; Exit</button>
+    </div>
+  </div>
+</div>
 <script>
 let fixtures = {{ show.fixtures | tojson }};
 let library  = [];
@@ -566,6 +589,7 @@ const FREEZE_CATEGORIES = [
 ];
 
 let freezeIncludes = {};
+let savedShowSnapshot = '';   // JSON of last-saved Save-Show payload (dirty baseline)
 
 function renderFreezeIncludes() {
   const initial = ({{ show.freeze_includes | tojson if show.freeze_includes else '{}' }}) || {};
@@ -594,6 +618,7 @@ function renderFreezeIncludes() {
   try { library = await fetch('/api/fixtures').then(r=>r.json()); }
   catch(e){ library = []; }
   renderShows(); renderLibrary(); renderFixtures(); renderFreezeIncludes(); updateDot();
+  savedShowSnapshot = serializeShowState();   // dirty baseline after full load
   loadPresetsList();
   const sel=document.getElementById('ns-source');
   allShows.forEach(s=>sel.innerHTML+=`<option value="${s.id}">Copy of "${s.name}"</option>`);
@@ -1381,8 +1406,10 @@ async function restartLightboard(){
   }, 1000);
 }
 
-async function saveShowConfig(){
-  const cfg={name:document.getElementById('show-name').value.trim(),
+function buildShowConfig(){
+  // Pure: the exact object saveShowConfig persists. Shared by the dirty-check
+  // and every save path so they can never drift.
+  return {name:document.getElementById('show-name').value.trim(),
     startup_scene:document.getElementById('startup-scene').value,
     singer_fade_ms:parseInt(document.getElementById('singer-fade').value)||1500,
     blackout_fade_ms:parseInt(document.getElementById('blackout-fade').value)||600,
@@ -1396,11 +1423,47 @@ async function saveShowConfig(){
       w:+document.getElementById('sc-w').value,uv:+document.getElementById('sc-uv').value},
     freeze_includes: Object.assign({}, freezeIncludes),
     fixtures};
-  const r=await fetch('/api/show/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
-  const d=await r.json();
-  if(d.ok){document.getElementById('show-name-label').textContent=cfg.name;toast('Saved ✓','ok');}
-  else toast('Error: '+d.error,'err');
 }
+
+function serializeShowState(){ return JSON.stringify(buildShowConfig()); }
+
+// Navigation-free persist; refreshes the dirty baseline on success.
+async function persistShowConfig(){
+  const cfg = buildShowConfig();
+  try {
+    const r=await fetch('/api/show/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    const d=await r.json();
+    if(d && d.ok) savedShowSnapshot = serializeShowState();
+    return d;
+  } catch(e){ return {ok:false, error:String(e)}; }
+}
+
+async function saveShowConfig(){
+  const d = await persistShowConfig();
+  if(d && d.ok){
+    document.getElementById('show-name-label').textContent =
+      document.getElementById('show-name').value.trim();
+    toast('Saved \u2713','ok');
+  } else {
+    toast('Error: '+(d?d.error:'unknown'),'err');
+  }
+}
+
+// Unsaved-changes guard (kiosk ← SHOW / idle return). Only the Save Show
+// payload is page-pending here — modals and DMX "Save & Apply" commit on
+// their own. Dirty = serializeShowState() vs the last-saved baseline. Kiosk-only
+// (kiosk_nav gates on localhost); LAN Settings is unaffected.
+function isShowDirty(){ return serializeShowState() !== savedShowSnapshot; }
+function showExitPrompt(){ document.getElementById('kiosk-exit-modal').style.display='flex'; }
+function hideExitPrompt(){ document.getElementById('kiosk-exit-modal').style.display='none'; }
+function discardExit(){ window.location.href='/touch'; }
+async function saveAndExit(){
+  const d = await persistShowConfig();
+  if(d && d.ok){ window.location.href='/touch'; }
+  else { hideExitPrompt(); toast('Error: '+(d?d.error:'unknown'),'err'); }
+}
+window.kioskExitGuard = function(){ if(!isShowDirty()) return true; showExitPrompt(); return false; };
+window.kioskIdleSave = async function(){ if(isShowDirty()){ await persistShowConfig(); } };
 
 // ── Import / Export (scene/show files) ──
 let pendingCollisions = [];
