@@ -335,6 +335,28 @@
     </div>
   </div>
 
+  <!-- Preset editor (full structured edit) -->
+  <div class="overlay" id="preset-edit-overlay" onclick="if(event.target===this)closePresetEditor()">
+    <div class="sheet" style="max-height:85vh;overflow-y:auto;">
+      <h3>Edit Preset</h3>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <label style="flex:0 0 auto;color:var(--sub);font-size:13px;">Name</label>
+        <input id="pe-name" type="text" maxlength="40" style="flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px;">
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:12px;font-size:13px;">
+        <input type="checkbox" id="pe-exclusive"> Exclusive — clear other live items in each applied category when fired
+      </label>
+      <div style="font-weight:700;font-size:12px;color:var(--sub);text-transform:uppercase;letter-spacing:0.04em;margin:6px 0;">Playback</div>
+      <div id="pe-categories"></div>
+      <div style="font-weight:700;font-size:12px;color:var(--sub);text-transform:uppercase;letter-spacing:0.04em;margin:10px 0 6px;">Levels &amp; subsystems</div>
+      <div id="pe-levels"></div>
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        <button class="nudge-btn" style="flex:0 0 auto;" onclick="closePresetEditor()">Cancel</button>
+        <button class="cyc-start" style="flex:1;padding:10px;" onclick="savePresetEdit()">Save preset</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Presets (Task A) -->
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
@@ -1023,6 +1045,12 @@ function clearAll() {
 // reproduces exactly the saved look.
 let presets = [];
 let enabledPresets = {{ enabled_presets | tojson }};   // ids in show order
+const PRESET_POOL = {   // show scenes per category, for naming/adding preset items
+  main:   [{% for s in scenes %}{"id": {{ s.id | tojson }}, "name": {{ s.name | tojson }}},{% endfor %}],
+  motion: [{% for s in motion_scenes %}{"id": {{ s.id | tojson }}, "name": {{ s.name | tojson }}},{% endfor %}],
+  look:   [{% for s in look_scenes %}{"id": {{ s.id | tojson }}, "name": {{ s.name | tojson }}},{% endfor %}],
+  effect: [{% for s in effect_scenes %}{"id": {{ s.id | tojson }}, "name": {{ s.name | tojson }}},{% endfor %}],
+};
 
 function loadPresets() {
   fetch('/api/presets').then(r => r.json()).then(d => {
@@ -1079,8 +1107,17 @@ function renderPresets() {
       + 'font-size:12px;line-height:1;padding:0;';
     del.onclick = e => { e.stopPropagation(); deletePreset(p.id, p.name); };
 
+    const edit = document.createElement('button');
+    edit.textContent = '✎';
+    edit.title = 'Edit preset';
+    edit.style.cssText = 'position:absolute;top:3px;left:3px;background:rgba(0,0,0,0.4);'
+      + 'border:none;color:#bbb;width:22px;height:22px;border-radius:4px;cursor:pointer;'
+      + 'font-size:12px;line-height:1;padding:0;';
+    edit.onclick = e => { e.stopPropagation(); openPresetEditor(p); };
+
     b.appendChild(name);
     b.appendChild(meta);
+    b.appendChild(edit);
     b.appendChild(del);
     row.appendChild(b);
   });
@@ -1112,6 +1149,210 @@ function savePresetsList() {
   fetch('/api/show/enabled-presets', { method:'POST',
     headers:{'Content-Type':'application/json'}, body: JSON.stringify({ presets: ids }) })
     .then(r => r.json()).then(() => { location.reload(); }).catch(()=>{});
+}
+
+// ── Preset editor (full structured edit -> PUT /api/presets/<id>) ──────────
+const PE_CATS = [
+  { key:'main',   label:'Scenes'  },
+  { key:'motion', label:'Motion'  },
+  { key:'look',   label:'Look'    },
+  { key:'effect', label:'Effects' },
+];
+const PE_LEVELS = [
+  { key:'master',       label:'Master',       type:'pct'      },
+  { key:'singer_level', label:'Singer level', type:'pct'      },
+  { key:'singer_mode',  label:'Singer mode',  type:'bool'     },
+  { key:'blackout',     label:'Blackout',     type:'blackout' },
+  { key:'overlay',      label:'Overlay',      type:'bool'     },
+  { key:'cycler',       label:'Cycler',       type:'cycler'   },
+];
+let editingPreset = null;
+
+function _peNormalize(p) {
+  const q = JSON.parse(JSON.stringify(p || {}));
+  q.name = q.name || 'Preset';
+  q.exclusive = !!q.exclusive;
+  q.items = q.items || {};
+  PE_CATS.forEach(c => { if (!Array.isArray(q.items[c.key])) q.items[c.key] = []; });
+  q.scope = q.scope || {};
+  q.levels = q.levels || {};
+  return q;
+}
+function _peName(catKey, id) {
+  const hit = (PRESET_POOL[catKey] || []).find(x => x.id === id);
+  return hit ? hit.name : id;   // unknown / not-in-show item shows by id
+}
+// Preserve live category scope-checkbox states before a re-render (levels keep
+// their own DOM, so only the category block needs syncing).
+function _peSyncScopeFromDom() {
+  if (!editingPreset) return;
+  editingPreset.scope = editingPreset.scope || {};
+  document.querySelectorAll('#pe-categories [data-pe-scope]').forEach(cb => {
+    editingPreset.scope[cb.dataset.peScope] = cb.checked;
+  });
+}
+
+function openPresetEditor(p) {
+  editingPreset = _peNormalize(p);
+  document.getElementById('pe-name').value = editingPreset.name;
+  document.getElementById('pe-exclusive').checked = editingPreset.exclusive;
+  renderPeCategories();
+  renderPeLevels();
+  document.getElementById('preset-edit-overlay').classList.add('open');
+}
+function closePresetEditor() {
+  editingPreset = null;
+  document.getElementById('preset-edit-overlay').classList.remove('open');
+}
+
+function renderPeCategories() {
+  const wrap = document.getElementById('pe-categories');
+  wrap.innerHTML = '';
+  PE_CATS.forEach(c => {
+    const scoped = editingPreset.scope[c.key] !== false;   // default apply
+    const block = document.createElement('div');
+    block.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;';
+
+    const head = document.createElement('label');
+    head.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;';
+    const scb = document.createElement('input');
+    scb.type = 'checkbox'; scb.checked = scoped; scb.setAttribute('data-pe-scope', c.key);
+    head.appendChild(scb);
+    head.appendChild(document.createTextNode(' ' + c.label));
+    block.appendChild(head);
+
+    const itemsWrap = document.createElement('div');
+    itemsWrap.style.cssText = 'margin-top:8px;';
+    const items = editingPreset.items[c.key] || [];
+    items.forEach((id, idx) => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'reorder-row';
+      const nm = document.createElement('span');
+      nm.className = 'ro-name'; nm.style.cursor = 'default';
+      nm.textContent = _peName(c.key, id);
+      const arrows = document.createElement('span');
+      arrows.className = 'ro-arrows';
+      const up = document.createElement('button'); up.type = 'button'; up.textContent = '▲';
+      up.addEventListener('click', () => peMove(c.key, idx, -1));
+      const dn = document.createElement('button'); dn.type = 'button'; dn.textContent = '▼';
+      dn.addEventListener('click', () => peMove(c.key, idx, 1));
+      const rm = document.createElement('button'); rm.type = 'button'; rm.textContent = '✕'; rm.title = 'Remove';
+      rm.addEventListener('click', () => peRemove(c.key, idx));
+      arrows.appendChild(up); arrows.appendChild(dn); arrows.appendChild(rm);
+      rowEl.appendChild(nm); rowEl.appendChild(arrows);
+      itemsWrap.appendChild(rowEl);
+    });
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:var(--sub);font-size:12px;padding:4px 0;';
+      empty.textContent = '— none —';
+      itemsWrap.appendChild(empty);
+    }
+    block.appendChild(itemsWrap);
+
+    const already = new Set(items);
+    const avail = (PRESET_POOL[c.key] || []).filter(x => !already.has(x.id));
+    const addWrap = document.createElement('div');
+    addWrap.style.cssText = 'display:flex;gap:6px;margin-top:6px;';
+    if (avail.length) {
+      const sel = document.createElement('select');
+      sel.style.cssText = 'flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px;';
+      avail.forEach(x => { const o = document.createElement('option'); o.value = x.id; o.textContent = x.name; sel.appendChild(o); });
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button'; addBtn.textContent = '+ Add';
+      addBtn.style.cssText = 'background:var(--surface2);border:1px solid var(--border);color:var(--accent);border-radius:6px;padding:6px 12px;cursor:pointer;';
+      addBtn.addEventListener('click', () => peAdd(c.key, sel.value));
+      addWrap.appendChild(sel); addWrap.appendChild(addBtn);
+    } else {
+      const none = document.createElement('div');
+      none.style.cssText = 'color:var(--sub);font-size:12px;';
+      none.textContent = 'All show ' + c.label.toLowerCase() + ' added';
+      addWrap.appendChild(none);
+    }
+    block.appendChild(addWrap);
+    wrap.appendChild(block);
+  });
+}
+
+function peMove(cat, idx, delta) {
+  const arr = editingPreset.items[cat];
+  const j = idx + delta;
+  if (j < 0 || j >= arr.length) return;
+  const t = arr[idx]; arr[idx] = arr[j]; arr[j] = t;
+  _peSyncScopeFromDom();
+  renderPeCategories();
+}
+function peRemove(cat, idx) {
+  editingPreset.items[cat].splice(idx, 1);
+  _peSyncScopeFromDom();
+  renderPeCategories();
+}
+function peAdd(cat, id) {
+  if (!id) return;
+  if (!editingPreset.items[cat].includes(id)) editingPreset.items[cat].push(id);
+  _peSyncScopeFromDom();
+  renderPeCategories();
+}
+
+function renderPeLevels() {
+  const wrap = document.getElementById('pe-levels');
+  wrap.innerHTML = '';
+  PE_LEVELS.forEach(l => {
+    const scoped = editingPreset.scope[l.key] !== false;
+    const val = editingPreset.levels[l.key];
+    const rowEl = document.createElement('div');
+    rowEl.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);';
+    let html = '<label style="display:flex;align-items:center;gap:6px;flex:0 0 auto;cursor:pointer;">'
+      + '<input type="checkbox" ' + (scoped ? 'checked' : '') + ' data-pe-scope="' + l.key + '"> Apply</label>'
+      + '<span style="flex:1;">' + l.label + '</span>';
+    if (l.type === 'pct') {
+      const pct = Math.round((typeof val === 'number' ? val : 1) * 100);
+      html += '<input type="number" min="0" max="100" value="' + pct + '" data-pe-val="' + l.key + '"'
+        + ' style="width:70px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px;"><span style="color:var(--sub);">%</span>';
+    } else if (l.type === 'bool') {
+      html += '<label style="cursor:pointer;"><input type="checkbox" ' + (val ? 'checked' : '') + ' data-pe-val="' + l.key + '"> on</label>';
+    } else if (l.type === 'blackout') {
+      const opts = [['','Off'],['color','Color'],['full','Full']];
+      html += '<select data-pe-val="' + l.key + '" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px;">'
+        + opts.map(o => '<option value="' + o[0] + '"' + (((val || '') === o[0]) ? ' selected' : '') + '>' + o[1] + '</option>').join('')
+        + '</select>';
+    } else if (l.type === 'cycler') {
+      const opts = [['','Off'],['0.5','½ beat'],['1','1 beat'],['2','2 beats'],['4','4 beats']];
+      const cur = (val === null || val === undefined) ? '' : String(val);
+      html += '<select data-pe-val="' + l.key + '" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px;">'
+        + opts.map(o => '<option value="' + o[0] + '"' + ((cur === o[0]) ? ' selected' : '') + '>' + o[1] + '</option>').join('')
+        + '</select>';
+    }
+    rowEl.innerHTML = html;
+    wrap.appendChild(rowEl);
+  });
+}
+
+function savePresetEdit() {
+  if (!editingPreset) return;
+  const p = editingPreset;
+  p.name = document.getElementById('pe-name').value.trim() || 'Preset';
+  p.exclusive = document.getElementById('pe-exclusive').checked;
+  p.scope = p.scope || {};
+  document.querySelectorAll('[data-pe-scope]').forEach(cb => { p.scope[cb.dataset.peScope] = cb.checked; });
+  p.levels = p.levels || {};
+  document.querySelectorAll('[data-pe-val]').forEach(el => {
+    const key = el.dataset.peVal;
+    const cfg = PE_LEVELS.find(x => x.key === key);
+    if (!cfg) return;
+    if (cfg.type === 'pct')          p.levels[key] = Math.max(0, Math.min(100, parseInt(el.value) || 0)) / 100;
+    else if (cfg.type === 'bool')    p.levels[key] = el.checked;
+    else if (cfg.type === 'blackout')p.levels[key] = el.value || null;
+    else if (cfg.type === 'cycler')  p.levels[key] = (el.value === '') ? null : parseFloat(el.value);
+  });
+  fetch('/api/presets/' + p.id, { method:'PUT',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(p) })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { toast('Save failed: ' + (d.error || '')); return; }
+      closePresetEditor();
+      loadPresets();
+      toast('Preset updated');
+    }).catch(() => toast('Save failed'));
 }
 
 function recallPreset(id) {
