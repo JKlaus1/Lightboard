@@ -1044,7 +1044,13 @@
     if (gatesOpen()) return;
     const sx = e.clientX, sy = e.clientY;
     clearTimeout(gateTimer);
-    gateTimer = setTimeout(() => { gateSuppress = true; openGate(); }, HOLD_MS);
+    gateTimer = setTimeout(() => {
+      gateSuppress = true;
+      // A 5s press often releases with NO click; don't let the swallow linger
+      // and eat the user's first real menu tap — auto-clear if unused.
+      setTimeout(() => { gateSuppress = false; }, 700);
+      openGate();
+    }, HOLD_MS);
     const move = ev => {
       if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > HOLD_SLOP) cancel();
     };
