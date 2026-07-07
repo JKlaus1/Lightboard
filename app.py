@@ -40,7 +40,60 @@ def save_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
-config     = load_json(CONFIG_PATH)
+# ── Per-Pi role + config merge ──────────────────────────────
+# One committed config.json drives both Pis. Top-level keys are the shared
+# defaults (currently the rack baseline); an optional
+# "roles": {"rack": {…}, "venue": {…}} block holds per-Pi overrides that
+# overlay the defaults at load. The active role is a gitignored one-word
+# pi_role file (absent → "rack"), so a git pull never collides with the
+# per-Pi choice. Runtime saves are folded back into roles[active] by
+# save_config(). A config.json with no "roles" block behaves exactly as
+# before (the merge is a no-op).
+PI_ROLE_PATH = BASE_DIR / "pi_role"
+CONFIG_ROLE_KEYS = {
+    "touch_grid", "touch_reload_ts", "custom_faders", "active_show", "kiosk_pin",
+    "dmx_driver", "dmx_port", "artnet_target", "artnet_universe",
+    "sacn_target", "sacn_universe", "sacn_priority", "sacn_multicast",
+    "remote_universe_map", "remote_timeout_s",
+}
+
+def read_pi_role():
+    """Active role from the gitignored pi_role file; absent/invalid → rack."""
+    try:
+        r = PI_ROLE_PATH.read_text().strip().lower()
+        return r if r in ("rack", "venue") else "rack"
+    except Exception:
+        return "rack"
+
+def _merge_role(raw, role):
+    """Effective config = shared top level overlaid by roles[role]."""
+    eff = {k: v for k, v in raw.items() if k != "roles"}
+    eff.update((raw.get("roles") or {}).get(role) or {})
+    return eff
+
+def save_config():
+    """Persist runtime config changes without flattening the per-role
+    structure. Per-Pi operational keys that differ from the shared top level
+    (or already live in the active role block) are written into
+    roles[PI_ROLE]; shared keys update the top level. The other role's block
+    and the shared defaults are left intact."""
+    roles = _raw_config.setdefault("roles", {})
+    block = roles.setdefault(PI_ROLE, {})
+    top   = {k: v for k, v in _raw_config.items() if k != "roles"}
+    for k, v in config.items():
+        if k in block or (k in CONFIG_ROLE_KEYS and v != top.get(k)):
+            block[k] = v
+        else:
+            _raw_config[k] = v
+    if not block:                    # keep a pristine default file clean
+        roles.pop(PI_ROLE, None)
+    if not roles:
+        _raw_config.pop("roles", None)
+    save_json(CONFIG_PATH, _raw_config)
+
+_raw_config = load_json(CONFIG_PATH)
+PI_ROLE     = read_pi_role()
+config      = _merge_role(_raw_config, PI_ROLE)
 SHOWS_DIR  = Path(config["shows_dir"])
 
 # ── Color palette ─────────────────────────────────────────────────────────
@@ -589,9 +642,27 @@ def api_touch_config_set():
         "font_size": _clamp_font(data.get("font_size", 13), 13),
         "cells":     [_clean_cell(c) for c in data.get("cells", [])],
     }
-    save_json(CONFIG_PATH, config)
+    save_config()
     log.info("Touch grid config saved.")
     return jsonify({"ok": True})
+
+@app.route("/api/pi-role", methods=["GET"])
+def api_get_pi_role():
+    return jsonify({"ok": True, "role": PI_ROLE,
+                    "roles": sorted((_raw_config.get("roles") or {}).keys())})
+
+@app.route("/api/pi-role", methods=["POST"])
+def api_set_pi_role():
+    """Set this Pi's role (rack|venue). Writes the gitignored pi_role file;
+    takes effect on the next lightboard restart (config is merged at boot)."""
+    role = str((request.json or {}).get("role", "")).strip().lower()
+    if role not in ("rack", "venue"):
+        return jsonify({"ok": False, "error": "role must be 'rack' or 'venue'"}), 400
+    try:
+        PI_ROLE_PATH.write_text(role + "\n")
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, "role": role, "restart_required": True})
 
 # ── Kiosk admin gate ────────────────────────────────────────────────────────
 # The kiosk touch UI hides an admin gate behind a 5s corner hold, and scene
@@ -654,7 +725,7 @@ def _persist_fader_levels():
             d["level"] = lv
             changed = True
     if changed:
-        save_json(CONFIG_PATH, config)
+        save_config()
 
 def _schedule_fader_persist():
     import threading
@@ -734,7 +805,7 @@ def api_touch_faders_set():
     clean = [_clean_fader_def(d) for d in defs
              if isinstance(d, dict) and d.get("id")]
     config["custom_faders"] = clean
-    save_json(CONFIG_PATH, config)
+    save_config()
     engine.set_custom_faders(clean)
     log.info("Custom faders saved (%d).", len(clean))
     return jsonify({"ok": True, "faders": clean})
@@ -1196,7 +1267,7 @@ def api_dmx_config_set():
             config["sacn_priority"] = 100
     if "sacn_multicast" in data:
         config["sacn_multicast"] = bool(data["sacn_multicast"])
-    save_json(CONFIG_PATH, config)
+    save_config()
 
     # Hot-swap the running driver
     try:
@@ -1524,7 +1595,7 @@ def api_switch_show(show_id):
         engine.load_show(new_show)
 
         config["active_show"] = show_id
-        save_json(CONFIG_PATH, config)
+        save_config()
 
         startup = show_config.get("startup_scene")
         if startup:

@@ -5,3 +5,4 @@ __pycache__/
 patch_*.py
 .DS_Store
 install.conf
+pi_role
