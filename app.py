@@ -306,6 +306,28 @@ def migrate_legacy_scenes():
         save_json(show_file, show)
     log.info("Scene library migration complete.")
 
+def migrate_enabled_presets():
+    """Ensure every show has an `enabled_presets` list. First run enables
+    all existing presets in every show (preserving the pre-per-show
+    'shown everywhere' behavior); shows already carrying the key are left
+    alone. Idempotent."""
+    import presets as _pm
+    all_ids = [pr.get("id") for pr in _pm.load_presets() if pr.get("id")]
+    for show_dir in SHOWS_DIR.iterdir():
+        if not show_dir.is_dir():
+            continue
+        show_file = show_dir / "show.json"
+        if not show_file.exists():
+            continue
+        try:
+            show = load_json(show_file)
+        except Exception:
+            continue
+        if "enabled_presets" in show:
+            continue
+        show["enabled_presets"] = list(all_ids)
+        save_json(show_file, show)
+
 # ── Global state ──────────────────────────────────────────────────────────
 
 show_config = load_show(config["active_show"])
@@ -313,7 +335,8 @@ scenes_dir  = get_scenes_dir(config["active_show"])  # kept for legacy import co
 
 # One-time migration of per-show scenes into the global library
 migrate_legacy_scenes()
-# Reload show config in case migration added enabled_scenes
+migrate_enabled_presets()
+# Reload show config in case migration added enabled_scenes / enabled_presets
 show_config = load_show(config["active_show"])
 
 def _create_dmx_driver(cfg):
@@ -392,6 +415,7 @@ def index():
         motion_scenes=get_show_scenes(show_config, scene_type="mover_motion"),
         look_scenes=get_show_scenes(show_config, scene_type="mover_look"),
         effect_scenes=get_show_scenes(show_config, scene_type="effect"),
+        enabled_presets=show_config.get("enabled_presets", []),
         has_movers=show_has_movers(show_config),
         shows=_list_shows(),
         active_show=config["active_show"],
@@ -835,6 +859,12 @@ def api_presets_create():
     lst = presets_mod.load_presets()
     lst.append(p)
     presets_mod.save_presets(lst)
+    # Auto-enable the new preset in the active show so it shows immediately.
+    enabled = show_config.get("enabled_presets", [])
+    if p.get("id") and p["id"] not in enabled:
+        enabled.append(p["id"])
+        show_config["enabled_presets"] = enabled
+        save_json(SHOWS_DIR / config["active_show"] / "show.json", show_config)
     return jsonify({"ok": True, "preset": p})
 
 @app.route("/api/presets/reorder", methods=["POST"])
@@ -1342,6 +1372,20 @@ def api_library_duplicate(scene_id):
         new_id = gen_scene_id()
     save_library_scene(new_id, data)
     return jsonify({"ok": True, "id": new_id})
+
+@app.route("/api/show/enabled-presets", methods=["POST"])
+def api_set_enabled_presets():
+    """Update which presets are visible on the main screen (this show).
+    Body {presets:[id,...]} in display order."""
+    global show_config
+    enabled = (request.json or {}).get("presets", [])
+    if not isinstance(enabled, list):
+        return jsonify({"ok": False, "error": "presets must be a list"}), 400
+    valid = {pr.get("id") for pr in presets_mod.load_presets()}
+    enabled = [pid for pid in enabled if pid in valid]
+    show_config["enabled_presets"] = enabled
+    save_json(SHOWS_DIR / config["active_show"] / "show.json", show_config)
+    return jsonify({"ok": True, "presets": enabled})
 
 @app.route("/api/show/enabled-scenes", methods=["POST"])
 def api_set_enabled_scenes():

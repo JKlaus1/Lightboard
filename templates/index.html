@@ -322,12 +322,26 @@
     <span id="freeze-banner-text">FROZEN</span>
   </div>
 
+  <!-- Presets list editor (per show) -->
+  <div class="overlay" id="presets-edit-overlay" onclick="if(event.target===this)closePresetsEdit()">
+    <div class="sheet">
+      <h3>Presets — this show</h3>
+      <div style="font-size:12px;color:var(--sub);margin-bottom:10px;">Choose which presets appear on the home screen, and use ▲▼ to set their order.</div>
+      <div id="presets-edit-list"></div>
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="nudge-btn" style="flex:0 0 auto;" onclick="closePresetsEdit()">Cancel</button>
+        <button class="cyc-start" style="flex:1;padding:10px;" onclick="savePresetsList()">Save list</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Presets (Task A) -->
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">⭐ Presets</span>
       <button id="preset-capture-btn" onclick="capturePreset()"
               style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;font-weight:600;white-space:nowrap;">＋ Capture</button>
+      <button onclick="openPresetsEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
     </div>
     <div class="scene-grid" id="preset-row">
       <div style="grid-column:1/-1;text-align:center;color:var(--sub);padding:14px;font-size:12px;">
@@ -1008,6 +1022,7 @@ function clearAll() {
 // Settings. Captured presets are exclusive + fully scoped, so recalling one
 // reproduces exactly the saved look.
 let presets = [];
+let enabledPresets = {{ enabled_presets | tojson }};   // ids in show order
 
 function loadPresets() {
   fetch('/api/presets').then(r => r.json()).then(d => {
@@ -1030,14 +1045,18 @@ function presetSummary(p) {
 function renderPresets() {
   const row = document.getElementById('preset-row');
   if (!row) return;
-  if (!presets.length) {
+  const byId = {};
+  presets.forEach(p => { byId[p.id] = p; });
+  const shown = enabledPresets.map(id => byId[id]).filter(Boolean);
+  if (!shown.length) {
     row.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--sub);'
-      + 'padding:14px;font-size:12px;">No presets yet. Set up a look on the rig, then tap '
-      + '<strong>＋ Capture</strong> to save it.</div>';
+      + 'padding:14px;font-size:12px;">No presets on the show yet. Tap '
+      + '<strong>＋ Capture</strong> to save the live look, or '
+      + '<strong>✎ Edit list</strong> to enable saved presets.</div>';
     return;
   }
   row.innerHTML = '';
-  presets.forEach(p => {
+  shown.forEach(p => {
     const b = document.createElement('div');
     b.className = 'scene-btn preset-btn';
     b.setAttribute('data-id', p.id);
@@ -1067,6 +1086,34 @@ function renderPresets() {
   });
 }
 
+// ── Presets edit-list (per show: which appear + order) ────────────────────
+function presetEditRow(p, checked) {
+  const nm = (p.name || 'Preset').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  return '<div class="reorder-row" data-id="' + p.id + '">'
+    + '<input type="checkbox" value="' + p.id + '"' + (checked ? ' checked' : '') + '>'
+    + '<span class="ro-name" onclick="this.closest(\'.reorder-row\').querySelector(\'input\').click()">' + nm + '</span>'
+    + '<span class="ro-arrows"><button type="button" onclick="moveRow(this,-1)">▲</button>'
+    + '<button type="button" onclick="moveRow(this,1)">▼</button></span></div>';
+}
+function openPresetsEdit() {
+  const list = document.getElementById('presets-edit-list');
+  const byId = {};
+  presets.forEach(p => { byId[p.id] = p; });
+  const rows = [];
+  enabledPresets.forEach(id => { if (byId[id]) rows.push(presetEditRow(byId[id], true)); });
+  presets.forEach(p => { if (!enabledPresets.includes(p.id)) rows.push(presetEditRow(p, false)); });
+  list.innerHTML = rows.join('')
+    || '<div style="color:var(--sub);font-size:13px;">No presets captured yet.</div>';
+  document.getElementById('presets-edit-overlay').classList.add('open');
+}
+function closePresetsEdit() { document.getElementById('presets-edit-overlay').classList.remove('open'); }
+function savePresetsList() {
+  const ids = _checkedIdsInOrder('presets-edit-list');
+  fetch('/api/show/enabled-presets', { method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({ presets: ids }) })
+    .then(r => r.json()).then(() => { location.reload(); }).catch(()=>{});
+}
+
 function recallPreset(id) {
   // .preset-btn carries .scene-btn so the global pointerdown handler flashes it.
   fetch('/api/preset/' + id + '/recall', { method:'POST',
@@ -1092,6 +1139,9 @@ async function capturePreset() {
     body: JSON.stringify({ capture: true, name: name || 'Preset' }) })
     .then(r => r.json()).then(d => {
       if (!d.ok) { toast('Capture failed: ' + (d.error || '')); return; }
+      if (d.preset && d.preset.id && !enabledPresets.includes(d.preset.id)) {
+        enabledPresets.push(d.preset.id);   // server auto-enables too
+      }
       loadPresets();
       toast('Preset saved');
     })
