@@ -556,6 +556,7 @@
   let fixtures   = [];        // [{id, name}] pickable targets
   let groups     = [];        // [{id, name}]
   let editingFader = null;    // fader id being edited, or null for new
+  let lastSuggestedLabel = '';// last auto-filled system-fader label (ours to overwrite)
   let paletteSwatches = [];   // [{name, hex}] from the shared palette
   let pickedColor = '';       // modal state: '' = Auto (scene color)
 
@@ -1143,6 +1144,7 @@
   // ── Fader editor ──────────────────────────────────────────────────────
   function openFaderModal(fid) {
     editingFader = fid;
+    lastSuggestedLabel = '';
     const f = fid ? faderDefs.find(x => x.id === fid) : null;
     document.getElementById('fader-modal-title').textContent =
       f ? 'Edit Fader' : 'New Fader';
@@ -1179,6 +1181,23 @@
     document.getElementById('f-targets-wrap').style.display = hide;
   }
   document.getElementById('f-system').addEventListener('change', updateSystemVis);
+
+  // Auto-suggest MASTER / SINGER as the label when a system dimmer is
+  // picked. Only fills an empty field or one still holding our own prior
+  // suggestion; a hand-typed label is left untouched. Clearing the picker
+  // back to None removes an auto-suggested label (not a typed one).
+  function onSystemPick() {
+    const sys = document.getElementById('f-system').value;
+    const labelEl = document.getElementById('f-label');
+    const cur = labelEl.value.trim();
+    const suggestion = sys === 'master' ? 'MASTER'
+                     : sys === 'singer' ? 'SINGER' : '';
+    if (cur === '' || cur === lastSuggestedLabel) {
+      labelEl.value = suggestion;
+      lastSuggestedLabel = suggestion;
+    }
+  }
+  document.getElementById('f-system').addEventListener('change', onSystemPick);
 
   function buildCheckList(elId, items, selected) {
     const wrap = document.getElementById(elId);
