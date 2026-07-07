@@ -1,0 +1,24 @@
+# Lightboard — passwordless service restart for the pi user.
+#
+# The web UI's Restart button and the Settings role-change "Restart now" both
+# call /api/restart, which runs `sudo systemctl restart lightboard.service`
+# with no controlling TTY. Without this drop-in that sudo call prompts for a
+# password, fails silently, and the process never restarts — so, e.g., a
+# Rack/Venue role change never takes effect (the stale process keeps serving
+# and the UI's reconnect poll shows the old role).
+#
+# This grants ONLY the two restart commands, nothing else.
+#
+# Verify your systemctl path matches the rule first:
+#     command -v systemctl        # Debian Trixie: /usr/bin/systemctl
+#
+# Install (as root), validating before trusting it:
+#     install -m 0440 -o root -g root \
+#       /home/pi/lightboard/infra/lightboard-restart.sudoers \
+#       /etc/sudoers.d/lightboard-restart
+#     visudo -c
+#
+# The deployed filename must have NO dot in it (files with a "." in
+# /etc/sudoers.d are ignored) — hence /etc/sudoers.d/lightboard-restart.
+
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart lightboard.service, /usr/bin/systemctl restart stage-messenger.service
