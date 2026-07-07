@@ -554,6 +554,30 @@
   <button id="save-btn"   onclick="saveScene()">Save Scene</button>
 </div>
 
+<!-- Kiosk unsaved-changes exit prompt (shown only via kiosk_nav's ← SHOW / idle) -->
+<div id="kiosk-exit-modal" style="display:none;position:fixed;inset:0;z-index:100000;
+     background:rgba(0,0,0,0.72);align-items:center;justify-content:center;
+     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="background:#13131c;border:1px solid #e8630a;border-radius:12px;
+       padding:22px 24px;max-width:420px;width:calc(100% - 48px);
+       box-shadow:0 8px 40px rgba(0,0,0,0.7);color:#d4d4e8;">
+    <div style="font-size:18px;font-weight:700;margin-bottom:8px;">Unsaved changes</div>
+    <div style="font-size:14px;color:#9a9ab0;margin-bottom:18px;">
+      This scene has edits that haven’t been saved.</div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+      <button onclick="hideExitPrompt()" style="min-height:44px;padding:10px 16px;
+        background:#23232e;color:#d4d4e8;border:1px solid #3a3a48;border-radius:8px;
+        font-size:14px;font-weight:700;cursor:pointer;">Stay</button>
+      <button onclick="discardExit()" style="min-height:44px;padding:10px 16px;
+        background:#3a1410;color:#ff9a7a;border:1px solid #7a2a1a;border-radius:8px;
+        font-size:14px;font-weight:700;cursor:pointer;">Discard &amp; Exit</button>
+      <button onclick="saveAndExit()" style="min-height:44px;padding:10px 16px;
+        background:#e8630a;color:#fff;border:none;border-radius:8px;
+        font-size:14px;font-weight:700;cursor:pointer;">Save &amp; Exit</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── Show config from Flask ─────────────────────────────────────────────
 const SHOW = {{ show | tojson }};
@@ -697,6 +721,7 @@ function presetsForFixture(fx) {
 // steps[i] = { fade, hold, fixtures: { fx_id: { dimmer, pods:[{r,g,b,a,w,uv}] } } }
 let sceneName = '';
 let steps = [];
+let savedSnapshot = '';   // JSON of last-saved payload (dirty baseline)
 let currentStep = 0;
 
 // ── Singer pod lookup ──────────────────────────────────────────────────
@@ -1746,14 +1771,12 @@ function updateSwatch() {
 }
 
 // ── Save ───────────────────────────────────────────────────────────────
-function saveScene() {
-  const name = document.getElementById('scene-name').value.trim();
-  if (!name) {
-    alert('Please give the scene a name first.');
-    document.getElementById('scene-name').focus();
-    return;
-  }
-  const folder = document.getElementById('scene-folder').value.trim();
+function buildScenePayload() {
+  // Pure: builds exactly the object saveScene persists. No validation/alerts —
+  // callers gate on validity. Shared by the dirty-check and every save path so
+  // the two can never drift.
+  const name       = document.getElementById('scene-name').value.trim();
+  const folder     = document.getElementById('scene-folder').value.trim();
   const launchFade = parseInt(document.getElementById('scene-launch-fade').value);
   const payload = {
     name,
@@ -1768,10 +1791,6 @@ function saveScene() {
   }
   // Generator-mode mover_motion: emit the procedural fields instead of steps.
   if (SCENE_TYPE === 'mover_motion' && genMode) {
-    if (!genFixtures.length) {
-      alert('Pick at least one mover for the pattern.');
-      return;
-    }
     payload.motion_mode  = 'generator';
     payload.tempo_sync   = tempoSync;
     payload.beat_division = beatDivision;
@@ -1797,11 +1816,9 @@ function saveScene() {
       spread:  +phaseCfg.spread,
       offsets: {},
     };
-    // Only persist offsets for fixtures actually in the pattern.
     genFixtures.forEach(id => {
       payload.phase.offsets[id] = +(phaseCfg.offsets[id] || 0);
     });
-    // Per-fixture center trims — only in-pattern fixtures with a non-zero trim.
     payload.center_offsets = {};
     genFixtures.forEach(id => {
       const o = centerOffsets[id];
@@ -1809,7 +1826,6 @@ function saveScene() {
         payload.center_offsets[id] = { dp: Math.round(o.dp), dt: Math.round(o.dt) };
       }
     });
-    // Per-fixture inverts — only in-pattern fixtures with a flip set.
     payload.inverts = {};
     genFixtures.forEach(id => {
       const v = genInverts[id];
@@ -1819,17 +1835,43 @@ function saveScene() {
     });
     payload.steps = [];   // generator ignores steps; keep the file clean
   }
-  // Edit existing scene? POST to /api/library/scene/<id>
-  // New scene? POST to /api/library/scene (server assigns ID)
-  const url = EXISTING_ID
-    ? `/api/library/scene/${EXISTING_ID}`
-    : '/api/library/scene';
-  fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(payload),
-  }).then(r => r.json()).then(d => {
-    if (d.ok) {
+  return payload;
+}
+
+function serializeState() { return JSON.stringify(buildScenePayload()); }
+
+// Navigation-free persist. Returns the server response; refreshes the dirty
+// baseline on success so a follow-up isDirty() reads clean.
+async function persistScene() {
+  const payload = buildScenePayload();
+  const url = EXISTING_ID ? `/api/library/scene/${EXISTING_ID}` : '/api/library/scene';
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (d && d.ok) savedSnapshot = serializeState();
+    return d;
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+function saveScene() {
+  const name = document.getElementById('scene-name').value.trim();
+  if (!name) {
+    alert('Please give the scene a name first.');
+    document.getElementById('scene-name').focus();
+    return;
+  }
+  if (SCENE_TYPE === 'mover_motion' && genMode && !genFixtures.length) {
+    alert('Pick at least one mover for the pattern.');
+    return;
+  }
+  persistScene().then(d => {
+    if (d && d.ok) {
       endLivePreviewNow();   // release the rig before leaving
       // If this is a new scene, auto-enable it in the current show
       if (!EXISTING_ID && d.id) {
@@ -1838,9 +1880,9 @@ function saveScene() {
         location.href = RETURN_PATH;
       }
     } else {
-      alert('Save failed: ' + d.error);
+      alert('Save failed: ' + (d ? d.error : 'unknown'));
     }
-  }).catch(e => alert('Save failed: ' + e));
+  });
 }
 
 async function autoEnableAndExit(newId) {
@@ -2721,7 +2763,31 @@ function endLivePreviewNow() {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────
+// Unsaved-changes guard (kiosk ← SHOW / idle return).
+// Mirrors the Touch Config guard through the generic kiosk_nav hooks: veto a
+// manual ← SHOW when dirty, and persist silently on the 5-min idle return.
+// Dirty = serializeState() vs the last-saved baseline (the exact bytes a save
+// writes). Kiosk-only — kiosk_nav gates on localhost; LAN editors unaffected.
+function isDirty() { return serializeState() !== savedSnapshot; }
+function showExitPrompt() { document.getElementById('kiosk-exit-modal').style.display = 'flex'; }
+function hideExitPrompt() { document.getElementById('kiosk-exit-modal').style.display = 'none'; }
+function discardExit() { window.location.href = '/touch'; }  // beforeunload stops preview
+async function saveAndExit() {
+  const d = await persistScene();
+  if (d && d.ok) { window.location.href = '/touch'; }
+  else { hideExitPrompt(); alert('Save failed: ' + (d ? d.error : 'unknown')); }
+}
+window.kioskExitGuard = function () {
+  if (!isDirty()) return true;
+  showExitPrompt();
+  return false;
+};
+window.kioskIdleSave = async function () {
+  if (isDirty()) { await persistScene(); }
+};
+
 init();
+savedSnapshot = serializeState();   // dirty baseline after full load
 </script>
 <script src="/static/kiosk_nav.js"></script>
 </body>
