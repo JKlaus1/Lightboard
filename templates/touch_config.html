@@ -90,10 +90,23 @@
   .size-field input:focus { border-color: var(--accent); }
 
   /* Grid cells */
+  /* Full-bleed horizontal scroller: breaks out of body's 480px column so the
+     canvas can use the whole viewport width and scroll sideways when large. */
+  #grid-scroll {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 1.25rem;
+  }
   #grid-wrap {
     display: grid;
     gap: 6px;
-    margin-bottom: 1.25rem;
+    width: max-content;      /* size to the columns, don't stretch */
+    margin: 0 auto;          /* centered when it fits; auto-margins collapse to 0
+                                when wider than the viewport, so both edges scroll */
+    padding: 2px 16px;       /* edge gap that travels with the grid when scrolled */
   }
   .grid-cell {
     min-height: 52px;
@@ -355,7 +368,7 @@
 </div>
 
 <div class="label">Button Grid — tap a cell to assign</div>
-<div id="grid-wrap"></div>
+<div id="grid-scroll"><div id="grid-wrap"></div></div>
 
 <div id="save-msg"></div>
 <button class="hbtn accent" style="width:100%;padding:0.75rem;font-size:0.85rem;" onclick="saveConfig()">Save Configuration</button>
@@ -640,7 +653,7 @@
   function buildGrid() {
     const { cols, rows } = gridDims();
     const wrap = document.getElementById('grid-wrap');
-    wrap.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    wrap.style.gridTemplateColumns = `repeat(${cols}, 72px)`;
     wrap.style.gridTemplateRows    = `repeat(${rows}, minmax(52px, auto))`;
     wrap.innerHTML = '';
 
