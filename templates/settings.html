@@ -141,6 +141,24 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
 <main>
 
   <div class="card">
+    <div class="card-head"><h2>This Pi</h2><span id="pi-role-label" style="font-size:0.75rem;color:var(--sub);"></span></div>
+    <div style="padding:12px 14px;">
+      <div class="row">
+        <label>Role</label>
+        <select id="pi-role-sel" onchange="setPiRole()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px;">
+          <option value="rack">Rack</option>
+          <option value="venue">Venue</option>
+        </select>
+        <span class="hint">Which block this Pi loads from config.json (roles.rack / roles.venue), overlaid on the shared defaults. Applied on restart.</span>
+      </div>
+      <div class="row" id="pi-role-restart-note" style="display:none;">
+        <span class="hint" style="color:#ffaa66;">Role changed — restart to apply.</span>
+        <button class="smbtn accent" onclick="restartLightboard()">⟲ Restart now</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-head"><h2>Shows</h2><button class="smbtn accent" onclick="openNewShow()">+ New Show</button></div>
     <div id="shows-list"></div>
   </div>
@@ -623,7 +641,32 @@ function renderFreezeIncludes() {
   const sel=document.getElementById('ns-source');
   allShows.forEach(s=>sel.innerHTML+=`<option value="${s.id}">Copy of "${s.name}"</option>`);
   loadDmxConfig();
+  loadPiRole();
 })();
+
+// ── This Pi (role) ──────────────────
+async function loadPiRole(){
+  try {
+    const d = await fetch('/api/pi-role').then(r=>r.json());
+    if (d && d.ok) {
+      document.getElementById('pi-role-sel').value = d.role;
+      document.getElementById('pi-role-label').textContent = 'active: ' + d.role;
+    }
+  } catch(e){}
+}
+async function setPiRole(){
+  const role = document.getElementById('pi-role-sel').value;
+  try {
+    const d = await fetch('/api/pi-role', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({ role }) }).then(r=>r.json());
+    if (d && d.ok) {
+      document.getElementById('pi-role-restart-note').style.display = '';
+      toast('Role set to ' + role + ' — restart to apply','ok');
+    } else {
+      toast('Error: ' + ((d && d.error) || 'failed'),'err');
+    }
+  } catch(e){ toast('Error setting role','err'); }
+}
 
 // ── DMX Output ─────────────────────────────
 async function loadDmxConfig(){
