@@ -18,11 +18,29 @@
   var IDLE_MS = 5 * 60 * 1000;
   var idleTimer = null;
 
-  function goShow() { window.location.href = '/touch'; }
+  function goShow() {
+    // Let the page veto a manual exit (e.g. an unsaved-changes prompt). The
+    // guard returns false and takes over navigation once the user resolves it.
+    var guard = window.kioskExitGuard;
+    if (typeof guard === 'function' && guard() === false) return;
+    window.location.href = '/touch';
+  }
+
+  function idleShow() {
+    // Idle return: give the page a chance to persist silently, then always go
+    // (no dialog can sit unanswered on an abandoned screen).
+    var save = window.kioskIdleSave;
+    if (typeof save === 'function') {
+      Promise.resolve().then(save).catch(function () {})
+        .then(function () { window.location.href = '/touch'; });
+      return;
+    }
+    window.location.href = '/touch';
+  }
 
   function resetIdle() {
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(goShow, IDLE_MS);
+    idleTimer = setTimeout(idleShow, IDLE_MS);
   }
 
   function init() {

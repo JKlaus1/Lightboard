@@ -521,6 +521,19 @@
   </div>
 </div>
 
+<!-- Unsaved-changes prompt (kiosk ← SHOW with pending grid edits) -->
+<div class="modal-backdrop" id="exit-modal">
+  <div class="modal">
+    <h2>Unsaved changes</h2>
+    <p style="color:var(--dim);font-size:0.9rem;margin-bottom:1rem;">You have grid changes that haven’t been saved.</p>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="hideExitPrompt()">Stay</button>
+      <button class="btn-danger" onclick="discardExit()">Discard &amp; Exit</button>
+      <button class="btn-save" onclick="saveAndExit()">Save &amp; Exit</button>
+    </div>
+  </div>
+</div>
+
 <script>
   const ACTIONS = [
     { action: 'blackout',    label: '⬛ Blackout',       type: 'action' },
@@ -539,6 +552,7 @@
   let presets    = [];        // live-look snapshots (recallable from the grid)
   let editingIdx = null;
   let faderDefs  = [];        // custom fader definitions
+  let savedSnapshot = '';     // serialized state at last load/save (dirty check)
   let fixtures   = [];        // [{id, name}] pickable targets
   let groups     = [];        // [{id, name}]
   let editingFader = null;    // fader id being edited, or null for new
@@ -584,6 +598,7 @@
       cells = cells.slice(0, total);
 
       buildGrid();
+      savedSnapshot = serializeState();
     } catch(e) {
       document.getElementById('save-msg').textContent = 'Error loading config';
       document.getElementById('save-msg').style.color = '#e74c3c';
@@ -1281,6 +1296,7 @@
       });
       const d = await r.json();
       if (d.ok) {
+        savedSnapshot = serializeState();
         msg.textContent  = '✓ Saved — reloading display…';
         msg.style.color  = 'var(--success)';
         // Signal kiosk to reload
@@ -1295,6 +1311,32 @@
     }
     setTimeout(() => { msg.textContent = ''; }, 3000);
   }
+
+  // ── Unsaved-changes guard (kiosk ← SHOW / idle return) ─────────
+  function serializeState() {
+    return JSON.stringify({
+      cols: parseInt(document.getElementById('cols-input').value) || 2,
+      rows: parseInt(document.getElementById('rows-input').value) || 4,
+      font_size: parseInt(document.getElementById('font-input').value) || 13,
+      cells,
+      faders: faderDefs,
+    });
+  }
+  function isDirty() { return serializeState() !== savedSnapshot; }
+  function showExitPrompt() { document.getElementById('exit-modal').classList.add('open'); }
+  function hideExitPrompt() { document.getElementById('exit-modal').classList.remove('open'); }
+  function discardExit() { window.location.href = '/touch'; }
+  async function saveAndExit() { await saveConfig(); window.location.href = '/touch'; }
+  // Manual ← SHOW: veto and prompt when there are unsaved edits.
+  window.kioskExitGuard = function () {
+    if (!isDirty()) return true;
+    showExitPrompt();
+    return false;
+  };
+  // Idle return: persist silently rather than lose work on an abandoned screen.
+  window.kioskIdleSave = async function () {
+    if (isDirty()) { try { await saveConfig(); } catch (e) {} }
+  };
 
   // Close modal on backdrop click
   document.getElementById('modal').addEventListener('click', function(e) {
