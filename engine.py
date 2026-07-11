@@ -1556,7 +1556,7 @@ class LightingEngine:
 
     def synth_wash_scene(self, steps_spec, hold_ms=1000, fade_ms=400,
                          launch_fade=400, tempo_sync=False, beat_division=1,
-                         name="\U0001f3a8 Wash"):
+                         name="\U0001f3a8 Wash", phase_offset=False):
         """Synthesize a main scene that paints EVERY wash-capable fixture
         (pods full-fixture, pixel strips solid per-segment; movers excluded)
         with colors resolved per fixture engine — the same palette/kelvin
@@ -1567,39 +1567,77 @@ class LightingEngine:
                           | {"mode":"kelvin","kelvin":...}
         One spec per step; a single spec = a static wash, several = a chase.
 
+        phase_offset (needs >= 2 specs): splits the rig into two groups by
+        alternating GLOBAL pod/segment index (multi-pod bars ripple
+        internally; single-pod fixtures alternate fixture-by-fixture) and
+        runs the even group half a step ahead. The chase expands to 2N
+        half-steps of hold/2 each: everything starts on color 1 together,
+        at T/2 the even group advances, at T the odd group follows, and the
+        groups stay locked a half-step apart — every T/2 half the rig
+        advances, so colors roll through the rig instead of snapping in
+        unison. With tempo sync each HALF-step lands on the beat grid (a
+        full color step spans two divisions). The expansion is plain scene
+        steps, so a saved ripple chase is a normal editable library scene.
+
         Returns a scene dict fully compatible with play_scene() AND the
-        scene library format, so the same synthesis backs both the ephemeral
-        wash (scene_id=WASH_TAG) and "save this chase as a real scene".
+        scene library format.
         """
         show = self._show
         trim = show.get("singer_trim", {})
-        steps = []
-        for spec in steps_spec:
-            fixtures = {}
-            for fx in show.get("fixtures", []):
-                if self._is_mover(fx):
-                    continue
-                if self._is_pixel_strip(fx):
-                    offs = fx.get("pixel_color_offsets") or {"r": 0, "g": 1, "b": 2}
-                    col = self._resolve_wash_color(spec, color_temp.engine_for_offsets(offs), trim)
-                    n_seg = len(self._cell_strips.get(fx["id"], {}).get(
-                        cell_strip.MODE_LOCK_TO_SEGMENTS, []))
-                    if not col or not n_seg:
-                        continue
-                    entry = {"segments": [dict(col) for _ in range(n_seg)]}
-                    if self._fx_dimmer_offset(fx) > 0:
-                        entry["dimmer"] = 255
-                    fixtures[fx["id"]] = entry
-                    continue
+        n_spec = len(steps_spec)
+
+        # Pre-resolve every spec for every fixture, assigning each fixture a
+        # global unit (pod/segment) base index for group parity.
+        fx_info = []      # (fx_id, kind, n_units, has_dimmer, [recipe per spec], base)
+        unit_base = 0
+        for fx in show.get("fixtures", []):
+            if self._is_mover(fx):
+                continue
+            if self._is_pixel_strip(fx):
+                offs = fx.get("pixel_color_offsets") or {"r": 0, "g": 1, "b": 2}
+                n = len(self._cell_strips.get(fx["id"], {}).get(
+                    cell_strip.MODE_LOCK_TO_SEGMENTS, []))
+                kind, has_dim = "segments", self._fx_dimmer_offset(fx) > 0
+            else:
                 offs = self._fx_pod_color_offsets(fx)
-                col = self._resolve_wash_color(spec, color_temp.engine_for_offsets(offs), trim)
-                if not col:
-                    continue
-                fixtures[fx["id"]] = {"dimmer": 255,
-                                      "pods": [dict(col) for _ in range(self._fx_pods(fx))]}
-            steps.append({"fixtures": fixtures,
-                          "hold": max(50, int(hold_ms)),
-                          "fade": max(0, int(fade_ms))})
+                n = self._fx_pods(fx)
+                kind, has_dim = "pods", True
+            eng = color_temp.engine_for_offsets(offs)
+            recipes = [self._resolve_wash_color(spec, eng, trim) for spec in steps_spec]
+            if not n or not all(recipes):
+                # A fixture that can't render every step's color sits the
+                # whole wash out — predictable beats partially-lit.
+                continue
+            fx_info.append((fx["id"], kind, n, has_dim, recipes, unit_base))
+            unit_base += n
+
+        def build_fixtures(idx_even, idx_odd):
+            """One step's fixture dict: units at even global index take color
+            idx_even, odd global index take idx_odd."""
+            fixtures = {}
+            for fx_id, kind, n, has_dim, recipes, base in fx_info:
+                units = [dict(recipes[idx_even if (base + u) % 2 == 0 else idx_odd])
+                         for u in range(n)]
+                entry = {kind: units}
+                if has_dim:
+                    entry["dimmer"] = 255
+                fixtures[fx_id] = entry
+            return fixtures
+
+        steps = []
+        if phase_offset and n_spec >= 2:
+            half_hold = max(50, int(hold_ms) // 2)
+            for h in range(2 * n_spec):
+                idx_odd  = (h // 2) % n_spec         # trailing group
+                idx_even = ((h + 1) // 2) % n_spec   # leading group (half step ahead)
+                steps.append({"fixtures": build_fixtures(idx_even, idx_odd),
+                              "hold": half_hold,
+                              "fade": max(0, int(fade_ms))})
+        else:
+            for i in range(n_spec):
+                steps.append({"fixtures": build_fixtures(i, i),
+                              "hold": max(50, int(hold_ms)),
+                              "fade": max(0, int(fade_ms))})
         return {"name": name, "scene_type": "main",
                 "launch_fade": max(0, int(launch_fade)),
                 "steps": steps,

@@ -1414,7 +1414,8 @@ def _parse_wash_request(data):
                 "fade_ms":       int(data.get("fade_ms", 400)),
                 "launch_fade":   int(data.get("launch_fade", 400)),
                 "tempo_sync":    bool(data.get("tempo_sync")),
-                "beat_division": int(data.get("beat_division", 1))}
+                "beat_division": int(data.get("beat_division", 1)),
+                "phase_offset":  bool(data.get("phase_offset"))}
     except (TypeError, ValueError):
         return None, "bad timing value"
     return clean, opts
@@ -1440,7 +1441,8 @@ def api_wash():
     scene = engine.synth_wash_scene(steps, opts["hold_ms"], opts["fade_ms"],
                                     launch_fade=opts["launch_fade"],
                                     tempo_sync=opts["tempo_sync"],
-                                    beat_division=opts["beat_division"])
+                                    beat_division=opts["beat_division"],
+                                    phase_offset=opts["phase_offset"])
     if not any(st["fixtures"] for st in scene["steps"]):
         return jsonify({"ok": False, "error": "no wash-capable fixtures in show"}), 400
     engine.update_wash_scene(scene, crossfade_ms=opts["launch_fade"])
@@ -1462,6 +1464,7 @@ def api_wash_save():
                                     launch_fade=opts["launch_fade"],
                                     tempo_sync=opts["tempo_sync"],
                                     beat_division=opts["beat_division"],
+                                    phase_offset=opts["phase_offset"],
                                     name=name)
     if not any(st["fixtures"] for st in scene["steps"]):
         return jsonify({"ok": False, "error": "no wash-capable fixtures in show"}), 400

@@ -587,6 +587,8 @@
                  style="width:70px;"> ms</label>
           <label style="display:flex;align-items:center;gap:5px;">
             <input type="checkbox" id="wash-tempo" style="width:16px;height:16px;"> Beat sync</label>
+          <label style="display:flex;align-items:center;gap:5px;" title="Alternating pods run half a step apart so colors roll through the rig">
+            <input type="checkbox" id="wash-ripple" style="width:16px;height:16px;"> Ripple ½ step</label>
         </div>
         <div style="display:flex;gap:8px;margin-top:12px;">
           <button onclick="washPlayChase()" style="flex:1;padding:10px;border-radius:8px;
@@ -1847,6 +1849,7 @@ function washChaseBody(){
           hold_ms: parseInt(document.getElementById('wash-hold').value)||1000,
           fade_ms: parseInt(document.getElementById('wash-fade').value)||0,
           tempo_sync: document.getElementById('wash-tempo').checked,
+          phase_offset: document.getElementById('wash-ripple').checked,
           launch_fade: 400};
 }
 async function washPlayChase(){
