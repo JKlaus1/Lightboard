@@ -440,13 +440,18 @@ class LightingEngine:
           'kelvin' — per-fixture translation: each fixture's color engine is
               identified from its pod_color_offsets key set, and the show's
               singer_kelvin temperature is rendered via that engine's
-              warm/cool white palette anchors (color_temp.kelvin_recipe),
-              with optional per-engine singer_trim multipliers. This makes
-              one slider produce matched white across mixed fixture models
+              Kelvin anchors (color_temp.kelvin_recipe), with optional
+              per-engine singer_trim multipliers. This makes one slider
+              produce matched white across mixed fixture models
               (e.g. RGBAWUV Blizzard bars vs RGBLAUV Betopper pars).
+          'palette' — per-fixture palette lookup: the show's
+              singer_palette_id color is rendered using each fixture
+              engine's own hand-tuned recipe from palette.json
+              (color_temp.palette_recipe), trim applied the same way.
         """
         mode   = self._show.get("singer_color_mode", "custom")
         kelvin = self._show.get("singer_kelvin", 3000)
+        pal_id = self._show.get("singer_palette_id")
         trim   = self._show.get("singer_trim", {})
         sc = self._show.get("singer_color",
                             {"r":20,"g":0,"b":0,"a":200,"w":220,"uv":0})
@@ -466,6 +471,11 @@ class LightingEngine:
                 eng    = color_temp.engine_for_offsets(colors)
                 fx_col = color_temp.kelvin_recipe(eng, kelvin, trim)
                 if not fx_col:   # unknown engine → safe legacy fallback
+                    fx_col = sc
+            elif mode == "palette":
+                eng    = color_temp.engine_for_offsets(colors)
+                fx_col = color_temp.palette_recipe(pal_id, eng, trim)
+                if not fx_col:   # unknown color/engine → safe legacy fallback
                     fx_col = sc
             else:
                 fx_col = sc
@@ -3030,6 +3040,31 @@ class LightingEngine:
             self._raw_override = {}
             self._raw_active   = False
             self._raw_solo     = False
+
+    def update_show_settings(self, show_config):
+        """Soft-apply show config changes WITHOUT touching playback.
+
+        Recomputes everything derived from settings — fade times, freeze
+        includes, and the singer color DMX (mode/kelvin/palette/trim/custom
+        values) — while every running scene, effect, overlay, motion, look,
+        cycler and tempo state continues untouched. The singer crossfade
+        blend also carries over, so a color change while singer is ON fades
+        nothing; the pods simply render the new color on the next tick.
+
+        Safe ONLY when the fixture patch is unchanged: channel maps, singer
+        channel sets, and cell-strip caches are NOT rebuilt here. The caller
+        (app.py save path) compares fixtures and falls back to load_show()
+        when the patch changed.
+        """
+        with self._lock:
+            self._show                = show_config
+            self._singer_fade_ms      = show_config.get("singer_fade_ms", 1500)
+            self._blackout_fade_ms    = show_config.get("blackout_fade_ms", 600)
+            self._overlay_fade_ms     = show_config.get("overlay_fade_ms", 200)
+            self._effect_fade_ms      = show_config.get("effect_fade_ms", 500)
+            self._overlay_keep_singer = show_config.get("overlay_keep_singer", True)
+            self._freeze_includes     = self._load_freeze_includes(show_config)
+            self._singer_dmx_full     = self._build_singer_dmx()
 
     def load_show(self, show_config):
         """Hot-swap to a new show config — recomputes channel maps."""

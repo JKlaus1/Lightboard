@@ -272,6 +272,7 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
         <select id="sc-mode" onchange="scModeChanged()">
           <option value="custom" {% if (show.singer_color_mode or 'custom') == 'custom' %}selected{% endif %}>Custom channels (per-channel values)</option>
           <option value="kelvin" {% if show.singer_color_mode == 'kelvin' %}selected{% endif %}>White temperature (auto per fixture type)</option>
+          <option value="palette" {% if show.singer_color_mode == 'palette' %}selected{% endif %}>Palette color (per-engine recipes)</option>
         </select>
       </div>
 
@@ -307,6 +308,14 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
         </div>
         <div style="font-size:0.78rem;color:var(--sub);margin-bottom:2px;">Per-engine trim (match tweaks, ×0–2)</div>
         <div id="sc-trim"></div>
+      </div>
+
+      <div id="sc-palette-box" style="display:none;">
+        <div id="sc-palette-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin:4px 0;"></div>
+        <div class="hint" style="font-size:0.72rem;color:var(--sub);margin-top:4px;">
+          Each fixture type renders the chosen color with its own hand-tuned palette recipe,
+          so mixed LED engines match. Per-engine trim (White temperature mode) applies here too.
+        </div>
       </div>
 
       <div class="singer-dot" id="singer-dot"></div>
@@ -1447,6 +1456,11 @@ function updateDot(){
     document.getElementById('singer-dot').style.background=`rgb(${c.r},${c.g},${c.b})`;
     return;
   }
+  if (scMode()==='palette'){
+    document.getElementById('singer-dot').style.background=
+      scPalettePreviewCss(scPaletteColorById(singerPaletteId));
+    return;
+  }
   const r=+document.getElementById('sc-r').value,g=+document.getElementById('sc-g').value,
     b=+document.getElementById('sc-b').value,l=+document.getElementById('sc-l').value,
     a=+document.getElementById('sc-a').value,w=+document.getElementById('sc-w').value,
@@ -1467,6 +1481,39 @@ const SC_ENGINE_KEYSETS = {           // mirrors color_temp.py
   rgblauv: ['r','g','b','l','a','uv'],
 };
 let singerTrim = {{ (show.singer_trim or {}) | tojson }};
+let singerPaletteId = {{ (show.singer_palette_id or 'warm_white') | tojson }};
+const SC_PALETTE = {{ palette | tojson }};
+
+function scPaletteColorById(pid){
+  return (SC_PALETTE.colors||[]).find(c=>c.id===pid) || null;
+}
+
+function scPalettePreviewCss(c){
+  if(!c) return '#222';
+  const rec = c.recipes || {};
+  if (rec.rgb) return `rgb(${rec.rgb.r||0},${rec.rgb.g||0},${rec.rgb.b||0})`;
+  const r6 = rec.rgbawuv || rec.rgblauv || {};
+  const r=r6.r||0,g=r6.g||0,b=r6.b||0,a=r6.a||0,w=r6.w||0,l=r6.l||0,uv=r6.uv||0;
+  return `rgb(${Math.min(255,r+Math.round(a*.8)+Math.round(w*.6))},`+
+         `${Math.min(255,g+Math.round(l*.9)+Math.round(a*.4)+Math.round(w*.6))},`+
+         `${Math.min(255,b+Math.round(uv*.3)+Math.round(w*.6))})`;
+}
+
+function renderScPalette(){
+  const box=document.getElementById('sc-palette-grid');
+  let html='';
+  for(const c of (SC_PALETTE.colors||[])){
+    if(c.id==='off') continue;
+    const sel = c.id===singerPaletteId;
+    html+=`<div onclick="pickScPalette('${c.id}')" style="width:56px;cursor:pointer;text-align:center;">`+
+      `<div style="width:40px;height:40px;border-radius:50%;margin:0 auto;`+
+      `border:3px solid ${sel?'var(--accent)':'transparent'};background:${scPalettePreviewCss(c)};"></div>`+
+      `<div style="font-size:9px;color:var(--sub);margin-top:2px;line-height:1.1;">${c.name}</div></div>`;
+  }
+  box.innerHTML=html;
+}
+
+function pickScPalette(pid){ singerPaletteId=pid; renderScPalette(); updateDot(); }
 
 function scMode(){ return document.getElementById('sc-mode').value; }
 
@@ -1506,10 +1553,12 @@ function kelvinChanged(){
 }
 
 function scModeChanged(){
-  const kelvin = scMode()==='kelvin';
-  document.getElementById('sc-custom-box').style.display = kelvin?'none':'';
-  document.getElementById('sc-kelvin-box').style.display = kelvin?'':'none';
-  if (kelvin) renderTrim();
+  const m = scMode();
+  document.getElementById('sc-custom-box').style.display  = m==='custom'  ? '' : 'none';
+  document.getElementById('sc-kelvin-box').style.display  = m==='kelvin'  ? '' : 'none';
+  document.getElementById('sc-palette-box').style.display = m==='palette' ? '' : 'none';
+  if (m==='kelvin')  renderTrim();
+  if (m==='palette') renderScPalette();
   updateDot();
 }
 
@@ -1594,6 +1643,7 @@ function buildShowConfig(){
       w:+document.getElementById('sc-w').value,uv:+document.getElementById('sc-uv').value},
     singer_color_mode: scMode(),
     singer_kelvin: parseInt(document.getElementById('sc-kelvin').value)||3000,
+    singer_palette_id: singerPaletteId,
     singer_trim: collectTrim(),
     freeze_includes: Object.assign({}, freezeIncludes),
     fixtures};

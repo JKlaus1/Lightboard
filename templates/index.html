@@ -411,6 +411,9 @@
       <button class="toggle-btn singer-on" id="singer-btn" onclick="toggleSinger()">
         🎤 SINGER ON
       </button>
+      <button id="singer-color-btn" onclick="openSingerColor()" title="Singer color"
+              style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                     color:var(--text);padding:10px 14px;font-size:16px;cursor:pointer;">🎨</button>
     </div>
     <div class="fader-block">
       <div class="fader-value" id="singer-val">100%</div>
@@ -545,6 +548,20 @@
   </div>
 
   <!-- Scenes list editor (per show) -->
+  <div class="overlay" id="singer-color-overlay" onclick="if(event.target===this)closeSingerColor()">
+    <div class="sheet">
+      <h3>Singer Color</h3>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <span style="font-size:12px;color:var(--sub);min-width:40px;">White</span>
+        <input type="range" id="sngc-kelvin" min="2200" max="6500" step="50" value="3000"
+               style="flex:1;" oninput="sngcKelvinInput(this.value)" onchange="sngcKelvinCommit(this.value)">
+        <span id="sngc-kelvin-val" style="min-width:52px;text-align:right;font-size:12px;
+              font-variant-numeric:tabular-nums;">3000K</span>
+      </div>
+      <div id="sngc-swatches" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+    </div>
+  </div>
+
   <div class="overlay" id="scenes-edit-overlay" onclick="if(event.target===this)closeScenesEdit()">
     <div class="sheet">
       <h3>Scenes — this show</h3>
@@ -1581,6 +1598,88 @@ function onSinger(v) {
       body: JSON.stringify({level: v/100}) });
   }, 30);
 }
+
+// ── Singer color popup (live mid-show; changes apply without touching
+//    running scenes — server soft-updates the engine via /api/singer/color) ──
+let _sngcPalette = null;
+let _sngcState = { mode: {{ (show.singer_color_mode or 'custom') | tojson }},
+                   kelvin: {{ show.singer_kelvin or 3000 }},
+                   palette_id: {{ (show.singer_palette_id or '') | tojson }} };
+let _sngcLastLive = 0;
+
+async function openSingerColor(){
+  if (!_sngcPalette){
+    try { _sngcPalette = await (await fetch('/api/palette')).json(); }
+    catch { _sngcPalette = {colors: []}; }
+    renderSngcSwatches();
+  }
+  document.getElementById('sngc-kelvin').value = _sngcState.kelvin;
+  document.getElementById('sngc-kelvin-val').textContent = _sngcState.kelvin + 'K';
+  highlightSngc();
+  document.getElementById('singer-color-overlay').classList.add('open');
+}
+function closeSingerColor(){ document.getElementById('singer-color-overlay').classList.remove('open'); }
+
+function sngcPreviewCss(c){
+  const rec = c.recipes || {};
+  if (rec.rgb) return `rgb(${rec.rgb.r||0},${rec.rgb.g||0},${rec.rgb.b||0})`;
+  const r6 = rec.rgbawuv || rec.rgblauv || {};
+  const r=r6.r||0,g=r6.g||0,b=r6.b||0,a=r6.a||0,w=r6.w||0,l=r6.l||0,uv=r6.uv||0;
+  return `rgb(${Math.min(255,r+Math.round(a*.8)+Math.round(w*.6))},`+
+         `${Math.min(255,g+Math.round(l*.9)+Math.round(a*.4)+Math.round(w*.6))},`+
+         `${Math.min(255,b+Math.round(uv*.3)+Math.round(w*.6))})`;
+}
+
+function renderSngcSwatches(){
+  const box = document.getElementById('sngc-swatches');
+  let html = '';
+  for (const c of (_sngcPalette.colors || [])){
+    if (c.id === 'off') continue;
+    html += `<div class="sngc-sw" data-pid="${c.id}" onclick="pickSngcColor('${c.id}')" `+
+      `style="width:56px;cursor:pointer;text-align:center;">`+
+      `<div class="sngc-dot" style="width:42px;height:42px;border-radius:50%;margin:0 auto;`+
+      `border:3px solid transparent;background:${sngcPreviewCss(c)};"></div>`+
+      `<div style="font-size:9px;color:var(--sub);margin-top:2px;line-height:1.1;">${c.name}</div></div>`;
+  }
+  box.innerHTML = html;
+}
+
+function highlightSngc(){
+  document.querySelectorAll('#sngc-swatches .sngc-dot')
+    .forEach(d => d.style.borderColor = 'transparent');
+  if (_sngcState.mode === 'palette'){
+    const el = document.querySelector(
+      `#sngc-swatches .sngc-sw[data-pid="${_sngcState.palette_id}"] .sngc-dot`);
+    if (el) el.style.borderColor = 'var(--accent)';
+  }
+}
+
+async function postSngc(body){
+  try {
+    const r = await fetch('/api/singer/color', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if (d && d.ok){
+      _sngcState.mode = d.mode;
+      if (d.kelvin) _sngcState.kelvin = d.kelvin;
+      if (d.palette_id) _sngcState.palette_id = d.palette_id;
+    }
+  } catch {}
+  highlightSngc();
+}
+
+function sngcKelvinInput(v){
+  // Live preview while dragging: throttled non-persisting updates so the
+  // pods track the thumb without hammering show.json writes.
+  document.getElementById('sngc-kelvin-val').textContent = v + 'K';
+  const now = Date.now();
+  if (now - _sngcLastLive > 250){
+    _sngcLastLive = now;
+    postSngc({mode:'kelvin', kelvin: parseInt(v), persist: false});
+  }
+}
+function sngcKelvinCommit(v){ postSngc({mode:'kelvin', kelvin: parseInt(v)}); }
+function pickSngcColor(pid){ postSngc({mode:'palette', palette_id: pid}); }
 
 function toggleSinger() {
   singerOn = !singerOn;

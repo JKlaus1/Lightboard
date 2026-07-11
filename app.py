@@ -15,6 +15,7 @@ from dmx import EnttecOpenDMX
 from artnet import ArtNetDMX
 from artnet_receiver import ArtNetReceiver
 from sacn import SacnDMX
+import color_temp
 from engine import LightingEngine
 import cell_strip
 import effects
@@ -1339,6 +1340,44 @@ def api_singer_level():
     engine.set_singer_level(level)
     return jsonify({"ok": True, "level": level})
 
+@app.route("/api/singer/color", methods=["POST"])
+def api_singer_color():
+    """Live mid-show singer color change — no playback interruption.
+
+    Body: {"mode": "kelvin", "kelvin": 3200}
+        | {"mode": "palette", "palette_id": "amber"}
+        | {"mode": "custom"}                 (revert to stored channel values)
+    Optional "persist": false skips the show.json write (used by the slider
+    while dragging; the release event sends a final persisting call).
+    """
+    global show_config
+    data = request.json or {}
+    mode = data.get("mode")
+    if mode not in ("custom", "kelvin", "palette"):
+        return jsonify({"ok": False, "error": "mode must be custom|kelvin|palette"}), 400
+    if mode == "kelvin" and "kelvin" in data:
+        try:
+            k = int(data["kelvin"])
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "bad kelvin value"}), 400
+        show_config["singer_kelvin"] = max(color_temp.KELVIN_MIN,
+                                           min(color_temp.KELVIN_MAX, k))
+    elif mode == "palette":
+        pid = data.get("palette_id")
+        if not any(c.get("id") == pid for c in palette.get("colors", [])):
+            return jsonify({"ok": False, "error": f"unknown palette color '{pid}'"}), 400
+        show_config["singer_palette_id"] = pid
+    show_config["singer_color_mode"] = mode
+    if data.get("persist", True):
+        try:
+            save_json(SHOWS_DIR / config["active_show"] / "show.json", show_config)
+        except Exception as e:
+            log.error(f"singer color persisted state save failed: {e}")
+    engine.update_show_settings(show_config)
+    return jsonify({"ok": True, "mode": mode,
+                    "kelvin": show_config.get("singer_kelvin", 3000),
+                    "palette_id": show_config.get("singer_palette_id")})
+
 # ── Scene management (library-based) ──────────────────────────────────────
 
 @app.route("/api/scenes")
@@ -1645,10 +1684,18 @@ def api_save_show_config():
         # doesn't manage (enabled_scenes, scene ordering, etc.). Only fields the
         # client sent get overwritten.
         existing = load_json(cfg_path) if cfg_path.exists() else {}
+        old_fixtures = json.dumps(existing.get("fixtures"), sort_keys=True)
         existing.update(data)
         save_json(cfg_path, existing)
         show_config = existing
-        engine.load_show(existing)
+        if json.dumps(existing.get("fixtures"), sort_keys=True) == old_fixtures:
+            # Fixture patch unchanged → soft settings update. Running
+            # scenes/effects continue; singer color, fade times and freeze
+            # includes take effect immediately. (Previously this always
+            # called load_show(), which stopped all playback on every save.)
+            engine.update_show_settings(existing)
+        else:
+            engine.load_show(existing)
         return jsonify({"ok": True})
     except Exception as e:
         log.error(f"Failed to save show config: {e}")

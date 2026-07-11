@@ -236,3 +236,47 @@ def engines_in_fixtures(fixtures):
         if eng:
             found.add(eng)
     return sorted(found)
+
+
+def _apply_trim_clamp(recipe, engine, trim):
+    """Apply per-engine trim multipliers to a recipe and clamp to 0-255 ints."""
+    eng_trim = (trim or {}).get(engine, {}) if isinstance(trim, dict) else {}
+    out = {}
+    for ch, v in recipe.items():
+        try:
+            val = float(v)
+        except (TypeError, ValueError):
+            val = 0.0
+        try:
+            mult = float(eng_trim.get(ch, 1.0))
+        except (TypeError, ValueError):
+            mult = 1.0
+        out[ch] = int(round(max(0.0, min(255.0, val * max(0.0, mult)))))
+    return out
+
+
+def palette_recipe(color_id, engine, trim=None):
+    """{channel: 0-255} for palette color `color_id` rendered on `engine`.
+
+    Uses the palette's hand-tuned per-engine recipe when one exists (this is
+    the whole point: the palette recipes were eyeballed per LED engine, so no
+    translation layer is needed); falls back through donor engines filtered
+    to the target engine's channels otherwise. Per-engine trim multipliers
+    apply as in kelvin_recipe. Returns {} when the color id or engine can't
+    be resolved — callers fall back to the legacy singer_color values.
+    """
+    if engine is None or not color_id:
+        return {}
+    pal = _load_palette()
+    for c in pal.get("colors", []):
+        if c.get("id") == color_id:
+            recipes = c.get("recipes", {}) or {}
+            target_keys = _ENGINE_KEYSETS.get(engine, frozenset(("r", "g", "b")))
+            if engine in recipes and isinstance(recipes[engine], dict):
+                return _apply_trim_clamp(recipes[engine], engine, trim)
+            for donor in _FALLBACK_DONORS:
+                if donor in recipes and isinstance(recipes[donor], dict):
+                    filt = {ch: v for ch, v in recipes[donor].items() if ch in target_keys}
+                    return _apply_trim_clamp(filt, engine, trim)
+            return {}
+    return {}
