@@ -266,19 +266,49 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
   </div>
 
   <div class="card">
-    <div class="card-head"><h2>Singer Warm White Color</h2></div>
+    <div class="card-head"><h2>Singer Color</h2></div>
     <div class="card-body">
-      <div class="col6" style="grid-template-columns:repeat(7,1fr);">
-        <label class="r">R</label><label class="g">G</label><label class="b">B</label>
-        <label class="l">L</label><label class="a">A</label><label class="w">W</label><label class="uv">UV</label>
-        <input type="number" id="sc-r"  min="0" max="255" value="{{ show.singer_color.r }}"  oninput="updateDot()">
-        <input type="number" id="sc-g"  min="0" max="255" value="{{ show.singer_color.g }}"  oninput="updateDot()">
-        <input type="number" id="sc-b"  min="0" max="255" value="{{ show.singer_color.b }}"  oninput="updateDot()">
-        <input type="number" id="sc-l"  min="0" max="255" value="{{ show.singer_color.l or 0 }}" oninput="updateDot()">
-        <input type="number" id="sc-a"  min="0" max="255" value="{{ show.singer_color.a }}"  oninput="updateDot()">
-        <input type="number" id="sc-w"  min="0" max="255" value="{{ show.singer_color.w }}"  oninput="updateDot()">
-        <input type="number" id="sc-uv" min="0" max="255" value="{{ show.singer_color.uv }}" oninput="updateDot()">
+      <div class="row"><label>Mode</label>
+        <select id="sc-mode" onchange="scModeChanged()">
+          <option value="custom" {% if (show.singer_color_mode or 'custom') == 'custom' %}selected{% endif %}>Custom channels (per-channel values)</option>
+          <option value="kelvin" {% if show.singer_color_mode == 'kelvin' %}selected{% endif %}>White temperature (auto per fixture type)</option>
+        </select>
       </div>
+
+      <div id="sc-custom-box">
+        <div class="col6" style="grid-template-columns:repeat(7,1fr);">
+          <label class="r">R</label><label class="g">G</label><label class="b">B</label>
+          <label class="l">L</label><label class="a">A</label><label class="w">W</label><label class="uv">UV</label>
+          <input type="number" id="sc-r"  min="0" max="255" value="{{ show.singer_color.r }}"  oninput="updateDot()">
+          <input type="number" id="sc-g"  min="0" max="255" value="{{ show.singer_color.g }}"  oninput="updateDot()">
+          <input type="number" id="sc-b"  min="0" max="255" value="{{ show.singer_color.b }}"  oninput="updateDot()">
+          <input type="number" id="sc-l"  min="0" max="255" value="{{ show.singer_color.l or 0 }}" oninput="updateDot()">
+          <input type="number" id="sc-a"  min="0" max="255" value="{{ show.singer_color.a }}"  oninput="updateDot()">
+          <input type="number" id="sc-w"  min="0" max="255" value="{{ show.singer_color.w }}"  oninput="updateDot()">
+          <input type="number" id="sc-uv" min="0" max="255" value="{{ show.singer_color.uv }}" oninput="updateDot()">
+        </div>
+        <div class="hint" style="font-size:0.72rem;color:var(--sub);margin-top:4px;">
+          One flat value set applied to every fixture — channels a fixture doesn't have are dropped,
+          so mixed fixture types may not match. Use White temperature mode for auto-matching.
+        </div>
+      </div>
+
+      <div id="sc-kelvin-box" style="display:none;">
+        <div class="row"><label>Temperature</label>
+          <input type="range" id="sc-kelvin" min="2200" max="6500" step="50"
+                 value="{{ show.singer_kelvin or 3000 }}"
+                 oninput="kelvinChanged()" style="flex:1;min-width:160px;">
+          <span id="sc-kelvin-val" style="min-width:58px;text-align:right;font-variant-numeric:tabular-nums;">
+            {{ show.singer_kelvin or 3000 }}K</span>
+        </div>
+        <div class="hint" style="font-size:0.72rem;color:var(--sub);margin:2px 0 8px;">
+          Translated per fixture type via the palette's Warm/Cool White recipes (anchors 2700K / 6000K),
+          so different LED engines render a matched white.
+        </div>
+        <div style="font-size:0.78rem;color:var(--sub);margin-bottom:2px;">Per-engine trim (match tweaks, ×0–2)</div>
+        <div id="sc-trim"></div>
+      </div>
+
       <div class="singer-dot" id="singer-dot"></div>
     </div>
   </div>
@@ -635,7 +665,7 @@ function renderFreezeIncludes() {
 (async()=>{
   try { library = await fetch('/api/fixtures').then(r=>r.json()); }
   catch(e){ library = []; }
-  renderShows(); renderLibrary(); renderFixtures(); renderFreezeIncludes(); updateDot();
+  renderShows(); renderLibrary(); renderFixtures(); renderFreezeIncludes(); scModeChanged();
   savedShowSnapshot = serializeShowState();   // dirty baseline after full load
   loadPresetsList();
   const sel=document.getElementById('ns-source');
@@ -1411,6 +1441,12 @@ function renderLibrary(){
 }
 
 function updateDot(){
+  if (scMode()==='kelvin'){
+    const k=+document.getElementById('sc-kelvin').value;
+    const c=kelvinToRGB(k);
+    document.getElementById('singer-dot').style.background=`rgb(${c.r},${c.g},${c.b})`;
+    return;
+  }
   const r=+document.getElementById('sc-r').value,g=+document.getElementById('sc-g').value,
     b=+document.getElementById('sc-b').value,l=+document.getElementById('sc-l').value,
     a=+document.getElementById('sc-a').value,w=+document.getElementById('sc-w').value,
@@ -1420,6 +1456,98 @@ function updateDot(){
     pg=Math.min(255,g+Math.round(l*.9)+Math.round(a*.4)+Math.round(w*.6)),
     pb=Math.min(255,b+Math.round(uv*.3)+Math.round(w*.6));
   document.getElementById('singer-dot').style.background=(pr||pg||pb)?`rgb(${pr},${pg},${pb})`:'#222';
+}
+
+// ── Singer white-temperature mode ─────────────────────────────────────────
+const SC_ENGINE_KEYSETS = {           // mirrors color_temp.py
+  rgb:     ['r','g','b'],
+  rgbw:    ['r','g','b','w'],
+  rgbaw:   ['r','g','b','a','w'],
+  rgbawuv: ['r','g','b','a','w','uv'],
+  rgblauv: ['r','g','b','l','a','uv'],
+};
+let singerTrim = {{ (show.singer_trim or {}) | tojson }};
+
+function scMode(){ return document.getElementById('sc-mode').value; }
+
+function engineForOffsets(off){
+  const keys = Object.keys(off||{}).sort().join(',');
+  for (const [eng,ks] of Object.entries(SC_ENGINE_KEYSETS)){
+    if (ks.slice().sort().join(',')===keys) return eng;
+  }
+  return (off && 'r' in off && 'g' in off && 'b' in off) ? 'rgb' : null;
+}
+
+function enginesInShow(){
+  const found = new Set();
+  for (const fx of fixtures){
+    if (fx.profile==='mover' || fx.profile==='pixel_strip') continue;
+    const eng = engineForOffsets(fx.pod_color_offsets || {r:0,g:1,b:2,a:3,w:4,uv:5});
+    if (eng) found.add(eng);
+  }
+  return [...found].sort();
+}
+
+// Approximate blackbody RGB for the preview dot only (fixtures use the
+// palette-anchor interpolation server-side).
+function kelvinToRGB(k){
+  const t=k/100; let r,g,b;
+  r = t<=66 ? 255 : Math.min(255,Math.max(0,329.7*Math.pow(t-60,-0.1332)));
+  g = t<=66 ? Math.min(255,Math.max(0,99.47*Math.log(t)-161.1))
+            : Math.min(255,Math.max(0,288.1*Math.pow(t-60,-0.0755)));
+  b = t>=66 ? 255 : (t<=19 ? 0 : Math.min(255,Math.max(0,138.5*Math.log(t-10)-305.0)));
+  return {r:Math.round(r),g:Math.round(g),b:Math.round(b)};
+}
+
+function kelvinChanged(){
+  document.getElementById('sc-kelvin-val').textContent =
+    document.getElementById('sc-kelvin').value + 'K';
+  updateDot();
+}
+
+function scModeChanged(){
+  const kelvin = scMode()==='kelvin';
+  document.getElementById('sc-custom-box').style.display = kelvin?'none':'';
+  document.getElementById('sc-kelvin-box').style.display = kelvin?'':'none';
+  if (kelvin) renderTrim();
+  updateDot();
+}
+
+function renderTrim(){
+  const box=document.getElementById('sc-trim');
+  const engs=enginesInShow();
+  if(!engs.length){ box.innerHTML='<div class="hint" style="font-size:0.72rem;color:var(--sub);">No pod fixtures in show</div>'; return; }
+  let html='';
+  for(const eng of engs){
+    const chans=SC_ENGINE_KEYSETS[eng];
+    html+=`<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:3px 0;">`+
+      `<span style="min-width:74px;font-size:0.75rem;">${eng.toUpperCase()}</span>`;
+    for(const ch of chans){
+      const v=(singerTrim[eng]&&singerTrim[eng][ch]!==undefined)?singerTrim[eng][ch]:1;
+      html+=`<label style="font-size:0.68rem;display:flex;flex-direction:column;align-items:center;">`+
+        `${ch.toUpperCase()}<input type="number" class="sc-trim-in" data-eng="${eng}" data-ch="${ch}" `+
+        `min="0" max="2" step="0.05" value="${v}" style="width:56px;" oninput="trimChanged(this)"></label>`;
+    }
+    html+=`</div>`;
+  }
+  box.innerHTML=html;
+}
+
+function trimChanged(inp){
+  const eng=inp.dataset.eng, ch=inp.dataset.ch;
+  if(!singerTrim[eng]) singerTrim[eng]={};
+  singerTrim[eng][ch]=Math.max(0,Math.min(2,parseFloat(inp.value)||0));
+}
+
+function collectTrim(){
+  // Only persist entries that differ from 1.0 to keep show.json tidy.
+  const out={};
+  for(const [eng,chans] of Object.entries(singerTrim)){
+    for(const [ch,v] of Object.entries(chans||{})){
+      if(Math.abs((+v)-1)>1e-9){ if(!out[eng]) out[eng]={}; out[eng][ch]=+v; }
+    }
+  }
+  return out;
 }
 
 async function restartLightboard(){
@@ -1464,6 +1592,9 @@ function buildShowConfig(){
       b:+document.getElementById('sc-b').value,l:+document.getElementById('sc-l').value,
       a:+document.getElementById('sc-a').value,
       w:+document.getElementById('sc-w').value,uv:+document.getElementById('sc-uv').value},
+    singer_color_mode: scMode(),
+    singer_kelvin: parseInt(document.getElementById('sc-kelvin').value)||3000,
+    singer_trim: collectTrim(),
     freeze_includes: Object.assign({}, freezeIncludes),
     fixtures};
 }

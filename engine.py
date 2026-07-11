@@ -16,6 +16,7 @@ import time
 import logging
 
 import cell_strip
+import color_temp
 import effects
 import mover_gen
 
@@ -430,7 +431,23 @@ class LightingEngine:
         return out
 
     def _build_singer_dmx(self):
-        """Build {(universe, dmx_ch): value} for singer pods at full brightness."""
+        """Build {(universe, dmx_ch): value} for singer pods at full brightness.
+
+        Two modes (show.singer_color_mode):
+          'custom' (default/legacy) — one flat singer_color dict applied to
+              every fixture's channels by key. Channels the dict doesn't
+              name get 0. Identical to historical behavior.
+          'kelvin' — per-fixture translation: each fixture's color engine is
+              identified from its pod_color_offsets key set, and the show's
+              singer_kelvin temperature is rendered via that engine's
+              warm/cool white palette anchors (color_temp.kelvin_recipe),
+              with optional per-engine singer_trim multipliers. This makes
+              one slider produce matched white across mixed fixture models
+              (e.g. RGBAWUV Blizzard bars vs RGBLAUV Betopper pars).
+        """
+        mode   = self._show.get("singer_color_mode", "custom")
+        kelvin = self._show.get("singer_kelvin", 3000)
+        trim   = self._show.get("singer_trim", {})
         sc = self._show.get("singer_color",
                             {"r":20,"g":0,"b":0,"a":200,"w":220,"uv":0})
         result = {}
@@ -445,10 +462,17 @@ class LightingEngine:
             first_pc = self._fx_first_pod_channel(fx)
             ch_per   = self._fx_channels_per_pod(fx)
             colors   = self._fx_pod_color_offsets(fx)
+            if mode == "kelvin":
+                eng    = color_temp.engine_for_offsets(colors)
+                fx_col = color_temp.kelvin_recipe(eng, kelvin, trim)
+                if not fx_col:   # unknown engine → safe legacy fallback
+                    fx_col = sc
+            else:
+                fx_col = sc
             for pod in pods:
                 base = start + first_pc - 1 + (pod - 1) * ch_per
                 for color, off in colors.items():
-                    result[self._ch_overflow(uni, base + off)] = sc.get(color, 0)
+                    result[self._ch_overflow(uni, base + off)] = fx_col.get(color, 0)
         return result
 
     def resolve_step(self, step_fixtures, scene_type="main"):
