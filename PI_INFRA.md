@@ -213,3 +213,24 @@ re-deriving the config from memory. Two gaps the wizard model doesn't cover:
   now fork on this — step 2 checks `tunnel list`, with a 3a restore-existing
   path (`tunnel token`) and a 3b new-tunnel path (`tunnel create`).
 
+
+## Lights-Rig AP clients & deploy-over-AP (2026-07-11)
+
+- Deploying from a phone/laptop joined to `Lights-Rig` works: the venue Pi is
+  `pi@10.42.0.1` on the AP subnet (same host key as `192.168.1.84`; accept the
+  new-address prompt once and known_hosts carries both).
+- Static clients on `10.42.0.0/24` — keep static assignments in `.2`–`.9`
+  (NM shared-mode DHCP leases start at ~`.10`):
+  - `10.42.0.1` — venue Pi (AP host, gateway, chrony server when installed)
+  - `10.42.0.5` — PKnight easynode "Artnet 1" (WiFi Art-Net→DMX receiver),
+    gw 10.42.0.1, /24. TEST unit: works at the house; not yet gig-validated
+    (2.4GHz bar RF + kiosk polling). Wired CR011R stays the show path.
+    Quirk: the node's broadcast-address field only recomputes from the
+    static IP once it has actually associated to the AP; before that it
+    shows its own hotspot default (192.168.4.255).
+- The sudoers drop-in (`infra/lightboard-restart.sudoers`) was found missing
+  on the venue Pi 2026-07-11 (ssh deploy hit a sudo password prompt) and was
+  reinstalled: `sudo install -m 0440 ~/lightboard/infra/lightboard-restart.sudoers
+  /etc/sudoers.d/lightboard-restart && sudo visudo -c`. If a non-interactive
+  `ssh ... "sudo systemctl restart lightboard"` ever prompts again, check this
+  first.

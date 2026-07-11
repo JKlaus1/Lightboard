@@ -766,3 +766,111 @@ Feature session on the Venue Pi (`192.168.1.84`). Ten commits shipped
 4. Backlog: rack-install.conf WiFi creds; INSTALL.md Imager walkthrough;
    DMXRouter master-side fan-out (Opus-class); venue local-show universe (patch
    venue fixtures to the box universe if standalone use on universe !=0 is wanted).
+
+
+### Phase 4 — session handoff 2026-07-11 (per-engine singer color + wash/chase + soft save)
+Feature session, deployed to the Venue Pi over the Lights-Rig AP
+(`ssh pi@10.42.0.1` — same host key as 192.168.1.84). Six commits
+`125cff2`..`7d55a42`, each validated before delivery (py_compile,
+node --check on rendered JS, Jinja balance, full mock render, 31/31 fader
+regression, Flask test-client smoke) and byte-verified via pristine-clone
+apply. All pushes confirmed at GitHub HEAD `7d55a42` at close-out.
+
+**Singer color, per-fixture-engine (the "warm white dialed for one light is
+wrong on the others" fix):**
+- `125cff2` Phase 1 — new `color_temp.py`: a fixture's color engine is
+  identified from its `pod_color_offsets` KEY SET (rgblauv / rgbawuv / rgb /
+  rgbw / rgbaw — no new fixture fields). `singer_color_mode: "kelvin"`
+  renders `show.singer_kelvin` per fixture engine; per-engine `singer_trim`
+  multipliers for match nudges. Settings: mode select + slider + trim table.
+  Legacy `"custom"` mode is byte-identical to the old flat-dict behavior.
+- `f8c87b5` Kelvin anchors v2 — the palette `warm_white`/`cool_white`
+  recipes were dropped as anchors (they pin W=255 and read ~4000K at the
+  "warm" end; retuning them was ruled out because saved scenes reference
+  them). Replaced with dedicated piecewise anchors at **2200 / 4000 /
+  6500K** spanning the slider exactly (no extrapolation), overridable
+  without code via a `kelvin_anchors` key in palette.json (per anchor, per
+  engine). Current anchor values are first-pass estimates pending an
+  eyeball tune on the real fixtures.
+- `7a892db` Phase 2 — singer mode `"palette"`: per-fixture lookup of the
+  chosen color's hand-tuned per-engine recipe (donor-engine fallback
+  filtered to the target's channels; trim applies; a deleted palette id
+  falls back to legacy `singer_color`, never dark). Settings swatch picker;
+  🎨 popup on the show page beside SINGER ON (kelvin slider + swatches)
+  hitting new `POST /api/singer/color` — live mid-show, `persist:false`
+  while dragging, one write on release. **Soft show-save**: new
+  `engine.update_show_settings()` applies config changes (singer color,
+  fade times, freeze includes) WITHOUT touching playback when the fixtures
+  block is unchanged — saving settings no longer blanks running scenes; a
+  fixtures change still takes the full `load_show()` path.
+
+**Color wash + quick chase (paint the whole rig from the palette with zero
+scene authoring):**
+- `458315e` 🎨 Wash button in the Scenes card header → sheet with two modes.
+  Instant: tap a swatch or drag the white slider and every wash-capable
+  fixture (pods full-fixture, pixel strips solid per-segment, movers
+  excluded) paints that color live via the same per-engine translation +
+  trim as the singer. Build chase: taps append step chips (tap to remove,
+  "+ Add" inserts the slider's white), hold/fade ms, beat sync, ▶ Play,
+  💾 Save to library (creates a real scene via `synth_wash_scene()` output —
+  identical format — and appends it to the show's `enabled_scenes`).
+  Endpoints: `POST /api/wash` (specs / `{"off":true}`), `POST
+  /api/wash/save`. The wash plays under reserved id `__wash__`, layers over
+  running scenes, obeys master/blackout/freeze, and **evaporates** (graceful
+  fade-out) when any other main scene launches (`force=True` hot-swap
+  replays excluded).
+- `45c4ac3` Crossfade-in-place fix — re-picking a color previously did
+  stop(immediate)+relaunch → dip toward black between colors, strobing on
+  slider drags. New `engine.update_wash_scene()` swaps scene data INSIDE
+  the live scene state; the new loop's first step fades from the wash's
+  CURRENT dmx frame, so updates glide. First launch still goes through
+  `play_scene` (launch fade + freeze queue); in-place recolors of a live
+  wash bypass the freeze queue deliberately.
+- `7d55a42` Ripple ½-step — `phase_offset` on a chase splits the rig into
+  two groups by alternating GLOBAL pod/segment index (multi-pod bars ripple
+  internally; single-pod fixtures alternate across the rig) and runs the
+  even group half a step ahead: N specs expand to 2N half-steps of hold/2;
+  everything starts together on color 1, at T/2 the even group advances, at
+  T the odd group follows, locked half a step apart thereafter. With beat
+  sync each HALF-step lands on the grid (a full color step = two
+  divisions). The expansion is plain steps, so a saved ripple chase is a
+  normal editable scene. UI: "Ripple ½ step" checkbox in the chase box.
+
+**Field notes this session:**
+- PKnight easynode test on the venue AP: joined Lights-Rig, static
+  `10.42.0.5` (gw 10.42.0.1, /24; its broadcast field only recomputes to
+  10.42.0.255 once actually associated — a pre-association screenshot
+  showing the hotspot-default 192.168.4.255 is expected, not a bug). Added
+  as an Art-Net target and driving a fixture correctly at the house. NOT
+  yet gig-validated (2.4GHz bar RF with kiosk polling concurrently); the
+  wired CR011R remains the venue Art-Net path until it passes.
+- Sudoers drop-in was missing on the venue Pi (ssh'd deploy hit a sudo
+  password prompt); reinstalled from `infra/lightboard-restart.sudoers`
+  and verified with `visudo -c`.
+- Memory-backlog corrections found at HEAD: the multi-universe remote test
+  (test_remote.py section 9 + multi-universe --blast) IS pushed, and the
+  install.sh AP radio pin IS fixed (venue-ap pinned by the Panda's MAC via
+  `802-11-wireless.mac-address` with `ifname '*'`).
+
+**Next session (day-off push — goal: clear the outstanding list):**
+1. Kelvin anchor eyeball-tune on the real fixtures; adjust via
+   palette.json `kelvin_anchors` (no code).
+2. Rack Pi catch-up: `git pull` the six commits, verify its role config,
+   hard-test singer modes + wash + soft-save there.
+3. Verify the singer-dimmer fader state-sync bug status (get_state stale
+   `f["level"]` for system faders) — 30-second touch-UI fader test; apply
+   the one-liner if still live.
+4. Kiosk Pi block: `kiosk-only` installer branch; chrony server (venue) +
+   client (kiosk); gated weekly reboot script (timedatectl NTP-sync +
+   uptime checks); overlay filesystem as final installer step; hardware
+   decision (Pi 3A+ floor, 5" DSI preferred, test the touch UI at 800×480
+   in a browser window first).
+5. Easynode gig checklist (confirm Panda AP band, full-universe soak with
+   kiosk polling active, real-bar RF at an actual show) — the gate before
+   buying the second unit.
+6. Carried backlog: physical venue install; real multi-universe config when
+   the rack is on site (rack sends 2/3, venue boxes match); optional
+   unified config.json migration (deliberate — touches the rack's live
+   config); rack-install.conf WiFi creds; INSTALL.md Imager walkthrough;
+   DMXRouter master-side fan-out (Opus-class); venue local-show universe.
+   Parked by choice: kiosk enclosure print, soundboard/kiosk message overlay.
