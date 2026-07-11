@@ -428,6 +428,7 @@
   <div class="card">
     <div class="card-title" style="display:flex;align-items:center;gap:8px;">
       <span style="flex:1;">Scenes</span>
+      <button onclick="openWash()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">🎨 Wash</button>
       <button id="clear-main-btn" class="clear-cat-btn" onclick="clearCategory('main')">✕ Clear</button>
       <button onclick="location.href='/editor?from=home'" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:11px;cursor:pointer;">+ New</button>
       <button onclick="openScenesEdit()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);padding:4px 10px;font-size:11px;cursor:pointer;">✎ Edit list</button>
@@ -548,6 +549,56 @@
   </div>
 
   <!-- Scenes list editor (per show) -->
+  <div class="overlay" id="wash-overlay" onclick="if(event.target===this)closeWash()">
+    <div class="sheet">
+      <h3 style="display:flex;align-items:center;gap:8px;">
+        <span style="flex:1;">Color Wash</span>
+        <button onclick="washOff()" style="background:var(--surface2);border:1px solid var(--border);
+                border-radius:6px;color:var(--red);padding:4px 10px;font-size:11px;cursor:pointer;
+                text-transform:none;letter-spacing:0;">✕ Wash off</button>
+      </h3>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button id="wash-mode-instant" onclick="setWashMode('instant')"
+                style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);
+                       cursor:pointer;font-size:12px;">Instant</button>
+        <button id="wash-mode-chase" onclick="setWashMode('chase')"
+                style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);
+                       cursor:pointer;font-size:12px;">Build chase</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <span style="font-size:12px;color:var(--sub);min-width:40px;">White</span>
+        <input type="range" id="wash-kelvin" min="2200" max="6500" step="50" value="3000"
+               style="flex:1;" oninput="washKelvinInput(this.value)" onchange="washKelvinCommit(this.value)">
+        <span id="wash-kelvin-val" style="min-width:52px;text-align:right;font-size:12px;
+              font-variant-numeric:tabular-nums;">3000K</span>
+        <button id="wash-add-white" onclick="washAddWhite()" style="display:none;background:var(--surface2);
+                border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 8px;
+                font-size:11px;cursor:pointer;">+ Add</button>
+      </div>
+      <div id="wash-swatches" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      <div id="wash-chase-box" style="display:none;margin-top:14px;">
+        <div style="font-size:11px;color:var(--sub);">Sequence — tap colors above to add steps, tap a step to remove it</div>
+        <div id="wash-seq" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;margin:8px 0;
+             padding:6px;border:1px dashed var(--border);border-radius:8px;"></div>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--sub);">
+          <label>Hold <input type="number" id="wash-hold" value="1000" min="50" step="50"
+                 style="width:70px;"> ms</label>
+          <label>Fade <input type="number" id="wash-fade" value="400" min="0" step="50"
+                 style="width:70px;"> ms</label>
+          <label style="display:flex;align-items:center;gap:5px;">
+            <input type="checkbox" id="wash-tempo" style="width:16px;height:16px;"> Beat sync</label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button onclick="washPlayChase()" style="flex:1;padding:10px;border-radius:8px;
+                  border:none;background:var(--green);color:#000;font-size:13px;cursor:pointer;">▶ Play</button>
+          <button onclick="washSaveChase()" style="flex:1;padding:10px;border-radius:8px;
+                  border:1px solid var(--border);background:var(--surface2);color:var(--text);
+                  font-size:13px;cursor:pointer;">💾 Save to library</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="singer-color-overlay" onclick="if(event.target===this)closeSingerColor()">
     <div class="sheet">
       <h3>Singer Color</h3>
@@ -1609,8 +1660,7 @@ let _sngcLastLive = 0;
 
 async function openSingerColor(){
   if (!_sngcPalette){
-    try { _sngcPalette = await (await fetch('/api/palette')).json(); }
-    catch { _sngcPalette = {colors: []}; }
+    await ensurePalette();
     renderSngcSwatches();
   }
   document.getElementById('sngc-kelvin').value = _sngcState.kelvin;
@@ -1680,6 +1730,144 @@ function sngcKelvinInput(v){
 }
 function sngcKelvinCommit(v){ postSngc({mode:'kelvin', kelvin: parseInt(v)}); }
 function pickSngcColor(pid){ postSngc({mode:'palette', palette_id: pid}); }
+
+async function ensurePalette(){
+  if (_sngcPalette) return;
+  try { _sngcPalette = await (await fetch('/api/palette')).json(); }
+  catch { _sngcPalette = {colors: []}; }
+}
+
+// ── Color wash / quick chase popup ─────────────────────────────────────────
+// Instant mode: tap a swatch (or drag the white slider) and every wash-capable
+// fixture paints that color live, layered over running scenes; playing any
+// other scene makes the wash evaporate. Chase mode: taps build a step
+// sequence played as an ephemeral chase, or saved to the library for keeps.
+let washMode = 'instant';
+let washSeq  = [];          // [{spec:{mode,...}, css, label}]
+let _washLastLive = 0;
+
+async function openWash(){
+  await ensurePalette();
+  renderWashSwatches();
+  setWashMode(washMode);
+  document.getElementById('wash-overlay').classList.add('open');
+}
+function closeWash(){ document.getElementById('wash-overlay').classList.remove('open'); }
+
+function setWashMode(m){
+  washMode = m;
+  const inst = document.getElementById('wash-mode-instant');
+  const chs  = document.getElementById('wash-mode-chase');
+  inst.style.background = m==='instant' ? 'var(--accent)' : 'var(--surface2)';
+  inst.style.color      = m==='instant' ? '#000' : 'var(--text)';
+  chs.style.background  = m==='chase'   ? 'var(--accent)' : 'var(--surface2)';
+  chs.style.color       = m==='chase'   ? '#000' : 'var(--text)';
+  document.getElementById('wash-chase-box').style.display = m==='chase' ? '' : 'none';
+  document.getElementById('wash-add-white').style.display = m==='chase' ? '' : 'none';
+  if (m==='chase') renderWashSeq();
+}
+
+function renderWashSwatches(){
+  const box = document.getElementById('wash-swatches');
+  let html = '';
+  for (const c of (_sngcPalette.colors || [])){
+    if (c.id === 'off') continue;
+    html += `<div onclick="washPick('${c.id}')" style="width:56px;cursor:pointer;text-align:center;">`+
+      `<div style="width:42px;height:42px;border-radius:50%;margin:0 auto;`+
+      `border:3px solid transparent;background:${sngcPreviewCss(c)};"></div>`+
+      `<div style="font-size:9px;color:var(--sub);margin-top:2px;line-height:1.1;">${c.name}</div></div>`;
+  }
+  box.innerHTML = html;
+}
+
+async function postWash(body){
+  try {
+    const r = await fetch('/api/wash', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    return await r.json();
+  } catch { return {ok:false}; }
+}
+
+function washPick(pid){
+  const c = (_sngcPalette.colors||[]).find(x=>x.id===pid);
+  if (washMode === 'chase'){
+    washSeq.push({spec:{mode:'palette', palette_id:pid},
+                  css: sngcPreviewCss(c||{}), label: c ? c.name : pid});
+    renderWashSeq();
+  } else {
+    postWash({mode:'palette', palette_id:pid, launch_fade:400});
+  }
+}
+
+function washKelvinInput(v){
+  document.getElementById('wash-kelvin-val').textContent = v + 'K';
+  if (washMode !== 'instant') return;
+  const now = Date.now();
+  if (now - _washLastLive > 250){
+    _washLastLive = now;
+    postWash({mode:'kelvin', kelvin: parseInt(v), launch_fade:200});
+  }
+}
+function washKelvinCommit(v){
+  if (washMode === 'instant') postWash({mode:'kelvin', kelvin: parseInt(v), launch_fade:200});
+}
+function washAddWhite(){
+  const k = parseInt(document.getElementById('wash-kelvin').value);
+  const c = kelvinPreviewRGB(k);
+  washSeq.push({spec:{mode:'kelvin', kelvin:k},
+                css:`rgb(${c.r},${c.g},${c.b})`, label:k+'K'});
+  renderWashSeq();
+}
+function kelvinPreviewRGB(k){
+  const t=k/100; let r,g,b;
+  r = t<=66 ? 255 : Math.min(255,Math.max(0,329.7*Math.pow(t-60,-0.1332)));
+  g = t<=66 ? Math.min(255,Math.max(0,99.47*Math.log(t)-161.1))
+            : Math.min(255,Math.max(0,288.1*Math.pow(t-60,-0.0755)));
+  b = t>=66 ? 255 : (t<=19 ? 0 : Math.min(255,Math.max(0,138.5*Math.log(t-10)-305.0)));
+  return {r:Math.round(r),g:Math.round(g),b:Math.round(b)};
+}
+
+function renderWashSeq(){
+  const box = document.getElementById('wash-seq');
+  if (!washSeq.length){
+    box.innerHTML = '<span style="font-size:11px;color:var(--sub);align-self:center;">(empty)</span>';
+    return;
+  }
+  box.innerHTML = washSeq.map((s,i) =>
+    `<div onclick="washSeqRemove(${i})" title="Tap to remove" style="cursor:pointer;text-align:center;">`+
+    `<div style="width:30px;height:30px;border-radius:50%;background:${s.css};`+
+    `border:2px solid var(--border);"></div>`+
+    `<div style="font-size:8px;color:var(--sub);max-width:36px;overflow:hidden;`+
+    `text-overflow:ellipsis;white-space:nowrap;">${i+1}·${s.label}</div></div>`).join('');
+}
+function washSeqRemove(i){ washSeq.splice(i,1); renderWashSeq(); }
+
+function washChaseBody(){
+  return {steps: washSeq.map(s=>s.spec),
+          hold_ms: parseInt(document.getElementById('wash-hold').value)||1000,
+          fade_ms: parseInt(document.getElementById('wash-fade').value)||0,
+          tempo_sync: document.getElementById('wash-tempo').checked,
+          launch_fade: 400};
+}
+async function washPlayChase(){
+  if (!washSeq.length){ toast('Add at least one color step'); return; }
+  const d = await postWash(washChaseBody());
+  if (!(d&&d.ok)) toast('Wash failed: ' + (d&&d.error||'error'));
+}
+async function washSaveChase(){
+  if (!washSeq.length){ toast('Add at least one color step'); return; }
+  const name = prompt('Scene name for the library:');
+  if (!name || !name.trim()) return;
+  const body = washChaseBody(); body.name = name.trim();
+  try {
+    const r = await fetch('/api/wash/save', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if (d && d.ok){ toast('Saved "'+d.name+'" — reloading…'); setTimeout(()=>location.reload(), 900); }
+    else toast('Save failed: ' + (d&&d.error||'error'));
+  } catch { toast('Save failed'); }
+}
+function washOff(){ postWash({off:true}); }
 
 function toggleSinger() {
   singerOn = !singerOn;

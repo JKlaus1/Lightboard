@@ -1550,6 +1550,73 @@ class LightingEngine:
             "start_time":   time.time(),
         }
 
+    # ── Wash / quick-chase (ephemeral palette-painted scene) ───────────────
+
+    WASH_TAG = "__wash__"
+
+    def synth_wash_scene(self, steps_spec, hold_ms=1000, fade_ms=400,
+                         launch_fade=400, tempo_sync=False, beat_division=1,
+                         name="\U0001f3a8 Wash"):
+        """Synthesize a main scene that paints EVERY wash-capable fixture
+        (pods full-fixture, pixel strips solid per-segment; movers excluded)
+        with colors resolved per fixture engine — the same palette/kelvin
+        translation + per-engine trim the singer override uses, so mixed
+        fixture models render matched color with zero per-fixture authoring.
+
+        steps_spec: list of {"mode":"palette","palette_id":...}
+                          | {"mode":"kelvin","kelvin":...}
+        One spec per step; a single spec = a static wash, several = a chase.
+
+        Returns a scene dict fully compatible with play_scene() AND the
+        scene library format, so the same synthesis backs both the ephemeral
+        wash (scene_id=WASH_TAG) and "save this chase as a real scene".
+        """
+        show = self._show
+        trim = show.get("singer_trim", {})
+        steps = []
+        for spec in steps_spec:
+            fixtures = {}
+            for fx in show.get("fixtures", []):
+                if self._is_mover(fx):
+                    continue
+                if self._is_pixel_strip(fx):
+                    offs = fx.get("pixel_color_offsets") or {"r": 0, "g": 1, "b": 2}
+                    col = self._resolve_wash_color(spec, color_temp.engine_for_offsets(offs), trim)
+                    n_seg = len(self._cell_strips.get(fx["id"], {}).get(
+                        cell_strip.MODE_LOCK_TO_SEGMENTS, []))
+                    if not col or not n_seg:
+                        continue
+                    entry = {"segments": [dict(col) for _ in range(n_seg)]}
+                    if self._fx_dimmer_offset(fx) > 0:
+                        entry["dimmer"] = 255
+                    fixtures[fx["id"]] = entry
+                    continue
+                offs = self._fx_pod_color_offsets(fx)
+                col = self._resolve_wash_color(spec, color_temp.engine_for_offsets(offs), trim)
+                if not col:
+                    continue
+                fixtures[fx["id"]] = {"dimmer": 255,
+                                      "pods": [dict(col) for _ in range(self._fx_pods(fx))]}
+            steps.append({"fixtures": fixtures,
+                          "hold": max(50, int(hold_ms)),
+                          "fade": max(0, int(fade_ms))})
+        return {"name": name, "scene_type": "main",
+                "launch_fade": max(0, int(launch_fade)),
+                "steps": steps,
+                "tempo_sync": bool(tempo_sync),
+                "beat_division": max(1, int(beat_division or 1))}
+
+    @staticmethod
+    def _resolve_wash_color(spec, engine_id, trim):
+        """Resolve one wash step spec to a channel recipe for one engine.
+        Empty dict when the spec or engine can't be resolved (fixture is
+        then skipped for that step)."""
+        if engine_id is None or not isinstance(spec, dict):
+            return {}
+        if spec.get("mode") == "kelvin":
+            return color_temp.kelvin_recipe(engine_id, spec.get("kelvin", 3000), trim)
+        return color_temp.palette_recipe(spec.get("palette_id"), engine_id, trim)
+
     def play_scene(self, scene, launch_fade_ms=None, scene_id=None, force=False):
         """Add a new active scene to the layered playback stack.
         If a scene with the same scene_id is already active, it is stopped
@@ -1581,6 +1648,13 @@ class LightingEngine:
         # Stop any existing instance of this scene_id
         if scene_id is not None:
             self._stop_scene_by_id(scene_id, immediate=True)
+
+        # A quick wash/chase is single-use: launching any OTHER main scene
+        # makes it evaporate (graceful fade-out). force=True plays are
+        # internal hot-swaps (edit-save refresh), not the user "going to
+        # something else", so they leave the wash alone.
+        if scene_id != self.WASH_TAG and not force:
+            self._stop_scene_by_id(self.WASH_TAG, immediate=False)
 
         st = self._new_scene_state(scene, scene_id, fade)
         with self._lock:

@@ -1378,6 +1378,107 @@ def api_singer_color():
                     "kelvin": show_config.get("singer_kelvin", 3000),
                     "palette_id": show_config.get("singer_palette_id")})
 
+# ── Wash / quick chase (ephemeral palette-painted scene) ──────────────────
+
+def _parse_wash_request(data):
+    """Validate a wash/chase request body into (steps, opts) or (None, error).
+    Accepts either a single {"mode": ..., ...} shorthand or {"steps": [...]}.
+    """
+    steps = data.get("steps")
+    if not steps and data.get("mode"):
+        steps = [{"mode": data.get("mode"),
+                  "palette_id": data.get("palette_id"),
+                  "kelvin": data.get("kelvin")}]
+    if not isinstance(steps, list) or not steps or len(steps) > 64:
+        return None, "steps required (1-64)"
+    clean = []
+    for s in steps:
+        m = (s or {}).get("mode")
+        if m == "palette":
+            pid = s.get("palette_id")
+            if not any(c.get("id") == pid for c in palette.get("colors", [])):
+                return None, f"unknown palette color '{pid}'"
+            clean.append({"mode": "palette", "palette_id": pid})
+        elif m == "kelvin":
+            try:
+                k = int(s.get("kelvin", 3000))
+            except (TypeError, ValueError):
+                return None, "bad kelvin value"
+            clean.append({"mode": "kelvin",
+                          "kelvin": max(color_temp.KELVIN_MIN,
+                                        min(color_temp.KELVIN_MAX, k))})
+        else:
+            return None, "each step needs mode palette|kelvin"
+    try:
+        opts = {"hold_ms":       int(data.get("hold_ms", 1000)),
+                "fade_ms":       int(data.get("fade_ms", 400)),
+                "launch_fade":   int(data.get("launch_fade", 400)),
+                "tempo_sync":    bool(data.get("tempo_sync")),
+                "beat_division": int(data.get("beat_division", 1))}
+    except (TypeError, ValueError):
+        return None, "bad timing value"
+    return clean, opts
+
+@app.route("/api/wash", methods=["POST"])
+def api_wash():
+    """Play an ephemeral wash / quick chase over every wash-capable fixture.
+    Colors resolve per fixture engine (palette recipes / kelvin + trim), so
+    mixed fixture models match without authoring a scene. Rides the normal
+    scene stack (crossfade, master, blackout, freeze) under reserved id
+    __wash__, and evaporates when any other main scene is launched.
+    Body: {"mode":"palette","palette_id":..} | {"mode":"kelvin","kelvin":..}
+        | {"steps":[spec,...], "hold_ms":.., "fade_ms":.., "tempo_sync":..}
+        | {"off": true}
+    """
+    data = request.json or {}
+    if data.get("off"):
+        engine.stop_scene(LightingEngine.WASH_TAG)
+        return jsonify({"ok": True, "off": True})
+    steps, opts = _parse_wash_request(data)
+    if steps is None:
+        return jsonify({"ok": False, "error": opts}), 400
+    scene = engine.synth_wash_scene(steps, opts["hold_ms"], opts["fade_ms"],
+                                    launch_fade=opts["launch_fade"],
+                                    tempo_sync=opts["tempo_sync"],
+                                    beat_division=opts["beat_division"])
+    if not any(st["fixtures"] for st in scene["steps"]):
+        return jsonify({"ok": False, "error": "no wash-capable fixtures in show"}), 400
+    engine.play_scene(scene, scene_id=LightingEngine.WASH_TAG)
+    return jsonify({"ok": True, "steps": len(scene["steps"])})
+
+@app.route("/api/wash/save", methods=["POST"])
+def api_wash_save():
+    """Promote a wash/chase to a real library scene, enabled in the current
+    show. Same body as /api/wash plus a required "name" (optional "folder")."""
+    global show_config
+    data = request.json or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "name required"}), 400
+    steps, opts = _parse_wash_request(data)
+    if steps is None:
+        return jsonify({"ok": False, "error": opts}), 400
+    scene = engine.synth_wash_scene(steps, opts["hold_ms"], opts["fade_ms"],
+                                    launch_fade=opts["launch_fade"],
+                                    tempo_sync=opts["tempo_sync"],
+                                    beat_division=opts["beat_division"],
+                                    name=name)
+    if not any(st["fixtures"] for st in scene["steps"]):
+        return jsonify({"ok": False, "error": "no wash-capable fixtures in show"}), 400
+    scene["folder"] = (data.get("folder") or "").strip()
+    new_id = gen_scene_id()
+    while library_path(new_id).exists():
+        new_id = gen_scene_id()
+    save_library_scene(new_id, scene)
+    enabled = show_config.setdefault("enabled_scenes", [])
+    if new_id not in enabled:
+        enabled.append(new_id)
+    try:
+        save_json(SHOWS_DIR / config["active_show"] / "show.json", show_config)
+    except Exception as e:
+        log.error(f"wash save: show.json write failed: {e}")
+    return jsonify({"ok": True, "id": new_id, "name": name})
+
 # ── Scene management (library-based) ──────────────────────────────────────
 
 @app.route("/api/scenes")
