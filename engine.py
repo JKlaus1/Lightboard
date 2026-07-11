@@ -1617,6 +1617,51 @@ class LightingEngine:
             return color_temp.kelvin_recipe(engine_id, spec.get("kelvin", 3000), trim)
         return color_temp.palette_recipe(spec.get("palette_id"), engine_id, trim)
 
+    def update_wash_scene(self, scene, crossfade_ms=400):
+        """Play or update the wash. If a wash is already active, its scene
+        data is swapped IN PLACE: the running state (and its current DMX
+        frame) is kept, the old step loop is halted, and a new loop starts
+        whose first step crossfades from the wash's current colors to the
+        new ones. No stop/relaunch, so there is no dip to the underlying
+        scene (or to black) between colors — repeated updates (e.g. dragging
+        the white slider) glide smoothly instead of strobing.
+
+        With no wash active this falls through to play_scene(), giving the
+        normal launch fade and freeze-queue behavior. In-place updates of an
+        already-live wash intentionally bypass the freeze queue — tweaking
+        the color of something already on stage isn't a scene change.
+        """
+        with self._lock:
+            st = None
+            for s in self._active_scenes:
+                if s["id"] == self.WASH_TAG and not s.get("stopping"):
+                    st = s
+                    break
+        if st is None:
+            self.play_scene(scene, scene_id=self.WASH_TAG,
+                            launch_fade_ms=max(0, int(crossfade_ms)))
+            return
+        # Halt the old step loop. The state stays in the stack, so its last
+        # frame keeps outputting while we swap — nothing visibly changes yet.
+        st["stop_event"].set()
+        old_thread = st.get("thread")
+        if old_thread and old_thread.is_alive():
+            old_thread.join(timeout=0.25)
+        new_ev = threading.Event()
+        with self._lock:
+            st["scene"]      = scene
+            st["name"]       = scene.get("name")
+            st["stop_event"] = new_ev
+            st["fade"]       = max(0, int(crossfade_ms))
+        t = threading.Thread(
+            target=self._scene_loop,
+            args=(st,),
+            daemon=True,
+            name=f"scene-player-{st['launch_id']}-wash-update",
+        )
+        st["thread"] = t
+        t.start()
+
     def play_scene(self, scene, launch_fade_ms=None, scene_id=None, force=False):
         """Add a new active scene to the layered playback stack.
         If a scene with the same scene_id is already active, it is stopped

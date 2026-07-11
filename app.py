@@ -1443,7 +1443,7 @@ def api_wash():
                                     beat_division=opts["beat_division"])
     if not any(st["fixtures"] for st in scene["steps"]):
         return jsonify({"ok": False, "error": "no wash-capable fixtures in show"}), 400
-    engine.play_scene(scene, scene_id=LightingEngine.WASH_TAG)
+    engine.update_wash_scene(scene, crossfade_ms=opts["launch_fade"])
     return jsonify({"ok": True, "steps": len(scene["steps"])})
 
 @app.route("/api/wash/save", methods=["POST"])
