@@ -3025,7 +3025,10 @@ class LightingEngine:
                 "overlay_name":      self._current_overlay_name,
                 "faders": [
                     {"id": fid, "mode": f["mode"],
-                     "level": round(f["level"], 3), "armed": f["armed"]}
+                     "level": round(self._master_level if f.get("system") == "master"
+                                    else self._singer_level if f.get("system") == "singer"
+                                    else f["level"], 3),
+                     "armed": f["armed"]}
                     for fid, f in self._custom_faders.items()
                 ],
                 # Art-Net remote mode (Phase 2): touch UI banner + status

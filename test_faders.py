@@ -176,14 +176,23 @@ eng.set_fader_level("sysM", 0.4)
 check("master fader drives _master_level", abs(eng._master_level - 0.4) < 1e-6)
 st = {s["id"]: s for s in eng.get_fader_state()}
 check("master fader state mirrors scalar", abs(st["sysM"]["level"] - 0.4) < 1e-6)
+st = {s["id"]: s for s in eng.get_state()["faders"]}
+check("get_state (kiosk /api/state path) mirrors master system fader",
+      abs(st["sysM"]["level"] - 0.4) < 1e-6)
 
 eng.set_fader_level("sysS", 0.6)
 check("singer fader drives _singer_level", abs(eng._singer_level - 0.6) < 1e-6)
 st = {s["id"]: s for s in eng.get_fader_state()}
 check("singer fader state mirrors scalar", abs(st["sysS"]["level"] - 0.6) < 1e-6)
+st = {s["id"]: s for s in eng.get_state()["faders"]}
+check("get_state (kiosk /api/state path) mirrors singer system fader",
+      abs(st["sysS"]["level"] - 0.6) < 1e-6)
 
 eng.set_master(1.0)   # e.g. Show Board slider / clear-all
 st = {s["id"]: s for s in eng.get_fader_state()}
 check("master fader follows external scalar change", abs(st["sysM"]["level"] - 1.0) < 1e-6)
+st = {s["id"]: s for s in eng.get_state()["faders"]}
+check("get_state (kiosk /api/state path) follows external master change",
+      abs(st["sysM"]["level"] - 1.0) < 1e-6)
 
 print(f"\nAll {PASS} fader checks passed.")
