@@ -143,6 +143,14 @@ DEFAULT_WASH_STRIP_COLORS = [
     "violet", "royal_blue", "sky_blue", "teal", "green",
 ]
 
+# Default timing for the kiosk quick-wash strip's Slow/Medium/Fast chase
+# presets. Editable per-show via Touch Config (same section as the colors).
+DEFAULT_WASH_STRIP_SPEEDS = {
+    "slow":   {"hold_ms": 3000, "fade_ms": 1200},
+    "medium": {"hold_ms": 1200, "fade_ms": 500},
+    "fast":   {"hold_ms": 500,  "fade_ms": 250},
+}
+
 def get_scenes_dir(show_id):
     return SHOWS_DIR / show_id / "scenes"
 
@@ -599,6 +607,7 @@ def api_touch_config_get():
     cfg = dict(config.get("touch_grid", {"cols": 2, "rows": 6, "cells": []}))
     cfg["faders"] = config.get("custom_faders", [])
     cfg["wash_strip_colors"] = cfg.get("wash_strip_colors") or list(DEFAULT_WASH_STRIP_COLORS)
+    cfg["wash_strip_speeds"] = cfg.get("wash_strip_speeds") or DEFAULT_WASH_STRIP_SPEEDS
     return jsonify(cfg)
 
 def _clamp_font(v, dflt):
@@ -656,6 +665,26 @@ def _clean_wash_strip_colors(v):
             break
     return out
 
+def _clean_wash_strip_speeds(v):
+    """Validate the kiosk quick-wash strip's Slow/Medium/Fast presets: each
+    a {hold_ms, fade_ms} pair, clamped to sane bounds. Missing/invalid
+    entries fall back to that preset's own default."""
+    src = v if isinstance(v, dict) else {}
+    out = {}
+    for key, default in DEFAULT_WASH_STRIP_SPEEDS.items():
+        entry = src.get(key) if isinstance(src.get(key), dict) else {}
+        try:
+            hold = int(entry.get("hold_ms", default["hold_ms"]))
+        except (TypeError, ValueError):
+            hold = default["hold_ms"]
+        try:
+            fade = int(entry.get("fade_ms", default["fade_ms"]))
+        except (TypeError, ValueError):
+            fade = default["fade_ms"]
+        out[key] = {"hold_ms": max(50, min(10000, hold)),
+                    "fade_ms": max(0, min(5000, fade))}
+    return out
+
 @app.route("/api/touch/config", methods=["POST"])
 def api_touch_config_set():
     """Save the touch screen grid config into config.json."""
@@ -666,6 +695,7 @@ def api_touch_config_set():
         "font_size": _clamp_font(data.get("font_size", 13), 13),
         "cells":     [_clean_cell(c) for c in data.get("cells", [])],
         "wash_strip_colors": _clean_wash_strip_colors(data.get("wash_strip_colors", [])),
+        "wash_strip_speeds": _clean_wash_strip_speeds(data.get("wash_strip_speeds", {})),
     }
     save_config()
     log.info("Touch grid config saved.")

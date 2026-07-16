@@ -370,6 +370,38 @@
 <div class="label">Quick Wash Strip Colors — shown on the kiosk's always-visible wash bar</div>
 <div class="check-list" id="wash-strip-colors"></div>
 
+<div class="label">Quick Wash Strip Speeds (ms) — Hold is how long each color stays, Fade is the crossfade to the next</div>
+<div class="size-row">
+  <div class="size-field">
+    <div class="label">Slow — Hold</div>
+    <input type="number" id="wsspeed-slow-hold" min="50" max="10000" step="50" value="3000">
+  </div>
+  <div class="size-field">
+    <div class="label">Slow — Fade</div>
+    <input type="number" id="wsspeed-slow-fade" min="0" max="5000" step="50" value="1200">
+  </div>
+</div>
+<div class="size-row">
+  <div class="size-field">
+    <div class="label">Medium — Hold</div>
+    <input type="number" id="wsspeed-medium-hold" min="50" max="10000" step="50" value="1200">
+  </div>
+  <div class="size-field">
+    <div class="label">Medium — Fade</div>
+    <input type="number" id="wsspeed-medium-fade" min="0" max="5000" step="50" value="500">
+  </div>
+</div>
+<div class="size-row">
+  <div class="size-field">
+    <div class="label">Fast — Hold</div>
+    <input type="number" id="wsspeed-fast-hold" min="50" max="10000" step="50" value="500">
+  </div>
+  <div class="size-field">
+    <div class="label">Fast — Fade</div>
+    <input type="number" id="wsspeed-fast-fade" min="0" max="5000" step="50" value="250">
+  </div>
+</div>
+
 <div class="label">Button Grid — tap a cell to assign</div>
 <div id="grid-scroll"><div id="grid-wrap"></div></div>
 
@@ -603,6 +635,7 @@
       cells = cfg.cells || [];
       washStripColors = cfg.wash_strip_colors || [];
       renderWashStripColorPicker();
+      loadWashStripSpeeds(cfg.wash_strip_speeds || {});
 
       const total = (cfg.cols || 2) * (cfg.rows || 4);
       while (cells.length < total) cells.push(null);
@@ -629,6 +662,29 @@
   function toggleWashStripColor(id, on) {
     if (on && !washStripColors.includes(id)) washStripColors.push(id);
     else if (!on) washStripColors = washStripColors.filter(x => x !== id);
+  }
+
+  const WSSPEED_DEFAULTS = {
+    slow:   { hold_ms: 3000, fade_ms: 1200 },
+    medium: { hold_ms: 1200, fade_ms: 500  },
+    fast:   { hold_ms: 500,  fade_ms: 250  },
+  };
+  function loadWashStripSpeeds(saved) {
+    ['slow', 'medium', 'fast'].forEach(key => {
+      const v = saved[key] || WSSPEED_DEFAULTS[key];
+      document.getElementById('wsspeed-' + key + '-hold').value = v.hold_ms;
+      document.getElementById('wsspeed-' + key + '-fade').value = v.fade_ms;
+    });
+  }
+  function readWashStripSpeeds() {
+    const out = {};
+    ['slow', 'medium', 'fast'].forEach(key => {
+      out[key] = {
+        hold_ms: parseInt(document.getElementById('wsspeed-' + key + '-hold').value) || 0,
+        fade_ms: parseInt(document.getElementById('wsspeed-' + key + '-fade').value) || 0,
+      };
+    });
+    return out;
   }
 
   function rebuildGrid() {
@@ -1324,7 +1380,8 @@
     const cols    = parseInt(document.getElementById('cols-input').value) || 2;
     const rows    = parseInt(document.getElementById('rows-input').value) || 4;
     const font_size = parseInt(document.getElementById('font-input').value) || 13;
-    const payload = { cols, rows, font_size, cells, wash_strip_colors: washStripColors };
+    const payload = { cols, rows, font_size, cells, wash_strip_colors: washStripColors,
+                      wash_strip_speeds: readWashStripSpeeds() };
     const msg     = document.getElementById('save-msg');
     try {
       // Save fader definitions first so the grid's fader_id refs resolve
@@ -1365,6 +1422,7 @@
       cells,
       faders: faderDefs,
       wash_strip_colors: washStripColors,
+      wash_strip_speeds: readWashStripSpeeds(),
     });
   }
   function isDirty() { return serializeState() !== savedSnapshot; }

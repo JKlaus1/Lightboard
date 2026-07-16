@@ -327,7 +327,6 @@
     padding: 6px 8px;
   }
   .ws-row { display: flex; align-items: center; gap: 6px; }
-  .ws-action-row { align-items: stretch; }
   #wash-strip-swatches {
     display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px;
     scrollbar-width: none;
@@ -338,6 +337,8 @@
     border: 2px solid var(--border); cursor: pointer;
   }
   .ws-swatch:active { border-color: var(--accent); }
+  .ws-lower { display: flex; align-items: stretch; gap: 6px; }
+  .ws-left-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .ws-settings-label {
     color: var(--dim); font-size: 10px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.05em; flex-shrink: 0;
@@ -352,7 +353,7 @@
   }
   .ws-speed-btn.active { background: var(--accent); border-color: var(--accent); color: #000; }
   .ws-ripple-btn {
-    min-height: 26px; padding: 0 10px; margin-left: auto; flex-shrink: 0;
+    min-height: 26px; padding: 0 10px; flex-shrink: 0;
     background: #1a1a24; border: 1px solid var(--border); border-radius: 5px;
     color: var(--dim); font-family: 'Rajdhani', sans-serif;
     font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
@@ -360,7 +361,7 @@
   }
   .ws-ripple-btn.active { background: var(--singer); border-color: #aa55dd; color: #fff; }
   #wash-strip-seq {
-    flex: 1; display: flex; gap: 4px; overflow-x: auto; min-height: 44px;
+    flex: 1; display: flex; gap: 4px; overflow-x: auto; min-height: 26px;
     align-items: center;
   }
   .ws-seq-chip {
@@ -372,11 +373,11 @@
     flex: 1; min-width: 56px;
     background: #1a1a24; border: 1px solid var(--border); border-radius: 6px;
     color: var(--text); font-family: 'Rajdhani', sans-serif;
-    font-size: 20px; font-weight: 700; letter-spacing: 0.03em;
+    font-size: 24px; font-weight: 700; letter-spacing: 0.03em;
     cursor: pointer;
   }
   .ws-btn:active { background: #262636; }
-  .ws-btn.ws-off { color: #ff8888; font-size: 15px; }
+  .ws-btn.ws-off { color: #ff8888; font-size: 17px; }
   /* ── Wash designer (full version — ported from the show board) ── */
   .gate-panel.wash-panel { width: min(760px, 96vw); text-align: left; }
   .gate-panel.wash-panel h2 { text-align: left; }
@@ -494,17 +495,19 @@
 
 <div id="wash-strip">
   <div id="wash-strip-swatches" class="ws-row"></div>
-  <div class="ws-row">
-    <span class="ws-settings-label">Speed</span>
-    <div class="ws-speed-group">
-      <button class="ws-speed-btn" data-speed="slow"   onclick="wsSetSpeed('slow')">SLOW</button>
-      <button class="ws-speed-btn" data-speed="medium" onclick="wsSetSpeed('medium')">MED</button>
-      <button class="ws-speed-btn" data-speed="fast"   onclick="wsSetSpeed('fast')">FAST</button>
+  <div class="ws-lower">
+    <div class="ws-left-col">
+      <div class="ws-row">
+        <span class="ws-settings-label">Speed</span>
+        <div class="ws-speed-group">
+          <button class="ws-speed-btn" data-speed="slow"   onclick="wsSetSpeed('slow')">SLOW</button>
+          <button class="ws-speed-btn" data-speed="medium" onclick="wsSetSpeed('medium')">MED</button>
+          <button class="ws-speed-btn" data-speed="fast"   onclick="wsSetSpeed('fast')">FAST</button>
+        </div>
+        <button class="ws-ripple-btn" id="ws-ripple-btn" onclick="wsToggleRipple()" title="Alternating pods run half a step apart">🌊 RIPPLE</button>
+      </div>
+      <div id="wash-strip-seq" class="ws-row"></div>
     </div>
-    <button class="ws-ripple-btn" id="ws-ripple-btn" onclick="wsToggleRipple()" title="Alternating pods run half a step apart">🌊 RIPPLE</button>
-  </div>
-  <div class="ws-row ws-action-row">
-    <div id="wash-strip-seq"></div>
     <div class="ws-controls">
       <button class="ws-btn" onclick="wsPlay()" title="Play built sequence">▶</button>
       <button class="ws-btn" onclick="wsClear()" title="Clear sequence">✕</button>
@@ -1383,7 +1386,9 @@
   let wsSeq = [];
   let wsSpeed = 'medium';
   let wsRippleOn = false;
-  const WS_SPEED_PRESETS = {
+  // Fallback if Touch Config hasn't saved custom speeds yet — kept in sync
+  // with app.py's DEFAULT_WASH_STRIP_SPEEDS.
+  let WS_SPEED_PRESETS = {
     slow:   { hold_ms: 3000, fade_ms: 1200 },
     medium: { hold_ms: 1200, fade_ms: 500  },
     fast:   { hold_ms: 500,  fade_ms: 250  },
@@ -1396,6 +1401,9 @@
     wsSwatchColors = ids.length
       ? ids.map(id => all.find(c => c.id === id)).filter(Boolean)
       : all.filter(c => c.id !== 'off').slice(0, 10);
+    if (gridConfig && gridConfig.wash_strip_speeds) {
+      WS_SPEED_PRESETS = gridConfig.wash_strip_speeds;
+    }
     renderWashStripSwatches();
     renderWashStripSeq();
     wsSetSpeed(wsSpeed);
