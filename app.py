@@ -135,6 +135,14 @@ def load_palette():
 
 palette = load_palette()
 
+# Starter set for the kiosk's quick-wash strip (touch.html) — a small,
+# broadly-useful subset of the shared palette. Configurable per-show via
+# Touch Config; this only applies until something is explicitly saved.
+DEFAULT_WASH_STRIP_COLORS = [
+    "warm_white", "cool_white", "amber", "red", "hot_pink",
+    "violet", "royal_blue", "sky_blue", "teal", "green",
+]
+
 def get_scenes_dir(show_id):
     return SHOWS_DIR / show_id / "scenes"
 
@@ -590,6 +598,7 @@ def api_touch_config_get():
     """Return the current touch screen grid config."""
     cfg = dict(config.get("touch_grid", {"cols": 2, "rows": 6, "cells": []}))
     cfg["faders"] = config.get("custom_faders", [])
+    cfg["wash_strip_colors"] = cfg.get("wash_strip_colors") or list(DEFAULT_WASH_STRIP_COLORS)
     return jsonify(cfg)
 
 def _clamp_font(v, dflt):
@@ -633,6 +642,20 @@ def _clean_cell(c):
     out["auto_color"] = _clean_hex(c.get("auto_color", ""))
     return out
 
+def _clean_wash_strip_colors(v):
+    """Validate the kiosk quick-wash strip's color list: known palette ids
+    only, deduped, capped at 16 (one HDMI row's worth)."""
+    if not isinstance(v, list):
+        return []
+    known = {c.get("id") for c in palette.get("colors", [])}
+    out = []
+    for pid in v:
+        if isinstance(pid, str) and pid in known and pid not in out:
+            out.append(pid)
+        if len(out) >= 16:
+            break
+    return out
+
 @app.route("/api/touch/config", methods=["POST"])
 def api_touch_config_set():
     """Save the touch screen grid config into config.json."""
@@ -642,6 +665,7 @@ def api_touch_config_set():
         "rows":      int(data.get("rows", 6)),
         "font_size": _clamp_font(data.get("font_size", 13), 13),
         "cells":     [_clean_cell(c) for c in data.get("cells", [])],
+        "wash_strip_colors": _clean_wash_strip_colors(data.get("wash_strip_colors", [])),
     }
     save_config()
     log.info("Touch grid config saved.")

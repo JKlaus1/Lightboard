@@ -367,6 +367,9 @@
   </div>
 </div>
 
+<div class="label">Quick Wash Strip Colors — shown on the kiosk's always-visible wash bar</div>
+<div class="check-list" id="wash-strip-colors"></div>
+
 <div class="label">Button Grid — tap a cell to assign</div>
 <div id="grid-scroll"><div id="grid-wrap"></div></div>
 
@@ -545,6 +548,8 @@
     { action: 'tempo',       label: '👆 Tap Tempo',       type: 'action' },
     { action: 'tempo-cancel',label: '✕ Cancel Tempo',     type: 'action' },
     { action: 'cycler',      label: '🔁 Beat Cycler',     type: 'action' },
+    { action: 'wash-open',   label: '🎨 Open Wash Designer', type: 'action' },
+    { action: 'clear-all',   label: '🧹 Clear All',       type: 'action' },
   ];
 
   let cells      = [];
@@ -559,6 +564,8 @@
   let lastSuggestedLabel = '';// last auto-filled system-fader label (ours to overwrite)
   let paletteSwatches = [];   // [{name, hex}] from the shared palette
   let pickedColor = '';       // modal state: '' = Auto (scene color)
+  let allPaletteColors = [];  // full /api/palette colors (incl. UV-only entries)
+  let washStripColors  = [];  // ids shown on the kiosk's quick-wash strip
 
   async function init() {
     try {
@@ -578,8 +585,9 @@
       groups    = fad.groups   || [];
       try {
         const pal = await palRes.json();
+        allPaletteColors = pal.colors || [];
         const hx = n => Math.max(0, Math.min(255, n | 0)).toString(16).padStart(2, '0');
-        paletteSwatches = (pal.colors || [])
+        paletteSwatches = allPaletteColors
           .map(c => {
             const r = c.recipes && c.recipes.rgb;
             if (!r) return null;
@@ -587,12 +595,14 @@
             return hex === '#000000' ? null : { name: c.name || c.id, hex };
           })
           .filter(Boolean);
-      } catch (e) { paletteSwatches = []; }
+      } catch (e) { paletteSwatches = []; allPaletteColors = []; }
 
       document.getElementById('cols-input').value = cfg.cols || 2;
       document.getElementById('rows-input').value = cfg.rows || 4;
       document.getElementById('font-input').value = cfg.font_size || 13;
       cells = cfg.cells || [];
+      washStripColors = cfg.wash_strip_colors || [];
+      renderWashStripColorPicker();
 
       const total = (cfg.cols || 2) * (cfg.rows || 4);
       while (cells.length < total) cells.push(null);
@@ -604,6 +614,21 @@
       document.getElementById('save-msg').textContent = 'Error loading config';
       document.getElementById('save-msg').style.color = '#e74c3c';
     }
+  }
+
+  function renderWashStripColorPicker() {
+    const box = document.getElementById('wash-strip-colors');
+    box.innerHTML = allPaletteColors
+      .filter(c => c.id !== 'off')
+      .map(c => {
+        const checked = washStripColors.includes(c.id) ? 'checked' : '';
+        return `<label class="check-item"><input type="checkbox" value="${c.id}" ${checked} `+
+               `onchange="toggleWashStripColor('${c.id}', this.checked)"> ${c.name}</label>`;
+      }).join('');
+  }
+  function toggleWashStripColor(id, on) {
+    if (on && !washStripColors.includes(id)) washStripColors.push(id);
+    else if (!on) washStripColors = washStripColors.filter(x => x !== id);
   }
 
   function rebuildGrid() {
@@ -1299,7 +1324,7 @@
     const cols    = parseInt(document.getElementById('cols-input').value) || 2;
     const rows    = parseInt(document.getElementById('rows-input').value) || 4;
     const font_size = parseInt(document.getElementById('font-input').value) || 13;
-    const payload = { cols, rows, font_size, cells };
+    const payload = { cols, rows, font_size, cells, wash_strip_colors: washStripColors };
     const msg     = document.getElementById('save-msg');
     try {
       // Save fader definitions first so the grid's fader_id refs resolve
@@ -1339,6 +1364,7 @@
       font_size: parseInt(document.getElementById('font-input').value) || 13,
       cells,
       faders: faderDefs,
+      wash_strip_colors: washStripColors,
     });
   }
   function isDirty() { return serializeState() !== savedSnapshot; }

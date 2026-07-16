@@ -168,7 +168,8 @@
     border-color: #e74c3c;
     color: #fff;
     box-shadow: 0 0 12px rgba(192,57,43,0.6);
-    animation: pulse-red 1.2s ease-in-out infinite;
+    animation: pulse-red 1s ease-in-out infinite;
+    z-index: 1;
   }
   .scene-btn.type-singer {
     background: #1a0a2a;
@@ -228,8 +229,8 @@
   }
 
   @keyframes pulse-red {
-    0%,100% { box-shadow: 0 0 10px rgba(231,76,60,0.4); }
-    50%      { box-shadow: 0 0 22px rgba(231,76,60,0.85); }
+    0%,100% { box-shadow: 0 0 10px rgba(231,76,60,0.45); background: var(--blackout); transform: scale(1); }
+    50%      { box-shadow: 0 0 34px rgba(231,76,60,0.95); background: #ff5540;         transform: scale(1.045); }
   }
 
   /* ── Per-cell colors (scene auto-color or manual pick) ──
@@ -307,6 +308,54 @@
   }
   .nav-menu button:active { background: #262636; }
   .nav-menu button.nav-close { color: var(--dim); text-align: center; }
+  /* ── Kiosk toast (small, non-blocking status messages) ── */
+  #kiosk-toast {
+    position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%) translateY(20px);
+    background: var(--surface); border: 1px solid var(--accent);
+    color: var(--text); padding: 10px 18px; border-radius: 20px;
+    font-family: 'Rajdhani', sans-serif; font-size: 13px; font-weight: 700;
+    letter-spacing: 0.03em; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+    opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+    z-index: 1200; max-width: 80vw; text-align: center;
+  }
+  #kiosk-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  /* ── Quick wash strip (always-visible, single-use chase builder) ── */
+  #wash-strip {
+    flex-shrink: 0;
+    display: flex; flex-direction: column; gap: 4px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px;
+  }
+  .ws-row { display: flex; align-items: center; gap: 6px; }
+  #wash-strip-swatches {
+    display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  #wash-strip-swatches::-webkit-scrollbar { display: none; }
+  .ws-swatch {
+    flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%;
+    border: 2px solid var(--border); cursor: pointer;
+  }
+  .ws-swatch:active { border-color: var(--accent); }
+  #wash-strip-seq {
+    flex: 1; display: flex; gap: 4px; overflow-x: auto; min-height: 26px;
+    align-items: center;
+  }
+  .ws-seq-chip {
+    flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+    border: 1px solid var(--border); cursor: pointer;
+  }
+  .ws-controls { display: flex; gap: 4px; flex-shrink: 0; }
+  .ws-btn {
+    min-width: 40px; min-height: 34px;
+    background: #1a1a24; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 15px; cursor: pointer;
+  }
+  .ws-btn:active { background: #262636; }
+  .ws-btn.ws-off { color: #ff8888; }
+  /* ── Wash designer (full version — ported from the show board) ── */
+  .gate-panel.wash-panel { width: min(760px, 96vw); text-align: left; }
+  .gate-panel.wash-panel h2 { text-align: left; }
   /* Corner dual-hold hint (3s reached in a corner: release=edit, hold=admin) */
   #hold-hint {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
@@ -321,7 +370,7 @@
   #hold-hint.show { display: block; }
   /* Long-press hygiene: this is a control surface — no text selection or
      touch callouts fighting the 3s/5s holds (kiosk chromium + iPad alike) */
-  #scene-grid button, .fader-cell, .grid-label, #header, #footer {
+  #scene-grid button, .fader-cell, .grid-label, #header, #footer, #wash-strip {
     user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   }
   /* ── Grid labels (static, non-interactive text/divider) ── */
@@ -419,6 +468,17 @@
   </div>
 </div>
 
+<div id="wash-strip">
+  <div id="wash-strip-swatches" class="ws-row"></div>
+  <div class="ws-row">
+    <div id="wash-strip-seq"></div>
+    <div class="ws-controls">
+      <button class="ws-btn" onclick="wsPlay()" title="Play built sequence">▶</button>
+      <button class="ws-btn" onclick="wsClear()" title="Clear sequence">✕</button>
+      <button class="ws-btn ws-off" onclick="wsOff()" title="Wash off">⏻</button>
+    </div>
+  </div>
+</div>
 <div id="scene-grid"></div>
 <div id="footer">…</div>
 
@@ -458,6 +518,60 @@
   </div>
 </div>
 
+<div class="gate-backdrop" id="wash-designer-gate" onclick="if(event.target===this) closeWash()">
+  <div class="gate-panel wash-panel">
+    <h2 style="display:flex;align-items:center;gap:8px;">
+      <span style="flex:1;">🎨 Wash Designer</span>
+      <button onclick="washOff()" style="background:#1a1a24;border:1px solid var(--border);
+              border-radius:6px;color:#ff8888;padding:4px 10px;font-size:11px;cursor:pointer;
+              text-transform:none;letter-spacing:0;">✕ Wash off</button>
+    </h2>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button id="wash-mode-instant" onclick="setWashMode('instant')"
+              style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);
+                     cursor:pointer;font-size:12px;">Instant</button>
+      <button id="wash-mode-chase" onclick="setWashMode('chase')"
+              style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);
+                     cursor:pointer;font-size:12px;">Build chase</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <span style="font-size:12px;color:var(--dim);min-width:40px;">White</span>
+      <input type="range" id="wash-kelvin" min="2200" max="6500" step="50" value="3000"
+             style="flex:1;" oninput="washKelvinInput(this.value)" onchange="washKelvinCommit(this.value)">
+      <span id="wash-kelvin-val" style="min-width:52px;text-align:right;font-size:12px;
+            font-variant-numeric:tabular-nums;">3000K</span>
+      <button id="wash-add-white" onclick="washAddWhite()" style="display:none;background:#1a1a24;
+              border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 8px;
+              font-size:11px;cursor:pointer;">+ Add</button>
+    </div>
+    <div id="wash-swatches" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+    <div id="wash-chase-box" style="display:none;margin-top:14px;">
+      <div style="font-size:11px;color:var(--dim);">Sequence — tap colors above to add steps, tap a step to remove it</div>
+      <div id="wash-seq" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;margin:8px 0;
+           padding:6px;border:1px dashed var(--border);border-radius:8px;"></div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--dim);">
+        <label>Hold <input type="number" id="wash-hold" value="1000" min="50" step="50"
+               style="width:60px;"> ms</label>
+        <label>Fade <input type="number" id="wash-fade" value="400" min="0" step="50"
+               style="width:60px;"> ms</label>
+        <label style="display:flex;align-items:center;gap:5px;">
+          <input type="checkbox" id="wash-tempo" style="width:16px;height:16px;"> Beat sync</label>
+        <label style="display:flex;align-items:center;gap:5px;"
+               title="Alternating pods run half a step apart so colors roll through the rig">
+          <input type="checkbox" id="wash-ripple" style="width:16px;height:16px;"> Ripple ½ step</label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button onclick="washPlayChase()" style="flex:1;padding:10px;border-radius:8px;
+                border:none;background:#27ae60;color:#000;font-size:13px;cursor:pointer;">▶ Play</button>
+        <button onclick="washSaveChase()" style="flex:1;padding:10px;border-radius:8px;
+                border:1px solid var(--border);background:#1a1a24;color:var(--text);
+                font-size:13px;cursor:pointer;">💾 Save to library</button>
+      </div>
+    </div>
+    <button class="nav-close" onclick="closeWash()" style="margin-top:14px;width:100%;">✕ Close</button>
+  </div>
+</div>
+
 <div id="hold-hint">Release → Edit Scene&nbsp;&nbsp;·&nbsp;&nbsp;Keep holding → Admin</div>
 
 <script src="/static/dialogs.js"></script>
@@ -478,6 +592,7 @@
       const res  = await fetch('/api/touch/config');
       gridConfig = await res.json();
       buildGrid();
+      initWashStrip();
       await fetchState();
       document.getElementById('status-dot').className = 'ok';
     } catch(e) {
@@ -823,6 +938,14 @@
           body: JSON.stringify({})
         });
         fetchState();   // reflect new active state promptly
+
+      } else if (action === 'wash-open') {
+        openWash();
+
+      } else if (action === 'clear-all') {
+        await fetch('/api/clear-all', { method: 'POST' });
+        toast('Cleared — all layers stopped');
+        fetchState();
       }
     } catch(e) {}
   }
@@ -1178,6 +1301,231 @@
       if (e.target === this) closeGates();
     });
   });
+
+  // ── Toast (small, non-blocking status messages) ────────────────────────
+  function toast(msg) {
+    let t = document.getElementById('kiosk-toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'kiosk-toast';
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(t._hideTimer);
+    t._hideTimer = setTimeout(() => t.classList.remove('show'), 2400);
+  }
+
+  // ── Shared palette cache + color preview helpers (wash strip + designer) ─
+  let _kioskPalette = null;
+  async function ensurePalette() {
+    if (_kioskPalette) return;
+    try { _kioskPalette = await (await fetch('/api/palette')).json(); }
+    catch (e) { _kioskPalette = { colors: [] }; }
+  }
+  function previewCss(c) {
+    const rec = (c && c.recipes) || {};
+    if (rec.rgb) return `rgb(${rec.rgb.r||0},${rec.rgb.g||0},${rec.rgb.b||0})`;
+    const r6 = rec.rgbawuv || rec.rgblauv || {};
+    const r=r6.r||0,g=r6.g||0,b=r6.b||0,a=r6.a||0,w=r6.w||0,l=r6.l||0,uv=r6.uv||0;
+    return `rgb(${Math.min(255,r+Math.round(a*.8)+Math.round(w*.6))},`+
+           `${Math.min(255,g+Math.round(l*.9)+Math.round(a*.4)+Math.round(w*.6))},`+
+           `${Math.min(255,b+Math.round(uv*.3)+Math.round(w*.6))})`;
+  }
+  function kelvinPreviewRGB(k){
+    const t=k/100; let r,g,b;
+    r = t<=66 ? 255 : Math.min(255,Math.max(0,329.7*Math.pow(t-60,-0.1332)));
+    g = t<=66 ? Math.min(255,Math.max(0,99.47*Math.log(t)-161.1))
+              : Math.min(255,Math.max(0,288.1*Math.pow(t-60,-0.0755)));
+    b = t>=66 ? 255 : (t<=19 ? 0 : Math.min(255,Math.max(0,138.5*Math.log(t-10)-305.0)));
+    return {r:Math.round(r),g:Math.round(g),b:Math.round(b)};
+  }
+
+  // ── Quick wash strip — always visible, single-use chase builder ────────
+  // Tap swatches to build a step sequence, Play fires it through /api/wash
+  // at the backend's own defaults (no save, no tempo/ripple — that's what
+  // the full Wash Designer is for). Which colors show here is configured
+  // in Touch Config; gridConfig.wash_strip_colors carries the saved list.
+  let wsSwatchColors = [];
+  let wsSeq = [];
+
+  async function initWashStrip() {
+    await ensurePalette();
+    const all = (_kioskPalette && _kioskPalette.colors) || [];
+    const ids = (gridConfig && gridConfig.wash_strip_colors) || [];
+    wsSwatchColors = ids.length
+      ? ids.map(id => all.find(c => c.id === id)).filter(Boolean)
+      : all.filter(c => c.id !== 'off').slice(0, 10);
+    renderWashStripSwatches();
+    renderWashStripSeq();
+  }
+  function renderWashStripSwatches() {
+    const box = document.getElementById('wash-strip-swatches');
+    box.innerHTML = wsSwatchColors.map(c =>
+      `<div class="ws-swatch" title="${c.name}" style="background:${previewCss(c)}" onclick="wsAdd('${c.id}')"></div>`
+    ).join('');
+  }
+  function wsAdd(pid) {
+    const c = wsSwatchColors.find(x => x.id === pid);
+    if (!c) return;
+    wsSeq.push({ palette_id: pid, css: previewCss(c) });
+    renderWashStripSeq();
+  }
+  function renderWashStripSeq() {
+    const box = document.getElementById('wash-strip-seq');
+    if (!wsSeq.length) {
+      box.innerHTML = '<span style="font-size:10px;color:var(--dim);">tap colors to build a chase</span>';
+      return;
+    }
+    box.innerHTML = wsSeq.map((s,i) =>
+      `<div class="ws-seq-chip" style="background:${s.css}" title="Tap to remove" onclick="wsRemove(${i})"></div>`
+    ).join('');
+  }
+  function wsRemove(i) { wsSeq.splice(i,1); renderWashStripSeq(); }
+  function wsClear() { wsSeq = []; renderWashStripSeq(); }
+  async function wsPlay() {
+    if (!wsSeq.length) { toast('Tap a color first'); return; }
+    try {
+      const body = wsSeq.length === 1
+        ? { mode:'palette', palette_id: wsSeq[0].palette_id, launch_fade:400 }
+        : { steps: wsSeq.map(s => ({ mode:'palette', palette_id:s.palette_id })), launch_fade:400 };
+      const r = await fetch('/api/wash', { method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!(d && d.ok)) toast('Wash failed: ' + (d && d.error || 'error'));
+    } catch (e) { toast('Wash failed'); }
+  }
+  async function wsOff() {
+    try {
+      await fetch('/api/wash', { method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({off:true}) });
+    } catch (e) {}
+    wsClear();
+  }
+
+  // ── Wash Designer (full version, ported from the show board) ───────────
+  // Instant mode: tap a swatch and every wash-capable fixture paints that
+  // color live, layered over running scenes; playing any other scene makes
+  // the wash evaporate. Chase mode: taps build a step sequence played as an
+  // ephemeral chase, or saved to the library for keeps.
+  let washMode = 'instant';
+  let washSeq  = [];   // [{spec:{mode,...}, css, label}]
+  let _washLastLive = 0;
+
+  async function openWash() {
+    await ensurePalette();
+    renderWashSwatches();
+    setWashMode(washMode);
+    document.getElementById('wash-designer-gate').classList.add('open');
+  }
+  function closeWash() { document.getElementById('wash-designer-gate').classList.remove('open'); }
+
+  function setWashMode(m) {
+    washMode = m;
+    const inst = document.getElementById('wash-mode-instant');
+    const chs  = document.getElementById('wash-mode-chase');
+    inst.style.background = m==='instant' ? 'var(--accent)' : '#1a1a24';
+    inst.style.color      = m==='instant' ? '#000' : 'var(--text)';
+    chs.style.background  = m==='chase'   ? 'var(--accent)' : '#1a1a24';
+    chs.style.color       = m==='chase'   ? '#000' : 'var(--text)';
+    document.getElementById('wash-chase-box').style.display = m==='chase' ? '' : 'none';
+    document.getElementById('wash-add-white').style.display = m==='chase' ? '' : 'none';
+    if (m==='chase') renderWashSeq();
+  }
+  function renderWashSwatches() {
+    const box = document.getElementById('wash-swatches');
+    let html = '';
+    for (const c of ((_kioskPalette && _kioskPalette.colors) || [])) {
+      if (c.id === 'off') continue;
+      html += `<div onclick="washPick('${c.id}')" style="width:56px;cursor:pointer;text-align:center;">`+
+        `<div style="width:42px;height:42px;border-radius:50%;margin:0 auto;`+
+        `border:3px solid transparent;background:${previewCss(c)};"></div>`+
+        `<div style="font-size:9px;color:var(--dim);margin-top:2px;line-height:1.1;">${c.name}</div></div>`;
+    }
+    box.innerHTML = html;
+  }
+  async function postWash(body) {
+    try {
+      const r = await fetch('/api/wash', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+      return await r.json();
+    } catch (e) { return {ok:false}; }
+  }
+  function washPick(pid) {
+    const c = ((_kioskPalette && _kioskPalette.colors) || []).find(x => x.id===pid);
+    if (washMode === 'chase') {
+      washSeq.push({spec:{mode:'palette', palette_id:pid},
+                    css: previewCss(c||{}), label: c ? c.name : pid});
+      renderWashSeq();
+    } else {
+      postWash({mode:'palette', palette_id:pid, launch_fade:400});
+    }
+  }
+  function washKelvinInput(v) {
+    document.getElementById('wash-kelvin-val').textContent = v + 'K';
+    if (washMode !== 'instant') return;
+    const now = Date.now();
+    if (now - _washLastLive > 250) {
+      _washLastLive = now;
+      postWash({mode:'kelvin', kelvin: parseInt(v), launch_fade:200});
+    }
+  }
+  function washKelvinCommit(v) {
+    if (washMode === 'instant') postWash({mode:'kelvin', kelvin: parseInt(v), launch_fade:200});
+  }
+  function washAddWhite() {
+    const k = parseInt(document.getElementById('wash-kelvin').value);
+    const c = kelvinPreviewRGB(k);
+    washSeq.push({spec:{mode:'kelvin', kelvin:k},
+                  css:`rgb(${c.r},${c.g},${c.b})`, label:k+'K'});
+    renderWashSeq();
+  }
+  function renderWashSeq() {
+    const box = document.getElementById('wash-seq');
+    if (!washSeq.length) {
+      box.innerHTML = '<span style="font-size:11px;color:var(--dim);align-self:center;">(empty)</span>';
+      return;
+    }
+    box.innerHTML = washSeq.map((s,i) =>
+      `<div onclick="washSeqRemove(${i})" title="Tap to remove" style="cursor:pointer;text-align:center;">`+
+      `<div style="width:30px;height:30px;border-radius:50%;background:${s.css};`+
+      `border:2px solid var(--border);"></div>`+
+      `<div style="font-size:8px;color:var(--dim);max-width:36px;overflow:hidden;`+
+      `text-overflow:ellipsis;white-space:nowrap;">${i+1}·${s.label}</div></div>`).join('');
+  }
+  function washSeqRemove(i) { washSeq.splice(i,1); renderWashSeq(); }
+  function washChaseBody() {
+    return {steps: washSeq.map(s=>s.spec),
+            hold_ms: parseInt(document.getElementById('wash-hold').value)||1000,
+            fade_ms: parseInt(document.getElementById('wash-fade').value)||0,
+            tempo_sync: document.getElementById('wash-tempo').checked,
+            phase_offset: document.getElementById('wash-ripple').checked,
+            launch_fade: 400};
+  }
+  async function washPlayChase() {
+    if (!washSeq.length) { toast('Add at least one color step'); return; }
+    const d = await postWash(washChaseBody());
+    if (!(d && d.ok)) toast('Wash failed: ' + (d && d.error || 'error'));
+  }
+  async function washSaveChase() {
+    if (!washSeq.length) { toast('Add at least one color step'); return; }
+    const v = await formDialog({
+      title: 'Save chase to library',
+      hint: 'Saves this sequence as a recallable scene',
+      ok: 'Save',
+      fields: [{ key: 'name', label: 'Name', value: '', placeholder: 'Chase name' }],
+    });
+    if (v === null || !v.name || !v.name.trim()) return;
+    const body = washChaseBody(); body.name = v.name.trim();
+    try {
+      const r = await fetch('/api/wash/save', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+      const d = await r.json();
+      if (d && d.ok) { toast('Saved "'+d.name+'"'); }
+      else toast('Save failed: ' + (d && d.error || 'error'));
+    } catch (e) { toast('Save failed'); }
+  }
+  function washOff() { postWash({off:true}); }
 
   boot();
 </script>
