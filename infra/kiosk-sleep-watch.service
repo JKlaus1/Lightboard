@@ -1,0 +1,10 @@
+[Unit]
+Description=Lightboard kiosk sleep watcher (one-shot, triggered by kiosk-sleep-watch.timer)
+After=lightboard.service
+
+[Service]
+Type=oneshot
+User=pi
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+ExecStart=/usr/bin/python3 /home/pi/kiosk-sleep-watch.py

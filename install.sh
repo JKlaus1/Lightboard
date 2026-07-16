@@ -572,7 +572,7 @@ CONF
   tee /home/pi/.config/openbox/autostart >/dev/null <<KIOSKEOF
 #!/bin/sh
 # Lightboard kiosk — launched by the openbox session for user pi.
-xset s off; xset -dpms; xset s noblank
+xset s off; xset +dpms; xset dpms 0 0 0
 unclutter -idle 0.1 -root &
 # Rotated-panel touch hook (uncomment + set device/matrix if needed):
 #   xinput set-prop "TOUCH_DEVICE_NAME" "Coordinate Transformation Matrix" 0 1 0 -1 0 1 0 0 1
@@ -584,6 +584,18 @@ KIOSKEOF
   chmod +x /home/pi/.config/openbox/autostart
   chown pi:pi /home/pi/.config/openbox/autostart
   sudo systemctl enable lightdm
+
+  # Kiosk sleep watcher — screen sleeps after a stretch of no light output
+  # (blackout counts the same as nothing); wakes on touch. DPMS above is
+  # enabled with no auto-timeout, so this watcher is the only thing that
+  # ever puts the screen to sleep.
+  install -d -o pi -g pi /home/pi/.cache
+  sudo cp "${APP_DIR}/infra/kiosk-sleep-watch.py"      /home/pi/kiosk-sleep-watch.py
+  chown pi:pi /home/pi/kiosk-sleep-watch.py
+  sudo cp "${APP_DIR}/infra/kiosk-sleep-watch.service" /etc/systemd/system/kiosk-sleep-watch.service
+  sudo cp "${APP_DIR}/infra/kiosk-sleep-watch.timer"   /etc/systemd/system/kiosk-sleep-watch.timer
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now kiosk-sleep-watch.timer
 }
 
 mod_infra() {
