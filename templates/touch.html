@@ -327,6 +327,7 @@
     padding: 6px 8px;
   }
   .ws-row { display: flex; align-items: center; gap: 6px; }
+  .ws-action-row { align-items: stretch; }
   #wash-strip-swatches {
     display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px;
     scrollbar-width: none;
@@ -337,22 +338,45 @@
     border: 2px solid var(--border); cursor: pointer;
   }
   .ws-swatch:active { border-color: var(--accent); }
+  .ws-settings-label {
+    color: var(--dim); font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; flex-shrink: 0;
+  }
+  .ws-speed-group { display: flex; gap: 4px; flex-shrink: 0; }
+  .ws-speed-btn {
+    min-width: 46px; min-height: 26px;
+    background: #1a1a24; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--dim); font-family: 'Rajdhani', sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    cursor: pointer;
+  }
+  .ws-speed-btn.active { background: var(--accent); border-color: var(--accent); color: #000; }
+  .ws-ripple-btn {
+    min-height: 26px; padding: 0 10px; margin-left: auto; flex-shrink: 0;
+    background: #1a1a24; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--dim); font-family: 'Rajdhani', sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    cursor: pointer;
+  }
+  .ws-ripple-btn.active { background: var(--singer); border-color: #aa55dd; color: #fff; }
   #wash-strip-seq {
-    flex: 1; display: flex; gap: 4px; overflow-x: auto; min-height: 26px;
+    flex: 1; display: flex; gap: 4px; overflow-x: auto; min-height: 44px;
     align-items: center;
   }
   .ws-seq-chip {
     flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
     border: 1px solid var(--border); cursor: pointer;
   }
-  .ws-controls { display: flex; gap: 4px; flex-shrink: 0; }
+  .ws-controls { display: flex; gap: 6px; flex-shrink: 0; }
   .ws-btn {
-    min-width: 40px; min-height: 34px;
+    flex: 1; min-width: 56px;
     background: #1a1a24; border: 1px solid var(--border); border-radius: 6px;
-    color: var(--text); font-size: 15px; cursor: pointer;
+    color: var(--text); font-family: 'Rajdhani', sans-serif;
+    font-size: 20px; font-weight: 700; letter-spacing: 0.03em;
+    cursor: pointer;
   }
   .ws-btn:active { background: #262636; }
-  .ws-btn.ws-off { color: #ff8888; }
+  .ws-btn.ws-off { color: #ff8888; font-size: 15px; }
   /* ── Wash designer (full version — ported from the show board) ── */
   .gate-panel.wash-panel { width: min(760px, 96vw); text-align: left; }
   .gate-panel.wash-panel h2 { text-align: left; }
@@ -471,11 +495,20 @@
 <div id="wash-strip">
   <div id="wash-strip-swatches" class="ws-row"></div>
   <div class="ws-row">
+    <span class="ws-settings-label">Speed</span>
+    <div class="ws-speed-group">
+      <button class="ws-speed-btn" data-speed="slow"   onclick="wsSetSpeed('slow')">SLOW</button>
+      <button class="ws-speed-btn" data-speed="medium" onclick="wsSetSpeed('medium')">MED</button>
+      <button class="ws-speed-btn" data-speed="fast"   onclick="wsSetSpeed('fast')">FAST</button>
+    </div>
+    <button class="ws-ripple-btn" id="ws-ripple-btn" onclick="wsToggleRipple()" title="Alternating pods run half a step apart">🌊 RIPPLE</button>
+  </div>
+  <div class="ws-row ws-action-row">
     <div id="wash-strip-seq"></div>
     <div class="ws-controls">
       <button class="ws-btn" onclick="wsPlay()" title="Play built sequence">▶</button>
       <button class="ws-btn" onclick="wsClear()" title="Clear sequence">✕</button>
-      <button class="ws-btn ws-off" onclick="wsOff()" title="Wash off">⏻</button>
+      <button class="ws-btn ws-off" onclick="wsOff()" title="Wash off">OFF</button>
     </div>
   </div>
 </div>
@@ -1343,11 +1376,18 @@
 
   // ── Quick wash strip — always visible, single-use chase builder ────────
   // Tap swatches to build a step sequence, Play fires it through /api/wash
-  // at the backend's own defaults (no save, no tempo/ripple — that's what
+  // at the chosen speed preset (no save, no numeric hold/fade — that's what
   // the full Wash Designer is for). Which colors show here is configured
   // in Touch Config; gridConfig.wash_strip_colors carries the saved list.
   let wsSwatchColors = [];
   let wsSeq = [];
+  let wsSpeed = 'medium';
+  let wsRippleOn = false;
+  const WS_SPEED_PRESETS = {
+    slow:   { hold_ms: 3000, fade_ms: 1200 },
+    medium: { hold_ms: 1200, fade_ms: 500  },
+    fast:   { hold_ms: 500,  fade_ms: 250  },
+  };
 
   async function initWashStrip() {
     await ensurePalette();
@@ -1358,12 +1398,22 @@
       : all.filter(c => c.id !== 'off').slice(0, 10);
     renderWashStripSwatches();
     renderWashStripSeq();
+    wsSetSpeed(wsSpeed);
   }
   function renderWashStripSwatches() {
     const box = document.getElementById('wash-strip-swatches');
     box.innerHTML = wsSwatchColors.map(c =>
       `<div class="ws-swatch" title="${c.name}" style="background:${previewCss(c)}" onclick="wsAdd('${c.id}')"></div>`
     ).join('');
+  }
+  function wsSetSpeed(speed) {
+    wsSpeed = speed;
+    document.querySelectorAll('.ws-speed-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.speed === speed));
+  }
+  function wsToggleRipple() {
+    wsRippleOn = !wsRippleOn;
+    document.getElementById('ws-ripple-btn').classList.toggle('active', wsRippleOn);
   }
   function wsAdd(pid) {
     const c = wsSwatchColors.find(x => x.id === pid);
@@ -1386,9 +1436,12 @@
   async function wsPlay() {
     if (!wsSeq.length) { toast('Tap a color first'); return; }
     try {
+      const preset = WS_SPEED_PRESETS[wsSpeed] || WS_SPEED_PRESETS.medium;
       const body = wsSeq.length === 1
         ? { mode:'palette', palette_id: wsSeq[0].palette_id, launch_fade:400 }
-        : { steps: wsSeq.map(s => ({ mode:'palette', palette_id:s.palette_id })), launch_fade:400 };
+        : { steps: wsSeq.map(s => ({ mode:'palette', palette_id:s.palette_id })),
+            hold_ms: preset.hold_ms, fade_ms: preset.fade_ms,
+            phase_offset: wsRippleOn, launch_fade:400 };
       const r = await fetch('/api/wash', { method:'POST',
         headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const d = await r.json();
