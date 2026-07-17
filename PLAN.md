@@ -874,3 +874,37 @@ scene authoring):**
    config); rack-install.conf WiFi creds; INSTALL.md Imager walkthrough;
    DMXRouter master-side fan-out (Opus-class); venue local-show universe.
    Parked by choice: kiosk enclosure print, soundboard/kiosk message overlay.
+
+### Session handoff 2026-07-17 (live venue night — rack catch-up + venue kiosk PIN)
+
+**Rack Pi (`Lights`) caught up** from `54b57e1` (53 commits behind) to current
+via `git pull --no-edit --no-rebase` — first-ever commit from this Pi, so
+history had diverged rather than fast-forwarding. Real local state
+(`config.json`'s actual `active_show: harwood` + `artnet_target` incl.
+`10.42.0.1`, a new `presets.json`, several `scene_library` entries, the
+`harwood` show) was preserved via a checkpoint commit (`0ada8ee`) *before*
+pulling; merge landed clean at `485ab73` with zero conflicts (none of the 53
+incoming commits touched `config.json`/`scene_library/`/`shows/`). Sudoers
+drop-in installed + confirmed. `/api/pi-role` and `/api/remote-state`
+verified live post-restart.
+**Not yet pushed** — `0ada8ee` + `485ab73` exist only on the rack's SD card
+as of this handoff.
+
+**Venue Pi kiosk admin PIN** set (`kiosk_pin` in `config.json`, direct SSH
+edit + restart — no UI path exists yet). Confirmed via `/api/touch/unlock`
+(`pin_required:true`) and a physical corner-hold test.
+**Also not yet committed/pushed.** Also noticed on the venue Pi (unrelated,
+pre-existing, not touched tonight): a large pile of uncommitted local work —
+~28 deleted `scene_library` entries, several new ones, and a whole new
+`harwood_lights` show — sitting only on that SD card.
+
+**Backlog — kiosk PIN via UI:** currently requires SSH + a manual
+`config.json` edit + `systemctl restart lightboard`. Add a Settings field
+(or admin-menu action, gated like the corner-hold) so it's settable without
+SSH. Flagged live at a gig on the venue Pi.
+
+**Next session:**
+1. Push the rack's pending commits (`0ada8ee`, `485ab73`) once reachable.
+2. Checkpoint-commit + push the venue Pi's kiosk PIN change and the
+   pre-existing uncommitted scene/show pile.
+3. Build kiosk-PIN-from-UI (backlog above).
