@@ -704,7 +704,8 @@ def api_touch_config_set():
 @app.route("/api/pi-role", methods=["GET"])
 def api_get_pi_role():
     return jsonify({"ok": True, "role": PI_ROLE,
-                    "roles": sorted((_raw_config.get("roles") or {}).keys())})
+                    "roles": sorted((_raw_config.get("roles") or {}).keys()),
+                    "kiosk_pin_set": bool(str(config.get("kiosk_pin", "") or "").strip())})
 
 @app.route("/api/pi-role", methods=["POST"])
 def api_set_pi_role():
@@ -769,6 +770,22 @@ def api_touch_unlock():
         _kiosk_unlock_until = time.time() + _KIOSK_GRACE_S
         return jsonify({"ok": True})
     return jsonify({"ok": False}), 403
+
+@app.route("/api/kiosk/pin", methods=["POST"])
+def api_set_kiosk_pin():
+    """Set (or clear) the kiosk admin-gate PIN from Settings, instead of
+    requiring SSH + a manual config.json edit + restart. Exactly 3 digits,
+    or blank to disable the gate (hold alone opens it) — matches the
+    physical corner-hold PIN pad on the touch UI (touch.html), which is a
+    bare numeric keypad. Takes effect immediately: _kiosk_pin_required() and
+    /api/touch/unlock both read `config` live, no restart needed. Never
+    echoes the PIN back — same posture as the unlock endpoint."""
+    raw = str((request.json or {}).get("pin", "") or "").strip()
+    if raw and not (raw.isdigit() and len(raw) == 3):
+        return jsonify({"ok": False, "error": "PIN must be exactly 3 digits, or blank to disable"}), 400
+    config["kiosk_pin"] = raw
+    save_config()
+    return jsonify({"ok": True, "set": bool(raw)})
 
 # ── Custom venue faders (touch UI) ─────────────────────────────────────────
 

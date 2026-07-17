@@ -155,6 +155,16 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
         <span class="hint" style="color:#ffaa66;">Role changed — restart to apply.</span>
         <button class="smbtn accent" onclick="restartLightboard()">⟲ Restart now</button>
       </div>
+      <div class="row">
+        <label>Admin PIN</label>
+        <input type="text" id="kiosk-pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="3"
+               placeholder="new PIN" style="width:90px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px;">
+        <button class="smbtn accent" onclick="saveKioskPin()">Save</button>
+        <span class="hint" id="kiosk-pin-status"></span>
+      </div>
+      <div class="row">
+        <span class="hint">Gates the 5s corner-hold on the kiosk touchscreen only (iPad / lights.local access is unaffected). Exactly 3 digits — matches the on-screen PIN pad. Blank + Save disables the gate. Takes effect immediately, no restart needed.</span>
+      </div>
     </div>
   </div>
 
@@ -690,8 +700,30 @@ async function loadPiRole(){
     if (d && d.ok) {
       document.getElementById('pi-role-sel').value = d.role;
       document.getElementById('pi-role-label').textContent = 'active: ' + d.role;
+      setKioskPinStatus(!!d.kiosk_pin_set);
     }
   } catch(e){}
+}
+function setKioskPinStatus(isSet){
+  document.getElementById('kiosk-pin-status').textContent =
+    isSet ? 'PIN set — gate active' : 'No PIN set — hold alone opens the gate';
+}
+async function saveKioskPin(){
+  const raw = document.getElementById('kiosk-pin-input').value.trim();
+  if (raw && !/^[0-9]{3}$/.test(raw)) {
+    toast('PIN must be exactly 3 digits (or blank to disable)','err'); return;
+  }
+  try {
+    const d = await fetch('/api/kiosk/pin', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pin: raw }) }).then(r=>r.json());
+    if (d && d.ok) {
+      document.getElementById('kiosk-pin-input').value = '';
+      setKioskPinStatus(d.set);
+      toast(d.set ? 'Kiosk PIN saved ✓' : 'Kiosk PIN cleared','ok');
+    } else {
+      toast('Error: ' + ((d && d.error) || 'failed'),'err');
+    }
+  } catch(e){ toast('Error saving PIN','err'); }
 }
 async function setPiRole(){
   const role = document.getElementById('pi-role-sel').value;
