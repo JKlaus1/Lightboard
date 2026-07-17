@@ -215,15 +215,88 @@ for eid, info in reg.items():
         assert "label" in pspec
 # Rainbow uniquely has uses_primary=False
 assert reg["rainbow"]["uses_primary"] is False
-# Solid has empty params
-assert reg["solid"]["params"] == {}
-# Defaults factory
+# Every effect gets the universal brightness param, even solid (which has
+# no effect-specific params of its own)
+assert reg["solid"]["params"] == {"brightness": fx._BRIGHTNESS_PARAM}
+for eid, info in reg.items():
+    assert "brightness" in info["params"], f"{eid} missing universal brightness param"
+    assert info["params"]["brightness"]["default"] == 1.0
+# Defaults factory includes brightness alongside the effect's own defaults
 d = fx.defaults_for("chase")
-assert d == {"speed": 1.0, "size": 1}
+assert d == {"brightness": 1.0, "speed": 1.0, "size": 1}
 print("✓ registry: complete, shaped correctly, defaults_for() works")
 
 
-# ── 11. CROSS-FIXTURE COHERENCE ────────────────────────────────────────────
+# ── 11. UNIVERSAL BRIGHTNESS ────────────────────────────────────────────────
+# Default (omitted) brightness == 1.0, no-op scale — dispatcher output
+# matches the effect's raw output exactly.
+out_default = fx.render("solid", 4, 0.0, {"primary": RED})
+assert all(c == RED for c in out_default), "omitted brightness must be a no-op"
+
+# brightness=1.0 explicit is likewise a no-op
+out_full = fx.render("solid", 4, 0.0, {"primary": RED, "brightness": 1.0})
+assert all(c == RED for c in out_full)
+
+# brightness=0.5 scales every channel
+out_half = fx.render("solid", 4, 0.0, {"primary": RED, "brightness": 0.5})
+assert all(approx(c["r"], 127) and c["g"] == 0 and c["b"] == 0 for c in out_half), out_half
+
+# brightness=0.0 goes fully dark regardless of the underlying effect
+out_dark = fx.render("chase", 8, 0.0, {"primary": RED, "brightness": 0.0})
+assert all(v == 0 for c in out_dark for v in c.values()), out_dark
+
+# Out-of-range values clamp rather than raising or overshooting
+out_over  = fx.render("solid", 2, 0.0, {"primary": RED, "brightness": 5.0})
+out_under = fx.render("solid", 2, 0.0, {"primary": RED, "brightness": -3.0})
+assert all(c == RED for c in out_over), "brightness > 1 should clamp to 1 (no boost)"
+assert all(v == 0 for c in out_under for v in c.values()), "negative brightness should clamp to 0"
+
+# Non-numeric brightness falls back to 1.0 rather than raising
+out_bad = fx.render("solid", 2, 0.0, {"primary": RED, "brightness": "oops"})
+assert all(c == RED for c in out_bad)
+
+# Stacks independently on top of an effect's own brightness-like knob
+# (rainbow's `value`): value dims the HSV generation, brightness scales
+# the result again afterwards — same hue, roughly half the peak channel.
+out_val_full = fx.render("rainbow", 4, 0.0,
+                          {"speed": 0, "density": 1, "saturation": 1, "value": 1.0})
+out_val_half_brightness = fx.render("rainbow", 4, 0.0,
+                          {"speed": 0, "density": 1, "saturation": 1, "value": 1.0,
+                           "brightness": 0.5})
+peak_full = max(out_val_full[0].values())
+peak_half = max(out_val_half_brightness[0].values())
+assert approx(peak_half, peak_full * 0.5, eps=3), (peak_full, peak_half)
+
+# Direct render_* calls bypass the dispatcher entirely — brightness in
+# params is simply ignored (by design; see effects.py docstring).
+direct = fx.render_solid(4, 0.0, {"primary": RED, "brightness": 0.0}, ())
+assert all(c == RED for c in direct), \
+    "render_solid() called directly must ignore brightness (dispatcher-only feature)"
+
+# None cells (the "leave untouched" convention) pass through unscaled rather
+# than crashing _scale() on a None.
+class _NoneEffect:
+    """Minimal fake effect that emits a None cell, to exercise render()'s
+    None-passthrough path without depending on any real effect doing this
+    today."""
+    @staticmethod
+    def render(strip_length, t, params, color_keys):
+        return [None, dict(RED)]
+fx.EFFECTS["__test_none__"] = {
+    "name": "test", "description": "test", "render": _NoneEffect.render,
+    "uses_secondary": False, "uses_accent": False, "params": {},
+}
+try:
+    out_none = fx.render("__test_none__", 2, 0.0, {"brightness": 0.5})
+    assert out_none[0] is None
+    assert approx(out_none[1]["r"], 127)
+finally:
+    del fx.EFFECTS["__test_none__"]
+
+print("✓ brightness: universal scale, clamping, stacking, None passthrough, dispatcher-only scope")
+
+
+# ── 12. CROSS-FIXTURE COHERENCE ────────────────────────────────────────────
 # A comet on an 8-cell bar and a 189-cell tube at the same t should both have
 # heads at the same FRACTIONAL position around their respective strips.
 params = {"primary": RED, "secondary": fx.BLACK, "speed": 1.0, "tail": 5}
@@ -236,7 +309,7 @@ assert tube[47]["r"] > 240, f"tube head near cell 47, got r={tube[47]['r']}"
 print("✓ cross-fixture: same effect at same t produces coherent positions across strip lengths")
 
 
-# ── 12. END-TO-END: effect → cell_strip_to_dmx ─────────────────────────────
+# ── 13. END-TO-END: effect → cell_strip_to_dmx ─────────────────────────────
 # Verify an effect's output can be written through cell_strip's writer
 import cell_strip as cs
 exa = {

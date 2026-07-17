@@ -22,8 +22,14 @@ for Phase 2B all effects emit a colour for every cell so the effect fully
 owns its participating fixtures.
 
 The EFFECTS registry below describes every effect's parameter schema,
-default values, and which colour slots it consumes. The future editor UI
-(Phase 2D) will read this to render appropriate controls.
+default values, and which colour slots it consumes. The editor UI reads
+this to render appropriate controls.
+
+Every effect also exposes a universal `brightness` param (0..1, default
+1.0) that is NOT part of any individual effect's own params dict — it's
+injected by get_registry()/defaults_for() and applied by the top-level
+render() dispatcher as a final post-scale over whatever the effect
+produces. Calling a render_<n>() function directly bypasses it.
 """
 
 import math
@@ -93,6 +99,15 @@ def _cell_hash(c):
 
 _DEFAULT_PRIMARY   = {"r": 255, "g": 255, "b": 255}
 _DEFAULT_SECONDARY = dict(BLACK)
+
+# Universal brightness control — every effect gets this in addition to its
+# own params. It's applied as a final post-scale in render() below (NOT
+# inside any individual render_* function), so it works uniformly across
+# every effect — including ones like rainbow/plasma that already have their
+# own "value" knob. Brightness stacks independently on top of those; it
+# doesn't replace them.
+_BRIGHTNESS_PARAM = {"type": "float", "min": 0.0, "max": 1.0, "step": 0.01,
+                     "default": 1.0, "label": "Brightness"}
 
 
 # ── Effects ─────────────────────────────────────────────────────────────────
@@ -780,33 +795,56 @@ EFFECTS = {
 # ── Top-level dispatch ──────────────────────────────────────────────────────
 
 def render(effect_id, strip_length, t, params, color_keys=("r","g","b","w")):
-    """Dispatch by effect_id. Raises ValueError for unknown effects."""
+    """Dispatch by effect_id. Raises ValueError for unknown effects.
+
+    Applies the universal `brightness` param (0..1, default 1.0) as a final
+    post-scale over every cell the effect produces, on top of whatever the
+    effect does internally. This is what lets every effect — even ones with
+    no built-in brightness-style knob — be tamed down uniformly. Missing or
+    out-of-range values are clamped/defaulted rather than raising, since this
+    runs on every output tick. Direct calls to a render_* function bypass
+    this (by design — see effects.py module docstring for the split)."""
     info = EFFECTS.get(effect_id)
     if info is None:
         raise ValueError(f"Unknown effect: {effect_id}")
-    return info["render"](strip_length, t, params or {}, color_keys)
+    params = params or {}
+    cells = info["render"](strip_length, t, params, color_keys)
+    try:
+        brightness = float(params.get("brightness", 1.0))
+    except (TypeError, ValueError):
+        brightness = 1.0
+    brightness = max(0.0, min(1.0, brightness))
+    if brightness >= 1.0:
+        return cells
+    return [None if c is None else _scale(c, brightness) for c in cells]
 
 
 def get_registry():
     """JSON-serialisable copy of EFFECTS (without callable render fns) for
-    the editor UI to consume."""
+    the editor UI to consume. Every effect's params include the universal
+    `brightness` control first, followed by its own effect-specific params."""
     out = {}
     for eid, info in EFFECTS.items():
+        params = {"brightness": _BRIGHTNESS_PARAM}
+        params.update(info["params"])
         out[eid] = {
             "name":           info["name"],
             "description":    info["description"],
             "uses_primary":   info.get("uses_primary", True),
             "uses_secondary": info["uses_secondary"],
             "uses_accent":    info["uses_accent"],
-            "params":         info["params"],
+            "params":         params,
         }
     return out
 
 
 def defaults_for(effect_id):
-    """Return a fresh params dict populated with each parameter's default,
-    suitable as the starting state for a new effect scene in the editor."""
+    """Return a fresh params dict populated with each parameter's default
+    (including the universal brightness control), suitable as the starting
+    state for a new effect scene in the editor."""
     info = EFFECTS.get(effect_id)
     if info is None:
         return {}
-    return {pname: pspec["default"] for pname, pspec in info["params"].items()}
+    defaults = {"brightness": _BRIGHTNESS_PARAM["default"]}
+    defaults.update({pname: pspec["default"] for pname, pspec in info["params"].items()})
+    return defaults
