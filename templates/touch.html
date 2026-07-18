@@ -766,7 +766,17 @@
         btn.onclick = () => recallPreset(cell.preset_id, btn);
       } else {
         btn.textContent = cell.label || cell.name || cell.scene_id;
-        btn.onclick = () => toggleScene(cell.scene_id);
+        // Effect / motion / look scenes need their own toggle endpoints
+        // (/api/effect|motion|look/<id>); only plain 'main' scenes go through
+        // /api/scene. Firing an effect at /api/scene silently no-ops, which is
+        // why effect buttons on the kiosk did nothing.
+        const cat = layerCatForType(cell.scene_type);
+        if (cat) {
+          btn.dataset.layerCat = cat;
+          btn.onclick = () => toggleLayer(cat, cell.scene_id, btn);
+        } else {
+          btn.onclick = () => toggleScene(cell.scene_id);
+        }
         attachSceneHold(btn, cell.scene_id);   // 3s hold -> scene editor
       }
       grid.appendChild(btn);
@@ -1002,6 +1012,56 @@
     } catch (e) {}
   }
 
+  // ── Stacked layers: effect / motion / look ────────────────────────────
+  // Grid buttons for these scene types toggle via their own endpoints, and
+  // their lit-state is tracked from /api/state's motions/looks/effects lists
+  // (same data the Show Board uses). Plain 'main' scenes stay on toggleScene.
+  let activeEffects = new Set();
+  let activeMotions = new Set();
+  let activeLooks   = new Set();
+
+  function layerCatForType(sceneType) {
+    if (sceneType === 'effect')       return 'effect';
+    if (sceneType === 'mover_motion') return 'motion';
+    if (sceneType === 'mover_look')   return 'look';
+    return null;   // 'main' or undefined -> regular scene path
+  }
+
+  function activeSetFor(cat) {
+    return cat === 'effect' ? activeEffects
+         : cat === 'motion' ? activeMotions
+         : cat === 'look'   ? activeLooks
+         : null;
+  }
+
+  async function toggleLayer(cat, id, btn) {
+    const set = activeSetFor(cat);
+    // The server toggles on its own; we POST the same route either way and let
+    // the next state poll confirm. Optimistically flip the button so a tap
+    // feels instant.
+    const wasOn = set && set.has(id);
+    try {
+      const r = await fetch('/api/' + cat + '/' + id, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({})
+      });
+      const d = await r.json();
+      if (!d.ok) { alert((cat + ' failed: ' + (d.error || ''))); return; }
+      if (set) { if (wasOn) set.delete(id); else set.add(id); }
+      updateLayerButtons();
+    } catch(e) {}
+  }
+
+  function updateLayerButtons() {
+    document.querySelectorAll('.scene-btn[data-layer-cat]').forEach(btn => {
+      const cat = btn.dataset.layerCat;
+      const id  = btn.id.replace('scene-', '');
+      const set = activeSetFor(cat);
+      btn.classList.toggle('active', !!(set && set.has(id)));
+    });
+  }
+
   // ── Toggle scene ──────────────────────────────────────────────────────
   async function toggleScene(id) {
     try {
@@ -1021,7 +1081,7 @@
   }
 
   function updateSceneButtons() {
-    document.querySelectorAll('.scene-btn[id^="scene-"]').forEach(btn => {
+    document.querySelectorAll('.scene-btn[id^="scene-"]:not([data-layer-cat])').forEach(btn => {
       const id = btn.id.replace('scene-', '');
       btn.classList.toggle('active', activeScenes.has(id));
     });
@@ -1039,11 +1099,23 @@
       activeScenes = new Set(
         (data.scenes || []).filter(s => s && s.id).map(s => s.id)
       );
+      // Stacked layers — mirror the Show Board's state so grid buttons for
+      // effects/motions/looks light up and toggle correctly.
+      activeEffects = new Set(
+        (data.effects || []).filter(e => e && e.id && !e.stopping).map(e => e.id)
+      );
+      activeMotions = new Set(
+        (data.motions || []).filter(e => e && e.id).map(e => e.id)
+      );
+      activeLooks = new Set(
+        (data.looks || []).filter(e => e && e.id).map(e => e.id)
+      );
       blackoutOn  = !!(data.blackout_mode && data.blackout_blend > 0.5);
       masterLevel = data.master_level !== undefined ? data.master_level : masterLevel;
       singerLevel = data.singer_level  !== undefined ? data.singer_level  : singerLevel;
       singerOn    = data.singer_mode === true;
       updateSceneButtons();
+      updateLayerButtons();
       // Sync action button states
       const bo = document.querySelector('.type-blackout');
       if (bo) bo.classList.toggle('active', blackoutOn);
