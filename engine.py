@@ -263,9 +263,11 @@ class LightingEngine:
         # streams Art-Net at this Pi (via artnet_receiver.py), local rendering
         # is suspended and incoming frames are piped straight to the output
         # driver — master has total say, fader/blackout stages included. A
-        # watchdog in _output_loop reverts to local control when the stream
-        # goes silent, so the venue is never left with dead lights.
-        self.REMOTE_TIMEOUT_S   = 10.0   # stream silent this long → local
+        # watchdog in _output_loop reverts to local control AND runs a full
+        # clear_all() when the stream goes silent, so a rack-Pi disconnect
+        # (WiFi drop, shutdown, or a flaky Art-Net node latching its last
+        # frame) can never leave stray commands lit after the fact.
+        self.REMOTE_TIMEOUT_S   = 10.0   # stream silent this long → local + clear
         self._remote_active     = False
         self._remote_last_rx    = 0.0
         self._remote_src        = None        # master's IP (for UI/status)
@@ -1184,13 +1186,24 @@ class LightingEngine:
             self._tick_effect_blend()
             # Remote-mode watchdog: master's stream gone silent → revert to
             # local control. Cleared BEFORE _push_to_dmx so this same tick
-            # resumes local output — the venue is never left dark.
+            # resumes local output. Also fires a full clear_all() — a stray
+            # rack-Pi disconnect (WiFi drop, end-of-night shutdown, or a
+            # flaky Art-Net node latching its last-received frame) should
+            # never leave old commands lingering; a hard reset to blank is
+            # safer here than trusting whatever local scene happens to be
+            # loaded. clear_all() runs on its own thread rather than inline:
+            # its scene/motion/look/effect/overlay stops join their threads
+            # with bounded timeouts (up to ~1s each) that can add up to well
+            # over one output tick's time budget, and this is the real-time
+            # output thread — it must never block on that.
             if self._remote_active and \
                     (t0 - self._remote_last_rx) > self.REMOTE_TIMEOUT_S:
                 self._remote_active = False
-                log.info("REMOTE stream silent %.0fs — reverting to LOCAL "
-                         "control (source was %s)",
+                log.info("REMOTE stream silent %.0fs (source was %s) — "
+                         "reverting to LOCAL control and clearing all",
                          self.REMOTE_TIMEOUT_S, self._remote_src)
+                threading.Thread(target=self.clear_all, daemon=True,
+                                  name="remote-timeout-clear-all").start()
             self._push_to_dmx()
             elapsed = time.time() - t0
             ms = elapsed * 1000.0

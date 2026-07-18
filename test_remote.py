@@ -211,6 +211,36 @@ check("output universes are the remapped set",
       reng.get_remote_state()["universes"] == [0, 1, 4])
 reng._output_running = False
 
+print("10. Clear-all fires on remote-timeout watchdog")
+# Dirty up local state the way a real gig might have it before the rack Pi
+# disconnects: singer override on, blackout active, master pulled down —
+# everything clear_all() is supposed to reset back to a clean slate, so a
+# stray/cached frame (rack-Pi WiFi drop, shutdown, or a flaky Art-Net node
+# latching its last-received data) can never linger after a disconnect.
+cstub = StubDMX()
+ceng  = LightingEngine(cstub, SHOW)
+ceng.set_remote_options(timeout_s=10)   # realistic value; floored to >=1.0 anyway
+ceng.REMOTE_TIMEOUT_S = 0.3             # override directly for a fast test
+ceng.set_singer_mode(True)
+ceng.set_master(0.4)
+ceng.blackout('full')
+time.sleep(0.1)
+pre = ceng.get_state()
+check("singer on before disconnect", pre["singer_mode"] is True)
+check("master pulled down before disconnect", abs(pre["master_level"] - 0.4) < 0.01)
+check("blackout active before disconnect", pre["blackout_mode"] == "full")
+
+ceng.handle_remote_frame(0, bytes(3) + bytes(509), src_ip="10.42.0.9")
+check("remote engaged", ceng.get_remote_state()["active"])
+time.sleep(0.5)                  # > 0.3s timeout
+check("remote disengaged", not ceng.get_remote_state()["active"])
+time.sleep(0.3)                  # spawned clear_all() thread + a tick to settle
+post = ceng.get_state()
+check("singer forced OFF by clear_all", post["singer_mode"] is False)
+check("master reset to 100% by clear_all", abs(post["master_level"] - 1.0) < 0.01)
+check("blackout cleared by clear_all", post["blackout_mode"] is None)
+ceng._output_running = False
+
 eng._output_running = False
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
