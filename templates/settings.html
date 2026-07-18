@@ -241,6 +241,12 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
           {% endfor %}
         </select>
       </div>
+      <div class="row"><label>Singer at startup</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;cursor:pointer;">
+          <input type="checkbox" id="singer-default-on" {% if show.singer_default_on is not defined or show.singer_default_on %}checked{% endif %} style="width:18px;height:18px;cursor:pointer;">
+          <span>Singer warm-white override is ON when the engine boots (restart/power-cycle)</span>
+        </label>
+      </div>
       <div class="row"><label>Singer fade</label>
         <input type="number" id="singer-fade" value="{{ show.singer_fade_ms or 1500 }}" min="0" max="10000" step="100" style="width:90px">
         <span class="hint">ms</span>
@@ -1663,6 +1669,7 @@ function buildShowConfig(){
   // and every save path so they can never drift.
   return {name:document.getElementById('show-name').value.trim(),
     startup_scene:document.getElementById('startup-scene').value,
+    singer_default_on:document.getElementById('singer-default-on').checked,
     singer_fade_ms:parseInt(document.getElementById('singer-fade').value)||1500,
     blackout_fade_ms:parseInt(document.getElementById('blackout-fade').value)||600,
     overlay_scene:document.getElementById('overlay-scene').value,

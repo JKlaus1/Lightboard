@@ -77,11 +77,11 @@ class LightingEngine:
 
         # Controls
         self._master_level  = 1.0   # 0.0–1.0
-        self._singer_mode   = True  # True = override pods with warm white
+        self._singer_mode   = bool(show_config.get("singer_default_on", True))
         self._singer_level  = 1.0   # 0.0–1.0
         # Smooth singer toggle: 0.0 = fully scene, 1.0 = fully singer
-        self._singer_blend  = 1.0
-        self._singer_target = 1.0
+        self._singer_blend  = 1.0 if self._singer_mode else 0.0
+        self._singer_target = 1.0 if self._singer_mode else 0.0
         self._singer_fade_ms = show_config.get("singer_fade_ms", 1500)
 
         # Live preview slot (separate from active scenes; uses _scene_dmx
