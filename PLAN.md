@@ -908,3 +908,148 @@ SSH. Flagged live at a gig on the venue Pi.
 2. Checkpoint-commit + push the venue Pi's kiosk PIN change and the
    pre-existing uncommitted scene/show pile.
 3. Build kiosk-PIN-from-UI (backlog above).
+
+---
+
+### Session handoff 2026-07-18 (effect brightness, kiosk PIN UI, kiosk fixes, remote-timeout clear, flash-bang)
+
+All work this session was pushed per-patch during the session; GitHub HEAD is
+`bc98e87`. Verified: fresh clone byte-matches the validated build across every
+touched file. Full test suite green (effects, remote, clear-all-flash,
+singer-default, concurrency 31, hotswap 16, faders 34, presets 29).
+
+**Shipped this session (in commit order):**
+
+1. **Universal effect brightness** (`effects.py`). Every effect now exposes a
+   `brightness` param (0..1, default 1.0), injected by `get_registry()` /
+   `defaults_for()` and applied as a final post-scale in the `render()`
+   dispatcher — NOT inside any individual `render_*` fn, so it works uniformly
+   including on rainbow/plasma (stacks on top of their own `value`). Direct
+   `render_*` calls bypass it by design. The effect editor picks it up
+   automatically (generic param-loop off the registry — no editor change
+   needed). Backward compatible: missing key → 1.0 → byte-identical output.
+   Tests: new brightness section in `test_effects.py` (scale/clamp/stack/None-
+   passthrough/dispatcher-only).
+
+2. **Kiosk admin PIN settable from Settings** (`app.py`, `settings.html`).
+   New `POST /api/kiosk/pin` (writes `config["kiosk_pin"]`, `save_config()`,
+   effective immediately — no restart, since `_kiosk_pin_required()` /
+   `/api/touch/unlock` read `config` live). `GET /api/pi-role` now also reports
+   `kiosk_pin_set` (bool; never echoes the PIN). Settings "This Pi" card has an
+   Admin PIN row. **Constraint: exactly 3 digits** (or blank to disable) — the
+   physical corner-hold PIN pad in `touch.html` is a bare numeric keypad, so a
+   non-numeric PIN set from the iPad would lock you out of the kiosk. Retires
+   the previous SSH+manual-edit backlog item.
+
+3. **Kiosk stuck-on-Visualizer fix** (`stage.html`). `stage.html` was the only
+   admin page missing `kiosk_nav.js` — no "← SHOW" button, no idle auto-return.
+   Added the include; now matches every other admin page.
+
+4. **Clear-all on remote-timeout watchdog** (`engine.py`, `test_remote.py`).
+   When the rack Pi's Art-Net stream goes silent for `REMOTE_TIMEOUT_S` (10s),
+   the venue Pi now fires a full `clear_all()` (on its own thread — never
+   inline in the real-time output loop) instead of just reverting to the local
+   scene. Kills stray/cached frames from a rack disconnect (WiFi drop, EON
+   shutdown, or a flaky Art-Net node latching its last frame). **Trade-off
+   accepted by Joseph:** ANY 10s silence clears, so a mid-show WiFi hiccup
+   blacks out the venue until reconnect — deliberate, not a bug.
+
+5. **`singer_default_on` show-config option** (`engine.py`, `settings.html`,
+   new `test_singer_default.py`). `_singer_mode` was hardcoded `True` at engine
+   construction; now reads `show_config.get("singer_default_on", True)` (default
+   unchanged). `_singer_blend`/`_singer_target` seed to match so there's no
+   flash at boot when off. New "Singer at startup" checkbox in Settings → Show
+   Config, saved through the existing `buildShowConfig()` payload. Lets the
+   venue Pi boot with singer warm-white OFF.
+
+6. **Touch grid fires effect/motion/look scenes** (`touch.html`). Grid buttons
+   were all wired to `toggleScene()` → `/api/scene/<id>`, which silently no-ops
+   for non-main scene types — that's why effects tapped on the kiosk did
+   nothing while working fine from the Show Board. Now branches on the cell's
+   `scene_type` (already stored by `touch_config.html`'s `assignScene`) to a
+   generic `toggleLayer(cat,id)` → `/api/effect|motion|look/<id>`, with lit-
+   state synced from `/api/state`'s `effects`/`motions`/`looks` lists. Main-
+   scene updater scoped `:not([data-layer-cat])` so it can't wrongly clear the
+   layer buttons. Long-press-to-edit unchanged (`/editor/<id>` auto-detects
+   type server-side).
+
+7. **Clear-all flash-bang fix** (`engine.py`, new `test_clear_all_flash.py`).
+   Clear All jammed the master to 100% immediately while scenes were still
+   fading out, so a scene dimmed via the master fader briefly re-brightened
+   before going dark. Now the master/singer dimmer restore-to-100% is DEFERRED
+   until the visible output has actually faded to black — a bounded watcher
+   thread (`_start_deferred_level_reset` / `_visible_output_is_dark`, 8s hard
+   cap via `_CLEAR_ALL_RESET_TIMEOUT_S`) polls the layer blends, holding the
+   current dimmed level so lights only ever get darker on the way out. Singer-
+   OFF still applies immediately (only removes light). The new test reproduces
+   the dimmed-scene clear and asserts no DMX frame exceeds the pre-clear peak;
+   verified it catches the old behavior (spike to 242/255) and passes on the
+   fix (peak 97).
+
+**Deploy status:** All of the above is on GitHub `main`. **Not yet pulled to
+the venue Pi** — Joseph is away from the venue; one `git pull && sudo systemctl
+restart lightboard` there (in a few days) picks up this session AND the prior
+2026-07-17 rack-catch-up round at once. Rack Pi (`Lights`) is current.
+
+**Post-pull venue setup reminders (Settings, no code):**
+- Set "Startup scene" to "— None —" for a blank boot.
+- Uncheck "Singer at startup" if the venue should boot with singer OFF.
+- Set the kiosk Admin PIN from Settings if desired (3 digits).
+
+---
+
+### Backlog — NEXT BATCH (kiosk UX hardening, spec'd 2026-07-18)
+
+A grouped batch of kiosk-screen improvements for untrained-operator use. All
+scoped but NOT yet implemented — pick up in a fresh chat. Source of truth is
+GitHub HEAD; clone fresh before starting.
+
+**1. Screen-sleep timeout → 2 hours, and cover the cold-boot case.**
+The kiosk display currently sleeps after some shorter idle window. Bump the
+no-output sleep timeout to **2 hours**. Critically, this must include the case
+where the Pi has just booted and **no lights have ever been enabled yet** — the
+screen should stay awake for 2h from boot, not sleep early because output has
+been zero since power-on. Investigate where the current screen-blank/backlight-
+sleep timer lives (likely the kiosk backlight control via `/sys/class/
+backlight/` per PI_INFRA notes, and/or a watch script — check `kiosk_portal_
+watch.sh` / the kiosk nav idle timer / any `device-timeout.conf`). Confirm the
+"output-driven" vs "wall-clock-since-boot" distinction so a fresh boot with a
+dark rig doesn't trip an early sleep.
+
+**2. Ignore touch inputs for the first ~1–2s on wake-from-sleep.**
+Reported: tapping the screen to wake it once fired an unknown scene *before the
+screen even woke up* — the wake tap fell through to a grid button. Add a wake
+guard so the first touch that wakes the display (and a short 1–2s grace window
+after) is swallowed and does NOT dispatch to any button/scene. Likely in
+`touch.html` (or the kiosk wrapper): detect the display-asleep state, treat the
+first touch as wake-only, and suppress button handlers until the grace window
+elapses. Make sure it can't wedge the UI if the sleep-state detection is wrong.
+
+**3. Much stronger active-button indication on the touch grid.**
+Current lit/active styling (`.active` on `.scene-btn`) is too subtle to read at
+a glance. Make an enabled scene/effect/any button *very* obviously on — high-
+contrast fill/border/glow, not just a faint tint. Applies to all button types
+(main scenes, effects, motions, looks, actions). Note this now covers the new
+layer buttons too (this session's `updateLayerButtons` / `data-layer-cat`).
+Pure CSS/JS in `touch.html`; keep it legible on the 1024×600 kiosk panel.
+
+**4. Solo / exclusive mode for the kiosk (toggle on touch-config page).**
+For untrained operators: an optional **exclusive mode** where selecting any
+scene/effect/etc. crossfades from the currently-active one to the new one and
+**deselects the previous** after the transition — so users can't stack a pile
+of scenes on top of each other. Add a **toggle on the touch-config page**
+(`touch_config.html`) to enable/disable it; persist it in the touch grid config
+(`config["touch_grid"]`, like other kiosk settings). When ON, the touch UI's
+toggle handlers (both `toggleScene` and this session's new `toggleLayer`)
+should stop the previously-active item(s) in that category as they start the
+new one, leaning on the engine's existing fade machinery for the blend.
+Consider whether "exclusive" is per-category (one main + one effect + …) or
+globally one-thing-at-a-time — **clarify with Joseph at batch start**; per-
+category is the likely intent given the layered architecture. This is kiosk-UI-
+only behavior; the Show Board (index.html) keeps its additive stacking.
+
+**Suggested build order:** 3 (pure visual, low risk, immediate daily benefit)
+→ 1 (self-contained timer change) → 2 (wake guard, needs sleep-state handling)
+→ 4 (largest; touches touch_config persistence + both toggle paths). Model
+guidance: Sonnet for 1/2/3; consider Opus for 4 if the exclusive-mode blend
+interacts with the stack in non-obvious ways.
