@@ -52,6 +52,11 @@ class LightingEngine:
     # A streamed (ephemeral) motion preview that goes this long without a
     # refresh is auto-released, returning the rig to the live stack.
     PREVIEW_EPHEMERAL_TTL = 0.4   # seconds
+    # Hard cap on how long clear_all()'s deferred dimmer-restore waits for the
+    # output to go dark before restoring master/singer to 100% regardless.
+    # Generous enough to outlast any sane scene fade-out, bounded so the
+    # watcher thread can never hang.
+    _CLEAR_ALL_RESET_TIMEOUT_S = 8.0
 
     def __init__(self, dmx, show_config):
         self._dmx    = dmx
@@ -2307,7 +2312,15 @@ class LightingEngine:
         """Panic reset to a clean slate. Stops every playing layer (cycler,
         main scenes, motions, looks, effects, overlay), clears blackout, turns
         singer mode OFF, and resets the master and singer dimmers to 100%.
-        Bypasses freeze — a panic clear always applies immediately."""
+        Bypasses freeze — a panic clear always applies immediately.
+
+        The master/singer dimmer restore to 100% is DEFERRED until the visible
+        output has actually faded to black (see _deferred_level_reset). If a
+        scene was dimmed down via the master fader, raising the master to 100%
+        while that scene is still mid-fade-out would briefly re-brighten it —
+        a flash-bang exactly when you're trying to kill the room. Holding the
+        current (dimmed) level until everything's dark means the scene only
+        ever gets darker on its way out, never brighter."""
         # Drop freeze (and any queued changes) so the stops/sets all go live.
         with self._lock:
             self._freeze_active = False
@@ -2334,11 +2347,52 @@ class LightingEngine:
         # Clear blackout (fade back to the now-empty scene).
         with self._lock:
             self._blackout_target = 0.0
-        # Reset controls to a clean slate.
+        # Singer override OFF can go immediately — it crossfades on its own and
+        # turning it *off* only ever removes light, so it can't flash.
         self.set_singer_mode(False)   # singer override (warm white) OFF
-        self.set_master(1.0)          # master / colour dimmer → 100%
-        self.set_singer_level(1.0)    # singer dimmer → 100%
-        log.info("CLEAR ALL — all layers stopped; controls reset to clean slate")
+        # Defer the master / singer-dimmer restore to 100% until output is dark,
+        # so a dimmed scene can't flash up on its way out.
+        self._start_deferred_level_reset()
+        log.info("CLEAR ALL — all layers stopping; dimmer restore deferred "
+                 "until output is dark")
+
+    def _start_deferred_level_reset(self):
+        """Spawn a short-lived watcher that waits until all visible layers have
+        faded to black, then restores master + singer dimmers to 100%. Bounded
+        by a hard timeout so it can never hang if some layer never reports
+        zero. Idempotent-ish: a second clear-all just starts another watcher;
+        both converge on the same 1.0 endpoint harmlessly."""
+        def _watcher():
+            deadline = time.time() + self._CLEAR_ALL_RESET_TIMEOUT_S
+            while time.time() < deadline:
+                if self._visible_output_is_dark():
+                    break
+                time.sleep(1.0 / self.OUTPUT_HZ)
+            # Restore levels now that nothing lit remains (or we timed out —
+            # in which case the room is presumably intentionally lit again by
+            # something new, and restoring to 100% is the right clean-slate end
+            # state anyway).
+            self.set_master(1.0)
+            self.set_singer_level(1.0)
+        threading.Thread(target=_watcher, daemon=True,
+                         name="clear-all-level-reset").start()
+
+    def _visible_output_is_dark(self):
+        """True when no main scene, effect, motion, look, or overlay is still
+        contributing visible output (all blends collapsed to ~0 and stacks
+        emptied), and blackout has finished fading in if it's engaged. Used to
+        time the deferred dimmer restore after clear_all()."""
+        with self._lock:
+            scenes_lit = any(
+                (st["start_blend"] * st["stop_blend"]) > 0.001
+                for st in self._active_scenes
+            )
+            effects_lit = any(e["blend"] > 0.001 for e in self._active_effects)
+            motions_lit = bool(self._active_motions)
+            looks_lit   = bool(self._active_looks)
+            overlay_lit = self._overlay_blend > 0.001
+        return not (scenes_lit or effects_lit or motions_lit
+                    or looks_lit or overlay_lit)
 
     def blackout(self, mode='full'):
         """
