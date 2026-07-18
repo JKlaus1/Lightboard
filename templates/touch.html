@@ -141,16 +141,31 @@
     width: 3px; height: 100%;
     background: var(--accent);
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s, width 0.15s;
   }
   .scene-btn:active { opacity: 0.75; }
   .scene-btn.active {
     background: #1a1a2e;
+    border-width: 3px;
     border-color: var(--accent);
-    box-shadow: 0 0 10px rgba(232,99,10,0.45);
+    box-shadow: 0 0 18px rgba(232,99,10,0.7), inset 0 0 0 2px rgba(232,99,10,0.35);
     color: #fff;
   }
-  .scene-btn.active::before { opacity: 1; }
+  .scene-btn.active::before { opacity: 1; width: 5px; }
+  /* Always-on "lit" dot, independent of per-cell/type color, so ANY active
+     button reads as ON at a glance no matter its hue or which type-* variant
+     it is — blackout/singer/tempo/cycler/colored all inherit this via the
+     shared .scene-btn.active base (border-width above cascades the same way). */
+  .scene-btn.active::after {
+    content: '';
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 6px #fff, 0 0 2px rgba(0,0,0,0.7);
+    z-index: 2;
+  }
 
   /* Action button variants */
   .scene-btn.type-preset {
@@ -242,7 +257,7 @@
   .scene-btn.colored.active {
     border-color: var(--cell-color);
     background: var(--cell-bg-active);
-    box-shadow: 0 0 12px var(--cell-glow);
+    box-shadow: 0 0 20px 2px var(--cell-glow), inset 0 0 0 2px var(--cell-color);
   }
 
   /* ── Footer / IP ── */
@@ -747,9 +762,9 @@
       if (cc) {
         btn.classList.add('colored');
         btn.style.setProperty('--cell-color',     cc);
-        btn.style.setProperty('--cell-bg',        cc + '1a');   // ~10% wash
-        btn.style.setProperty('--cell-bg-active', cc + '33');   // ~20% when lit
-        btn.style.setProperty('--cell-glow',      cc + '80');   // 50% glow
+        btn.style.setProperty('--cell-bg',        cc + '1a');   // ~10% wash (idle)
+        btn.style.setProperty('--cell-bg-active', cc + '5c');   // ~36% fill when lit
+        btn.style.setProperty('--cell-glow',      cc + 'b3');   // ~70% glow when lit
       }
       btn.id = cell.scene_id ? 'scene-' + cell.scene_id :
                cell.preset_id ? 'preset-' + cell.preset_id : 'action-' + cell.action;
@@ -1040,15 +1055,26 @@
     // the next state poll confirm. Optimistically flip the button so a tap
     // feels instant.
     const wasOn = set && set.has(id);
+    // Exclusive mode (per-category, batch item #4): turning a NEW item on
+    // stops any other already-active item(s) in this same category. Fired
+    // alongside the play call (not awaited first) so the engine's own fade
+    // machinery crossfades old->new rather than a hard cut.
+    const others = (!wasOn && set && gridConfig && gridConfig.exclusive_mode)
+      ? Array.from(set) : [];
     try {
-      const r = await fetch('/api/' + cat + '/' + id, {
+      const calls = others.map(oid => fetch('/api/' + cat + '/stop/' + oid, { method: 'POST' }));
+      calls.push(fetch('/api/' + cat + '/' + id, {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({})
-      });
-      const d = await r.json();
+      }));
+      const results = await Promise.all(calls);
+      const d = await results[results.length - 1].json();
       if (!d.ok) { alert((cat + ' failed: ' + (d.error || ''))); return; }
-      if (set) { if (wasOn) set.delete(id); else set.add(id); }
+      if (set) {
+        if (wasOn) { set.delete(id); }
+        else { others.forEach(oid => set.delete(oid)); set.add(id); }
+      }
       updateLayerButtons();
     } catch(e) {}
   }
@@ -1064,16 +1090,24 @@
 
   // ── Toggle scene ──────────────────────────────────────────────────────
   async function toggleScene(id) {
+    const wasOn = activeScenes.has(id);
+    // Exclusive mode (per-category, batch item #4) — see toggleLayer above
+    // for the same pattern applied to effect/motion/look.
+    const others = (!wasOn && gridConfig && gridConfig.exclusive_mode)
+      ? Array.from(activeScenes) : [];
     try {
-      if (activeScenes.has(id)) {
+      if (wasOn) {
         await fetch('/api/stop/' + id, { method: 'POST' });
         activeScenes.delete(id);
       } else {
-        await fetch('/api/scene/' + id, {
+        const calls = others.map(oid => fetch('/api/stop/' + oid, { method: 'POST' }));
+        calls.push(fetch('/api/scene/' + id, {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
           body: JSON.stringify({})
-        });
+        }));
+        await Promise.all(calls);
+        others.forEach(oid => activeScenes.delete(oid));
         activeScenes.add(id);
       }
       updateSceneButtons();
@@ -1181,6 +1215,56 @@
     } catch(e) {}
   }
   setInterval(checkReload, 3000);
+
+  // ── Wake-tap guard ───────────────────────────────────────────────────
+  // The kiosk display DPMS-sleeps after idle (kiosk-sleep-watch.py) and
+  // wakes on any touch — but that wake happens at the X-server level, at
+  // the same instant the touch itself is delivered to this page, so the
+  // very first wake tap can fall through to whatever grid button/fader is
+  // under the finger before the panel has even visibly come back on.
+  // Chromium keeps running the whole time the screen is dark, so we can't
+  // detect "asleep" any other way than polling the marker the OS-level
+  // watcher drops when it actually puts the screen to sleep. Once armed,
+  // the FIRST input swallows silently and starts a short fixed grace
+  // window (does not re-extend on further taps, so a stuck/mis-armed
+  // guard can never wedge the UI beyond one bad tap + ~1.5s).
+  const WAKE_GUARD_GRACE_MS = 1500;
+  let latestAsleepSince   = null;   // most recent value seen from the poll
+  let lastHandledAsleepAt = null;   // value we've already armed/consumed for
+  let wakeGuardArmed      = false;
+  let wakeGuardUntil      = 0;
+
+  function wakeGuardActive() {
+    return wakeGuardArmed || performance.now() < wakeGuardUntil;
+  }
+  function wakeGuardIntercept(e) {
+    if (!wakeGuardActive()) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (wakeGuardArmed) {
+      wakeGuardArmed = false;
+      lastHandledAsleepAt = latestAsleepSince;
+      wakeGuardUntil = performance.now() + WAKE_GUARD_GRACE_MS;
+    }
+  }
+  // capture on window = earliest possible interception, ahead of every
+  // per-button onclick, fader pointerdown/drag, and hold-gesture listener.
+  window.addEventListener('pointerdown', wakeGuardIntercept, true);
+  window.addEventListener('touchstart',  wakeGuardIntercept, true);
+  window.addEventListener('click',       wakeGuardIntercept, true);
+
+  async function pollSleepMarker() {
+    try {
+      const r = await fetch('/api/kiosk/sleep-marker');
+      const d = await r.json();
+      latestAsleepSince = d.asleep_since || null;
+      if (latestAsleepSince && latestAsleepSince !== lastHandledAsleepAt) {
+        wakeGuardArmed = true;
+      }
+    } catch (e) {}
+  }
+  setInterval(pollSleepMarker, 2000);
+  pollSleepMarker();
 
   // ── Kiosk admin gate ──────────────────────────────────────────────────
   // 5-second hold in any screen corner opens the gate: PIN pad if the Pi

@@ -367,6 +367,12 @@
   </div>
 </div>
 
+<div class="label">Exclusive Mode — per category (main / effect / motion / look), selecting one on the kiosk grid stops the others in that same category. Show Board (index.html) is unaffected.</div>
+<label class="check-item">
+  <input type="checkbox" id="exclusive-mode-input">
+  Enable exclusive mode on the kiosk touch grid
+</label>
+
 <div class="label">Quick Wash Strip Colors — shown on the kiosk's always-visible wash bar</div>
 <div class="check-list" id="wash-strip-colors"></div>
 
@@ -632,6 +638,7 @@
       document.getElementById('cols-input').value = cfg.cols || 2;
       document.getElementById('rows-input').value = cfg.rows || 4;
       document.getElementById('font-input').value = cfg.font_size || 13;
+      document.getElementById('exclusive-mode-input').checked = !!cfg.exclusive_mode;
       cells = cfg.cells || [];
       washStripColors = cfg.wash_strip_colors || [];
       renderWashStripColorPicker();
@@ -1380,7 +1387,9 @@
     const cols    = parseInt(document.getElementById('cols-input').value) || 2;
     const rows    = parseInt(document.getElementById('rows-input').value) || 4;
     const font_size = parseInt(document.getElementById('font-input').value) || 13;
-    const payload = { cols, rows, font_size, cells, wash_strip_colors: washStripColors,
+    const exclusive_mode = document.getElementById('exclusive-mode-input').checked;
+    const payload = { cols, rows, font_size, cells, exclusive_mode,
+                      wash_strip_colors: washStripColors,
                       wash_strip_speeds: readWashStripSpeeds() };
     const msg     = document.getElementById('save-msg');
     try {
@@ -1419,6 +1428,7 @@
       cols: parseInt(document.getElementById('cols-input').value) || 2,
       rows: parseInt(document.getElementById('rows-input').value) || 4,
       font_size: parseInt(document.getElementById('font-input').value) || 13,
+      exclusive_mode: document.getElementById('exclusive-mode-input').checked,
       cells,
       faders: faderDefs,
       wash_strip_colors: washStripColors,

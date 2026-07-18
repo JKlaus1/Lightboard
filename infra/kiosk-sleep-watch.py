@@ -21,7 +21,7 @@ import time
 import urllib.request
 
 STATE_URL        = "http://localhost:5000/api/state"
-SLEEP_AFTER_HRS  = 3.0   # tweak this, then: sudo systemctl restart kiosk-sleep-watch.timer
+SLEEP_AFTER_HRS  = 2.0   # tweak this, then: sudo systemctl restart kiosk-sleep-watch.timer
 LAST_ACTIVE_PATH = "/home/pi/.cache/lightboard_kiosk_last_active"
 XSET_ENV         = {"DISPLAY": ":0", "XAUTHORITY": "/home/pi/.Xauthority"}
 
@@ -31,6 +31,23 @@ def read_last_active():
         with open(LAST_ACTIVE_PATH) as f:
             return float(f.read().strip())
     except (FileNotFoundError, ValueError):
+        return None
+
+
+def get_boot_time():
+    """System boot time (epoch seconds) via /proc/uptime (monotonic, so it's
+    unaffected by wall-clock weirdness). Used to catch a last-active
+    timestamp left over from BEFORE this boot - LAST_ACTIVE_PATH lives on
+    the SD card and survives a reboot/power-cut, so without this check a
+    fresh boot with no lights on yet could inherit hours of "idle" time
+    that actually happened last session, and sleep the screen almost
+    immediately instead of after a real SLEEP_AFTER_HRS of this boot's
+    uptime."""
+    try:
+        with open("/proc/uptime") as f:
+            uptime_seconds = float(f.read().split()[0])
+        return time.time() - uptime_seconds
+    except (FileNotFoundError, ValueError, IndexError):
         return None
 
 
@@ -45,10 +62,23 @@ def fetch_state():
         return json.load(r)
 
 
+ASLEEP_SINCE_PATH = "/home/pi/.cache/lightboard_kiosk_asleep_since"
+
+
 def sleep_screen():
     env = dict(os.environ)
     env.update(XSET_ENV)
     subprocess.run(["xset", "dpms", "force", "off"], env=env, check=False)
+    # Marker for touch.html's wake-tap guard (batch item #2): the page polls
+    # this via /api/kiosk/sleep-marker so it knows a DPMS-sleep happened even
+    # though Chromium itself keeps running the whole time and has no other
+    # way to observe display power state.
+    try:
+        os.makedirs(os.path.dirname(ASLEEP_SINCE_PATH), exist_ok=True)
+        with open(ASLEEP_SINCE_PATH, "w") as f:
+            f.write(str(time.time()))
+    except OSError as e:
+        print(f"kiosk-sleep-watch: couldn't write asleep marker ({e})")
 
 
 def main():
@@ -63,12 +93,20 @@ def main():
     blackout_blend = state.get("blackout_blend", 0) or 0
     showing_light  = bool(active_scenes) and blackout_blend < 0.99
 
-    last_active = read_last_active()
-    if showing_light or last_active is None:
-        # Light is on, or this is our first-ever run - (re)start the clock
-        # rather than assuming idle time we can't actually account for.
+    last_active  = read_last_active()
+    boot_time    = get_boot_time()
+    stale_boot   = (last_active is not None and boot_time is not None
+                     and last_active < boot_time)
+
+    if showing_light or last_active is None or stale_boot:
+        # Light is on, this is our first-ever run, or the saved timestamp
+        # predates this boot - (re)start the clock rather than assuming
+        # idle time we can't actually account for.
         write_last_active(now)
-        print("kiosk-sleep-watch: light is showing - idle clock reset")
+        if stale_boot:
+            print("kiosk-sleep-watch: last-active predates this boot - idle clock reset")
+        else:
+            print("kiosk-sleep-watch: light is showing - idle clock reset")
         return
 
     idle_hours = (now - last_active) / 3600.0

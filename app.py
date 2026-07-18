@@ -552,6 +552,18 @@ def api_touch_reload_check():
     """Kiosk polls this to know if it should reload."""
     return jsonify({"ts": config.get("touch_reload_ts", 0)})
 
+@app.route("/api/kiosk/sleep-marker", methods=["GET"])
+def api_kiosk_sleep_marker():
+    """Reports the last time kiosk-sleep-watch.py DPMS-slept the display, so
+    touch.html can arm its wake-tap guard (batch item #2, 2026-07-18) -
+    Chromium itself keeps running the whole time the screen is asleep and
+    has no other way to know it happened."""
+    try:
+        with open("/home/pi/.cache/lightboard_kiosk_asleep_since") as f:
+            return jsonify({"asleep_since": float(f.read().strip())})
+    except (FileNotFoundError, ValueError):
+        return jsonify({"asleep_since": None})
+
 # ── Run ───" block.
 #
 # Also add this import near the top of app.py (with the other imports):
@@ -608,6 +620,7 @@ def api_touch_config_get():
     cfg["faders"] = config.get("custom_faders", [])
     cfg["wash_strip_colors"] = cfg.get("wash_strip_colors") or list(DEFAULT_WASH_STRIP_COLORS)
     cfg["wash_strip_speeds"] = cfg.get("wash_strip_speeds") or DEFAULT_WASH_STRIP_SPEEDS
+    cfg["exclusive_mode"] = bool(cfg.get("exclusive_mode", False))
     return jsonify(cfg)
 
 def _clamp_font(v, dflt):
@@ -694,6 +707,7 @@ def api_touch_config_set():
         "rows":      int(data.get("rows", 6)),
         "font_size": _clamp_font(data.get("font_size", 13), 13),
         "cells":     [_clean_cell(c) for c in data.get("cells", [])],
+        "exclusive_mode": bool(data.get("exclusive_mode", False)),
         "wash_strip_colors": _clean_wash_strip_colors(data.get("wash_strip_colors", [])),
         "wash_strip_speeds": _clean_wash_strip_speeds(data.get("wash_strip_speeds", {})),
     }
