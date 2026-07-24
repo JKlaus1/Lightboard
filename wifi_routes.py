@@ -76,7 +76,7 @@ def scan_networks(rescan=True):
     mode = "yes" if rescan else "auto"
     _, out, _ = _run(
         ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
-         "device", "wifi", "list", "--rescan", mode], timeout=25)
+         "device", "wifi", "list", "ifname", WIFI_DEV, "--rescan", mode], timeout=25)
     nets = {}
     for line in out.splitlines():
         if not line.strip():
@@ -153,7 +153,7 @@ def get_status():
 
 def _do_connect(ssid, password, prev):
     _set_state("connecting", ssid, "Associating with " + ssid)
-    args = ["nmcli", "device", "wifi", "connect", ssid]
+    args = ["nmcli", "device", "wifi", "connect", ssid, "ifname", WIFI_DEV]
     if password:
         args += ["password", password]
     rc, out, err = _run(args, timeout=45)
@@ -194,7 +194,7 @@ def _do_portal_login(ssid, password, prev):
     """Connect, then pop the captive portal onto the Pi's touchscreen and wait for
     the user to complete it. Restores the touch kiosk and keeps/reverts accordingly."""
     _set_state("connecting", ssid, "Connecting to " + ssid)
-    args = ["nmcli", "device", "wifi", "connect", ssid]
+    args = ["nmcli", "device", "wifi", "connect", ssid, "ifname", WIFI_DEV]
     if password:
         args += ["password", password]
     rc, out, err = _run(args, timeout=45)
