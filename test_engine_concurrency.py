@@ -34,6 +34,11 @@ from engine import LightingEngine
 
 
 SHOW = {
+    # These suites assert unscaled DMX values, so pin the startup
+    # faders to full. The engine default is 50% (see
+    # master_default_level / singer_default_level in show config).
+    "master_default_level": 1.0,
+    "singer_default_level": 1.0,
     "name": "Task B Concurrency Show",
     "effect_fade_ms": 10,
     "singer_fade_ms": 10,

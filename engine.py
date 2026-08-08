@@ -81,9 +81,15 @@ class LightingEngine:
         self._scene_dmx = {}
 
         # Controls
-        self._master_level  = 1.0   # 0.0–1.0
+        # Startup levels are configurable per show. 100% is painfully bright
+        # on a small rig at close range — hitting a scene cold at full is a
+        # flash-bang — so both default to 50%, matching where the effects
+        # tend to live. Operators can always push past it on the faders.
+        self._master_default = self._level_default(show_config, "master_default_level")
+        self._singer_default = self._level_default(show_config, "singer_default_level")
+        self._master_level  = self._master_default   # 0.0–1.0
         self._singer_mode   = bool(show_config.get("singer_default_on", True))
-        self._singer_level  = 1.0   # 0.0–1.0
+        self._singer_level  = self._singer_default   # 0.0–1.0
         # Smooth singer toggle: 0.0 = fully scene, 1.0 = fully singer
         self._singer_blend  = 1.0 if self._singer_mode else 0.0
         self._singer_target = 1.0 if self._singer_mode else 0.0
@@ -1414,8 +1420,13 @@ class LightingEngine:
             normal[ch] = float(val)
 
         # 3. Scale non-singer color channels by Color Dimmer
+        #    Mover pan/tilt is POSITION, not intensity — scaling it would
+        #    physically swing the head toward home as the Color Dimmer comes
+        #    down. Channels written by the motion layer (2c) are exactly the
+        #    pan/tilt/fine set, so skipping them is precise and needs no extra
+        #    cached state. Latent until startup levels stopped being 1.0.
         for ch in list(normal.keys()):
-            if ch in s_chs or ch in d_chs:
+            if ch in s_chs or ch in d_chs or ch in motion:
                 continue
             normal[ch] *= master
 
@@ -2273,6 +2284,20 @@ class LightingEngine:
 
     # ── Controls ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _level_default(show_config, key, fallback=0.5):
+        """Read a 0..1 startup level from show config, clamped. Any garbage
+        (None, "", a string, out of range) falls back to `fallback` rather
+        than raising at engine construction time — a bad settings save must
+        never stop the rig from booting."""
+        try:
+            v = float(show_config.get(key, fallback))
+        except (TypeError, ValueError):
+            return fallback
+        if v != v:                      # NaN
+            return fallback
+        return max(0.0, min(1.0, v))
+
     def set_master(self, level):
         """Set the Color Dimmer (master) level. Queued under freeze when
         'color_dimmer' is in freeze_includes, instead of breaking through."""
@@ -2311,7 +2336,9 @@ class LightingEngine:
     def clear_all(self):
         """Panic reset to a clean slate. Stops every playing layer (cycler,
         main scenes, motions, looks, effects, overlay), clears blackout, turns
-        singer mode OFF, and resets the master and singer dimmers to 100%.
+        singer mode OFF, and resets the master and singer dimmers to their
+        configured startup defaults (master_default_level /
+        singer_default_level, both 50% unless overridden).
         Bypasses freeze — a panic clear always applies immediately.
 
         The master/singer dimmer restore to 100% is DEFERRED until the visible
@@ -2358,7 +2385,9 @@ class LightingEngine:
 
     def _start_deferred_level_reset(self):
         """Spawn a short-lived watcher that waits until all visible layers have
-        faded to black, then restores master + singer dimmers to 100%. Bounded
+        faded to black, then restores master + singer dimmers to their
+        configured startup defaults (NOT 100% — restoring to full here would
+        reintroduce the flash-bang on the next scene launch). Bounded
         by a hard timeout so it can never hang if some layer never reports
         zero. Idempotent-ish: a second clear-all just starts another watcher;
         both converge on the same 1.0 endpoint harmlessly."""
@@ -2370,10 +2399,10 @@ class LightingEngine:
                 time.sleep(1.0 / self.OUTPUT_HZ)
             # Restore levels now that nothing lit remains (or we timed out —
             # in which case the room is presumably intentionally lit again by
-            # something new, and restoring to 100% is the right clean-slate end
-            # state anyway).
-            self.set_master(1.0)
-            self.set_singer_level(1.0)
+            # something new, and returning to the configured default is the
+            # right clean-slate end state anyway).
+            self.set_master(self._master_default)
+            self.set_singer_level(self._singer_default)
         threading.Thread(target=_watcher, daemon=True,
                          name="clear-all-level-reset").start()
 
@@ -3290,6 +3319,12 @@ class LightingEngine:
             self._overlay_fade_ms     = show_config.get("overlay_fade_ms", 200)
             self._effect_fade_ms      = show_config.get("effect_fade_ms", 500)
             self._overlay_keep_singer = show_config.get("overlay_keep_singer", True)
+            # Pick up an edited startup default, but do NOT touch the live
+            # levels — this path runs on every settings save, including
+            # mid-show, and yanking the master under a running scene would be
+            # a visible jump.
+            self._master_default = self._level_default(show_config, "master_default_level")
+            self._singer_default = self._level_default(show_config, "singer_default_level")
             self._freeze_includes     = self._load_freeze_includes(show_config)
             self._singer_dmx_full     = self._build_singer_dmx()
 
@@ -3302,6 +3337,13 @@ class LightingEngine:
             self._overlay_fade_ms  = show_config.get("overlay_fade_ms", 200)
             self._effect_fade_ms   = show_config.get("effect_fade_ms", 500)
             self._overlay_keep_singer = show_config.get("overlay_keep_singer", True)
+            # A full show swap is a clean slate (it stops all playback below),
+            # so unlike update_show_settings this DOES reset the live levels to
+            # the incoming show's defaults.
+            self._master_default = self._level_default(show_config, "master_default_level")
+            self._singer_default = self._level_default(show_config, "singer_default_level")
+            self._master_level = self._master_default
+            self._singer_level = self._singer_default
             # Reload per-show freeze includes
             self._freeze_includes = self._load_freeze_includes(show_config)
         self.stop_all_scenes()

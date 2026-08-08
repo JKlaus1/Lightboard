@@ -247,6 +247,14 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
           <span>Singer warm-white override is ON when the engine boots (restart/power-cycle)</span>
         </label>
       </div>
+      <div class="row"><label>Color start level</label>
+        <input type="number" id="master-default-level" value="{{ (((show.master_default_level if show.master_default_level is defined else 0.5) | float) * 100) | round | int }}" min="0" max="100" step="5" style="width:90px">
+        <span class="hint">% — Color Dimmer level at engine start and after Clear All</span>
+      </div>
+      <div class="row"><label>Singer start level</label>
+        <input type="number" id="singer-default-level" value="{{ (((show.singer_default_level if show.singer_default_level is defined else 0.5) | float) * 100) | round | int }}" min="0" max="100" step="5" style="width:90px">
+        <span class="hint">% — Singer Dimmer level at engine start and after Clear All</span>
+      </div>
       <div class="row"><label>Singer fade</label>
         <input type="number" id="singer-fade" value="{{ show.singer_fade_ms or 1500 }}" min="0" max="10000" step="100" style="width:90px">
         <span class="hint">ms</span>
@@ -1664,12 +1672,21 @@ async function restartLightboard(){
   }, 1000);
 }
 
+function clampLevel(v){
+  // Settings shows 0-100 for legibility; the engine stores 0..1.
+  const n = parseInt(v, 10);
+  if (isNaN(n)) return 0.5;
+  return Math.max(0, Math.min(100, n)) / 100;
+}
+
 function buildShowConfig(){
   // Pure: the exact object saveShowConfig persists. Shared by the dirty-check
   // and every save path so they can never drift.
   return {name:document.getElementById('show-name').value.trim(),
     startup_scene:document.getElementById('startup-scene').value,
     singer_default_on:document.getElementById('singer-default-on').checked,
+    master_default_level:clampLevel(document.getElementById('master-default-level').value),
+    singer_default_level:clampLevel(document.getElementById('singer-default-level').value),
     singer_fade_ms:parseInt(document.getElementById('singer-fade').value)||1500,
     blackout_fade_ms:parseInt(document.getElementById('blackout-fade').value)||600,
     overlay_scene:document.getElementById('overlay-scene').value,

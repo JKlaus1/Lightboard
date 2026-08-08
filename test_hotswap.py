@@ -22,6 +22,11 @@ class StubDMX:
 from engine import LightingEngine
 
 SHOW = {
+    # These suites assert unscaled DMX values, so pin the startup
+    # faders to full. The engine default is 50% (see
+    # master_default_level / singer_default_level in show config).
+    "master_default_level": 1.0,
+    "singer_default_level": 1.0,
     "name": "hotswap", "effect_fade_ms": 10, "singer_fade_ms": 10, "default_launch_fade": 0,
     "fixtures": [
         {"id": "M1", "name": "m1", "type": "mover", "universe": 0, "start_address": 1,

@@ -127,12 +127,14 @@ last = dmx.frames[-1]
 post_peak = max((v for frame in last.values() for v in frame.values()), default=0)
 check(f"output is dark after clear (peak={post_peak})", post_peak <= 2)
 
-# ...and the master/singer levels should have been restored to 100%.
+# ...and the master/singer levels should have been restored to the show's
+# configured startup defaults (NOT 100% — restoring to full here would put the
+# flash-bang straight back on the next scene launch).
 st = eng.get_state()
-check("master restored to 100% after output dark",
-      abs(st["master_level"] - 1.0) < 0.01)
-check("singer_level restored to 100% after output dark",
-      abs(st["singer_level"] - 1.0) < 0.01)
+check("master restored to configured default after output dark",
+      abs(st["master_level"] - eng._master_default) < 0.01)
+check("singer_level restored to configured default after output dark",
+      abs(st["singer_level"] - eng._singer_default) < 0.01)
 
 eng._output_running = False
 print(f"\n{passed} passed, {failed} failed")
