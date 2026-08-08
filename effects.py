@@ -476,6 +476,20 @@ def render_marquee(strip_length, t, params, color_keys):
     return out
 
 
+def _plasma_field(px, t, speed, scale):
+    """Shared plasma scalar field, returns ~[-1,1].
+
+    Three sines at different spatial frequencies and drift rates (two
+    forward, one back) sum into the organic, never-quite-repeating flow
+    that gives plasma its character. Factored out so every plasma variant
+    shares identical motion and only differs in how the field is coloured.
+    """
+    a = math.sin(px * scale * 3.0 * math.pi + t * speed * 1.7)
+    b = math.sin(px * scale * 5.3 * math.pi - t * speed * 1.1)
+    d = math.sin(px * scale * 1.3 * math.pi + t * speed * 0.9)
+    return (a + b + d) / 3.0
+
+
 def render_plasma(strip_length, t, params, color_keys):
     """Demoscene-style plasma: several sine waves at different spatial
     frequencies and drift rates sum into an organic, flowing hue field.
@@ -496,12 +510,91 @@ def render_plasma(strip_length, t, params, color_keys):
 
     out = []
     for c in range(strip_length):
-        px = c / strip_length
-        a  = math.sin(px * scale * 3.0 * math.pi + t * speed * 1.7)
-        b  = math.sin(px * scale * 5.3 * math.pi - t * speed * 1.1)
-        d  = math.sin(px * scale * 1.3 * math.pi + t * speed * 0.9)
-        val = (a + b + d) / 3.0                 # ~[-1,1]
+        px  = c / strip_length
+        val = _plasma_field(px, t, speed, scale)
         hue = (0.5 + 0.5 * val) % 1.0
+        out.append(_hsv_to_rgb(hue, saturation, value))
+    return out
+
+
+def render_plasma_duo(strip_length, t, params, color_keys):
+    """Plasma motion mapped across YOUR colour slots instead of the hue
+    wheel. Same flowing field as `plasma`, but the field drives a crossfade
+    primary -> secondary (-> accent if set), so you get plasma texture in
+    the show's colours.
+
+    Because it blends the colour dicts directly, wide-gamut fixtures keep
+    their extra emitters — an amber or UV slot fades as amber/UV rather
+    than being flattened into RGB the way the HSV variants must.
+
+    speed    : evolution rate over time.
+    scale    : spatial frequency; higher packs more colour bands in.
+    contrast : 0 = parked mid-palette, 1 = full swing slot-to-slot.
+    """
+    primary   = params.get("primary",   _DEFAULT_PRIMARY)
+    secondary = params.get("secondary", _DEFAULT_SECONDARY)
+    accent    = params.get("accent")
+    speed     = float(params.get("speed", 0.3))
+    scale     = max(0.1, float(params.get("scale", 1.0)))
+    contrast  = max(0.0, min(1.0, float(params.get("contrast", 1.0))))
+
+    if strip_length <= 0:
+        return []
+
+    stops = [primary, secondary] + ([accent] if accent is not None else [])
+    n = len(stops)
+
+    out = []
+    for c in range(strip_length):
+        px  = c / strip_length
+        val = _plasma_field(px, t, speed, scale)
+        # [-1,1] -> [0,1], contrast shrinking the swing toward the midpoint.
+        pos = max(0.0, min(1.0, 0.5 + 0.5 * val * contrast))
+        # Walk the stop list. pos is spatially continuous, so segment
+        # boundaries stay seamless — no wrap discontinuity.
+        seg = pos * (n - 1)
+        i   = min(int(seg), n - 2)
+        out.append(_lerp(stops[i], stops[i + 1], seg - i))
+    return out
+
+
+def render_plasma_drift(strip_length, t, params, color_keys):
+    """Plasma confined to a slice of the hue wheel, with the slice slowly
+    rotating. Full `plasma` roams all 360 degrees and reads as rainbow;
+    clamp the window to ~60 degrees around cyan and you get moody
+    aqua-into-blue movement that still sits inside one colour family.
+
+    Set spread to 360 and drift to 0 for something close to plain plasma.
+
+    speed      : evolution rate over time.
+    scale      : spatial frequency; higher packs more colour bands in.
+    hue_center : centre of the hue window, degrees (0 = red, 120 = green,
+                 240 = blue).
+    hue_width  : total span of the window, degrees. 0 = single flat hue.
+    drift      : window rotation, degrees per second. Negative reverses.
+    saturation : 0..1 (0 = greyscale, 1 = vivid).
+    value      : 0..1 (overall brightness).
+    """
+    speed      = float(params.get("speed", 0.3))
+    scale      = max(0.1, float(params.get("scale", 1.0)))
+    hue_center = float(params.get("hue_center", 200.0))
+    hue_width  = max(0.0, min(360.0, float(params.get("hue_width", 60.0))))
+    drift      = float(params.get("drift", 0.0))
+    saturation = max(0.0, min(1.0, float(params.get("saturation", 1.0))))
+    value      = max(0.0, min(1.0, float(params.get("value", 1.0))))
+
+    if strip_length <= 0:
+        return []
+
+    # Degrees -> hue-wheel units once, up front.
+    center = ((hue_center + t * drift) / 360.0) % 1.0
+    half   = (hue_width / 360.0) / 2.0
+
+    out = []
+    for c in range(strip_length):
+        px  = c / strip_length
+        val = _plasma_field(px, t, speed, scale)
+        hue = (center + half * val) % 1.0
         out.append(_hsv_to_rgb(hue, saturation, value))
     return out
 
@@ -759,6 +852,46 @@ EFFECTS = {
                            "unit":"Hz","label":"Evolve speed"},
             "scale":      {"type":"float","min":0.1,"max":4.0,"step":0.1,"default":1.0,
                            "label":"Spatial scale"},
+            "saturation": {"type":"float","min":0.0,"max":1.0,"step":0.05,"default":1.0,
+                           "label":"Saturation"},
+            "value":      {"type":"float","min":0.1,"max":1.0,"step":0.05,"default":1.0,
+                           "label":"Brightness"},
+        },
+    },
+    "plasma_duo": {
+        "name":        "Plasma Duo",
+        "description": "Plasma flow crossfading through your colour slots",
+        "render":      render_plasma_duo,
+        "uses_primary":   True,
+        "uses_secondary": True,
+        "uses_accent":    True,
+        "params": {
+            "speed":    {"type":"float","min":0.0,"max":4.0,"step":0.05,"default":0.3,
+                         "unit":"Hz","label":"Evolve speed"},
+            "scale":    {"type":"float","min":0.1,"max":4.0,"step":0.1,"default":1.0,
+                         "label":"Spatial scale"},
+            "contrast": {"type":"float","min":0.0,"max":1.0,"step":0.05,"default":1.0,
+                         "label":"Colour swing"},
+        },
+    },
+    "plasma_drift": {
+        "name":        "Plasma Drift",
+        "description": "Plasma held inside one slowly-rotating hue family",
+        "render":      render_plasma_drift,
+        "uses_primary":   False,
+        "uses_secondary": False,
+        "uses_accent":    False,
+        "params": {
+            "speed":      {"type":"float","min":0.0,"max":4.0,"step":0.05,"default":0.3,
+                           "unit":"Hz","label":"Evolve speed"},
+            "scale":      {"type":"float","min":0.1,"max":4.0,"step":0.1,"default":1.0,
+                           "label":"Spatial scale"},
+            "hue_center": {"type":"float","min":0.0,"max":360.0,"step":5.0,"default":200.0,
+                           "unit":"deg","label":"Hue centre"},
+            "hue_width":  {"type":"float","min":0.0,"max":360.0,"step":5.0,"default":60.0,
+                           "unit":"deg","label":"Hue spread"},
+            "drift":      {"type":"float","min":-60.0,"max":60.0,"step":1.0,"default":0.0,
+                           "unit":"deg/s","label":"Hue drift"},
             "saturation": {"type":"float","min":0.0,"max":1.0,"step":0.05,"default":1.0,
                            "label":"Saturation"},
             "value":      {"type":"float","min":0.1,"max":1.0,"step":0.05,"default":1.0,

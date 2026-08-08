@@ -200,7 +200,8 @@ print("✓ dispatch: render() works for known effects, raises for unknown")
 # ── 10. REGISTRY ───────────────────────────────────────────────────────────
 reg = fx.get_registry()
 expected = {"solid","breathe","chase","comet","rainbow","twinkle","gradient","strobe",
-            "pulse","scanner","wave","fire","marquee","plasma","colorfade","wipe"}
+            "pulse","scanner","wave","fire","marquee","plasma","plasma_duo",
+            "plasma_drift","colorfade","wipe"}
 assert set(reg.keys()) == expected, f"missing effects: {expected - set(reg.keys())}"
 # Each entry has the expected shape
 for eid, info in reg.items():
