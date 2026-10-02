@@ -16,6 +16,7 @@ from artnet import ArtNetDMX
 from artnet_receiver import ArtNetReceiver
 from sacn import SacnDMX
 import color_temp
+import config_roles
 from engine import LightingEngine
 import cell_strip
 import effects
@@ -44,56 +45,45 @@ def save_json(path, data):
 # ── Per-Pi role + config merge ──────────────────────────────
 # One committed config.json drives both Pis. Top-level keys are the shared
 # defaults (currently the rack baseline); an optional
-# "roles": {"rack": {…}, "venue": {…}} block holds per-Pi overrides that
+# "roles": {"rack": {…}, "venue": {…}} block holds per-role overrides that
 # overlay the defaults at load. The active role is a gitignored one-word
 # pi_role file (absent → "rack"), so a git pull never collides with the
-# per-Pi choice. Runtime saves are folded back into roles[active] by
-# save_config(). A config.json with no "roles" block behaves exactly as
-# before (the merge is a no-op).
+# per-Pi choice. Runtime saves fold back via save_config(). A config.json
+# with no "roles" block behaves exactly as before (the merge is a no-op).
+# Touchscreen/kiosk keys (config_roles.DEVICE_KEYS) follow the physical Pi,
+# not the role — see config_roles.py.
 PI_ROLE_PATH = BASE_DIR / "pi_role"
-CONFIG_ROLE_KEYS = {
-    "touch_grid", "touch_reload_ts", "custom_faders", "active_show", "kiosk_pin",
-    "dmx_driver", "dmx_port", "artnet_target", "artnet_universe",
-    "sacn_target", "sacn_universe", "sacn_priority", "sacn_multicast",
-    "remote_universe_map", "remote_timeout_s",
-}
+CONFIG_ROLE_KEYS = config_roles.ROLE_KEYS | config_roles.DEVICE_KEYS
 
 def read_pi_role():
     """Active role from the gitignored pi_role file; absent/invalid → rack."""
     try:
         r = PI_ROLE_PATH.read_text().strip().lower()
-        return r if r in ("rack", "venue") else "rack"
+        return r if r in config_roles.ROLES else "rack"
     except Exception:
         return "rack"
 
 def _merge_role(raw, role):
     """Effective config = shared top level overlaid by roles[role]."""
-    eff = {k: v for k, v in raw.items() if k != "roles"}
-    eff.update((raw.get("roles") or {}).get(role) or {})
-    return eff
+    return config_roles.merge_role(raw, role)
 
 def save_config():
     """Persist runtime config changes without flattening the per-role
-    structure. Per-Pi operational keys that differ from the shared top level
-    (or already live in the active role block) are written into
-    roles[PI_ROLE]; shared keys update the top level. The other role's block
-    and the shared defaults are left intact."""
-    roles = _raw_config.setdefault("roles", {})
-    block = roles.setdefault(PI_ROLE, {})
-    top   = {k: v for k, v in _raw_config.items() if k != "roles"}
-    for k, v in config.items():
-        if k in block or (k in CONFIG_ROLE_KEYS and v != top.get(k)):
-            block[k] = v
-        else:
-            _raw_config[k] = v
-    if not block:                    # keep a pristine default file clean
-        roles.pop(PI_ROLE, None)
-    if not roles:
-        _raw_config.pop("roles", None)
+    structure. Per-role operational keys that differ from the shared top
+    level (or already live in the active role block) are written into
+    roles[PI_ROLE]; device (touchscreen/kiosk) keys and shared keys update
+    the top level. The other role's block is left intact."""
+    config_roles.fold_config(_raw_config, config, PI_ROLE)
     save_json(CONFIG_PATH, _raw_config)
 
 _raw_config = load_json(CONFIG_PATH)
 PI_ROLE     = read_pi_role()
+_before_hoist = json.dumps(_raw_config, sort_keys=True)
+_hoisted = config_roles.hoist_device_keys(_raw_config, PI_ROLE)
+if json.dumps(_raw_config, sort_keys=True) != _before_hoist:
+    save_json(CONFIG_PATH, _raw_config)
+    log.info("config.json: moved touchscreen keys out of role blocks "
+             "(now shared by every role): %s", ", ".join(_hoisted) or "(cleanup only)")
 config      = _merge_role(_raw_config, PI_ROLE)
 SHOWS_DIR  = Path(config["shows_dir"])
 
@@ -726,13 +716,23 @@ def api_set_pi_role():
     """Set this Pi's role (rack|venue). Writes the gitignored pi_role file;
     takes effect on the next lightboard restart (config is merged at boot)."""
     role = str((request.json or {}).get("role", "")).strip().lower()
-    if role not in ("rack", "venue"):
+    if role not in config_roles.ROLES:
         return jsonify({"ok": False, "error": "role must be 'rack' or 'venue'"}), 400
+    # Lossless switch: the target role inherits the CURRENT output settings
+    # for any per-role key it doesn't define yet, so nothing changes on the
+    # wire after the restart. Written before pi_role so a failure here can't
+    # leave a half-switched Pi. Touchscreen keys are role-independent anyway.
+    seeded = []
     try:
+        if role != PI_ROLE:
+            seeded = config_roles.seed_role_block(_raw_config, config, role)
+            if seeded:
+                save_json(CONFIG_PATH, _raw_config)
+                log.info("Role switch %s -> %s: seeded %s", PI_ROLE, role, ", ".join(seeded))
         PI_ROLE_PATH.write_text(role + "\n")
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
-    return jsonify({"ok": True, "role": role, "restart_required": True})
+    return jsonify({"ok": True, "role": role, "restart_required": True, "seeded": seeded})
 
 @app.route("/api/remote-state")
 def api_remote_state():

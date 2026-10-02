@@ -149,7 +149,7 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
           <option value="rack">Rack</option>
           <option value="venue">Venue</option>
         </select>
-        <span class="hint">Which block this Pi loads from config.json (roles.rack / roles.venue), overlaid on the shared defaults. Applied on restart.</span>
+        <span class="hint">Which output-routing block this Pi loads from config.json (roles.rack / roles.venue). Switching copies the current Art-Net/DMX settings into the new role, and the touchscreen grid, faders and kiosk PIN belong to this Pi, so nothing resets. Applied on restart.</span>
       </div>
       <div class="row" id="pi-role-restart-note" style="display:none;">
         <span class="hint" style="color:#ffaa66;">Role changed — restart to apply.</span>
