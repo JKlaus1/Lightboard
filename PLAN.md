@@ -124,6 +124,8 @@ blackout/overlay/cycler (backward-compatible).
 - Pi: `pi@192.168.1.34`, dir `/home/pi/lightboard`, restart `sudo systemctl restart lightboard`.
 - Repo: https://github.com/JKlaus1/Lightboard.git (public). Pi pulls; phone (Termux) pushes.
 - Stage Messenger is a **separate app** (`/home/pi/stage-messenger/`) — not in this repo.
+  Since 2026-10-04 it also hosts the **WING remote mixer** at `/mixer` (see the session
+  handoff of that date at the end of this file, and PI_INFRA.md "WING remote mixer").
 - Build against a fresh `git clone`; validate Python with `py_compile`, extracted
   JS with `node --check` (neutralize Jinja first), and a full Jinja render.
 
@@ -1053,3 +1055,87 @@ only behavior; the Show Board (index.html) keeps its additive stacking.
 → 4 (largest; touches touch_config persistence + both toggle paths). Model
 guidance: Sonnet for 1/2/3; consider Opus for 4 if the exclusive-mode blend
 interacts with the stack in non-obvious ways.
+
+### Session handoff 2026-10-04 (Stage Messenger: WING remote mixer + listen-back)
+
+Built in the **StageMessenger** repo (not this one): commits `0aeb6e1` (v1) →
+`fbf5cb7` (v1.7) on `main`, deployed on the rack Pi (`Lights`) and validated live
+over cellular through the tunnel (~3 s audio latency). Everything lives in a new
+`mixer/` package; `server.py` gained a 7-line guarded hook (`init_mixer(app)` in a
+try/except — a mixer failure can never take down messaging).
+
+**Files (StageMessenger repo)**
+- `mixer/__init__.py` — Flask blueprint at `/mixer` + controller: config, SSE hub,
+  USB patch ownership, routing poll, patch/source-names, EQ/gate/dyn node API,
+  mute-group override, remote guard.
+- `mixer/wing.py` — OSC bridge (UDP 2223): `/*S` subscription renewed every 5 s,
+  liveness probe, typed writes, `query_many`, `poke`, `describe()` + parser for the
+  console's `'#'` node descriptions.
+- `mixer/meters.py` — native-protocol meter client (TCP 2222 ch 3 → UDP 14135),
+  keepalive every 3 s, only while a page is open.
+- `mixer/listen.py` + `mixer/picker.py` — listen-back: `arecord hw:WING` (48 ch
+  S24_3LE 48 k, 500 ms buffer) → `picker.py` (own process: slices the selected
+  channel pair, reports peaks + arecord overruns) → `ffmpeg` MP3 128 k →
+  fan-out. Starts on first listener, stops 10 s after the last. New listeners get a
+  ~1.5 s MP3 cushion aligned to a frame header (absorbs WING-vs-phone clock drift).
+- `mixer/mixer.html` — phone-first page (served from the package, not `public/`).
+- Runtime (gitignored, in `~/stage-messenger/`): `mixer_config.json`,
+  `mixer_state.json`.
+
+**Page features (as built)**
+- Listen bar: feed picker labelled from console names — Main LR, Monitor 1
+  (phones/solo), Bus 1–16, Mtx 1–4, Ambient (follows Ch 10's input source; label
+  from the source name). Meters, overrun count, resync button.
+- Collapsible mix grid (LR + 16 buses). Main faders: LR + Main 2 (SUBS). Channel
+  strips (ch 1–40, aux 1–8): console colour stripe, `$name`, source tag
+  (`CH 2 · Local 1`), fader with horizontal-gesture engage, post-fader meter (bus
+  view: input meter), S (solo) and MUTE. Bus view = sends-on-fader with send ON.
+- Solo: `/ch/N/$solo`; listening auto-follows to Monitor 1 while anything is
+  soloed and returns after; SOLO ✕ clears all.
+- Mute groups 1–8 with console names; group-muted strips show red **MG**.
+- Channel sheet (tap the name): **Input** (source patch picker w/ confirm,
+  preamp gain/48V/src polarity on the patched physical input — warns about other
+  strips sharing it, trim, low/high cut, channel polarity), **EQ** (live response
+  curve with draggable band handles, band g/f/q/type, mix; non-STD models get
+  generic controls), **Gate** / **Comp** (key meter + threshold marker, GR bar,
+  controls generated from the console's `'#'` description for whatever model is
+  loaded — all 32 dyn models work). Model changes are locked (console only).
+
+**Hard-won WING facts (fw 3.1, WING Rack) — also in mixer/wing.py docstring**
+- Query reply `[display, norm, native]`; the int `native` is the offset from the
+  range minimum, so 1-based params (`col`, `in/conn/in`, USB `in`) must be read
+  from `display`. `/*S` pushes carry the offset only.
+- Writes: faders/levels/trim/gain/freq need **float** (int ignored); switches int;
+  lists (gate ratio, PEQ/SHV) as option text.
+- `$name` / `$col` are what the console displays (follow the source when linked);
+  plain `name` can be stale (ch 2 read "LCL 9" while showing "Snare").
+- Re-patching pushes nothing → routing, `$mute`, mute groups and patched-source
+  settings are polled every 3 s.
+- `$mute`: 0 off, 1 own mute, 2 muted by group. **OSC writes to `$mute` are
+  ignored**, so the console's "override a group mute" is emulated by removing the
+  engaged groups' `#Mn` tags from the strip (verified to unmute), restored on the
+  second press, when the group is released from anywhere, or on Pi reconnect;
+  pending removals persist in `mixer_state.json`. Caveat: saving the show during
+  an override saves the strip outside the group.
+- Stereo internal taps are L/R pairs (`BUS` in 2b-1/2b = bus b). `MON` 1–2 = phones.
+- Meters: native protocol only (not OSC); ~21 frames/s; words /256 dB; gate/dyn GR
+  word 256 = model full scale.
+
+**Security**: everything is under `/mixer` (not Socket.IO, which singer pages
+share). Tunnel requests (`Cf-Connecting-Ip`) are refused unless
+`remote_enabled: true` AND a `Cf-Access-Jwt-Assertion` header is present. Server
+whitelists every writable address/endpoint and clamps to console ranges.
+
+**Open items / backlog**
+- Verify on hardware: list-type writes (gate Ratio, EQ band Type), dyn
+  attack/release writes, GR-bar scale vs the console's GR meter.
+- Listen is ONE shared feed: every listener hears the same source and a feed
+  change affects everyone. Possible upgrade: per-listener feeds (one encoder per
+  distinct feed — Pi 5 has headroom).
+- Data use: audio 128 k ≈ 58 MB/h per listener; meters ≈ 46 MB/h per open page.
+  Options if hotspot data matters: `"bitrate": "64k"` in mixer_config.json
+  (already supported), and a lower meter rate / page toggle (not built).
+- Not yet: bus/main/matrix processing, DCA faders, model changes, FX, scenes.
+- X32 Rack support (OSC 10023, X-USB 32×32) not started.
+- Deploy note: from the laptop use PowerShell + `git`; put commit messages in
+  **single quotes** (a `$` in double quotes expands and broke a commit).

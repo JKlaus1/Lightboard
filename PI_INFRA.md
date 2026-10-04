@@ -37,9 +37,12 @@ Records the things that are NOT in any app source file (network, tunnel, access,
 - Tunnel passes full path + query through, so auto-login links work over the domain.
 
 ## Cloudflare Access (Zero Trust, free tier)
-Two self-hosted apps, each Allow -> your email (one-time PIN):
+Three self-hosted apps, each Allow -> your email (one-time PIN):
 - `admin.stage-messenger.com`        — all of lightboard, locked to you.
 - `stage-messenger.com/control` (path) — locked to you (redundant; lightboard has message control).
+- `stage-messenger.com/mixer` (path)   — WING remote mixer + listen stream (added 2026-10-04).
+  Must cover subpaths (`/mixer/api/*`, `/mixer/stream.mp3`). Check: a fresh private window on
+  `/mixer/api/state` must get the Access login, not JSON or the Pi's 403.
 Singer sender/receiver pages on `stage-messenger.com` stay public.
 
 ## Singer join links (control.html "Create Join Link" — dual-path)
@@ -234,3 +237,34 @@ re-deriving the config from memory. Two gaps the wizard model doesn't cover:
   /etc/sudoers.d/lightboard-restart && sudo visudo -c`. If a non-interactive
   `ssh ... "sudo systemctl restart lightboard"` ever prompts again, check this
   first.
+
+
+## WING remote mixer (Stage Messenger `/mixer`, 2026-10-04)
+Code is in the StageMessenger repo (`mixer/`); this records the OS/hardware side.
+- **Hardware**: WING Rack USB-B -> Pi 5 USB (rack Pi `Lights`). Class-compliant, no driver:
+  ALSA card `WING` (`arecord -l` card 0), 48 ch in/out, S24_3LE, 48 kHz only.
+  `/proc/asound/WING/stream0` shows the format. Uses `arecord` (alsa-utils) + `ffmpeg`
+  (libmp3lame) — both already installed on the rack Pi; no new packages, no new units
+  (runs inside `stage-messenger.service`).
+- **Network**: WING at `192.168.0.91` (name `Josephs-Wing`, fw 3.1) on the eth0
+  `mixer-network` segment. eth0 is DHCP — give the WING (or Pi) a reservation, or update
+  `mixer_ip` if it moves. Discovery: UDP `WING?` -> 2222 bound to eth0.
+  Ports: OSC UDP 2223 (Pi ephemeral source), meters TCP 2222 + UDP 14135 inbound on the Pi.
+- **USB output patch is owned by the Pi** (rewritten on start/reconnect, re-checked on
+  listen and ~10 s after a recall changes it; "Re-patch USB" forces it):
+  USB 1-2 Main LR (`MAIN` 1/2), 3-34 Bus 1-16 (`BUS` 1..32), 35-42 Mtx 1-4 (`MTX` 1..8),
+  43 ambient (follows Ch 10's input source, fallback `B` 4), 47-48 Monitor 1 (`MON` 1/2).
+  USB 44-46 untouched. Don't use WING USB outs 1-43/47-48 for anything else.
+- **Runtime files** (in `/home/pi/stage-messenger/`, gitignored, NOT in any repo):
+  - `mixer_config.json` — currently `{"remote_enabled": true}`. Keys/defaults:
+    `mixer_ip` 192.168.0.91, `remote_enabled` false, `usb_patch` true,
+    `ambient.follow_channel` 10 / `grp` B / `in` 4, `bitrate` "128k".
+    Rebuild after an SD restore or the mixer is LAN-only (tunnel requests get 403).
+  - `mixer_state.json` — pending mute-group overrides (strip -> removed `#Mn` tags).
+    Safe to delete only when no override is active.
+- **Remote access** requires BOTH the Access app above and `remote_enabled: true`; the Pi
+  also refuses tunnel requests that arrive without Cloudflare's Access JWT header.
+  Kill switch: set `remote_enabled` false + `sudo systemctl restart stage-messenger`.
+- **Data use over the hotspot** (Pi upload): ~58 MB/h per active listener at 128k
+  (~29 MB/h at 64k) + ~46 MB/h per open mixer page (meters, 10 Hz). If the listening
+  phone is also the hotspot, its plan counts the traffic twice (Pi up + phone down).
