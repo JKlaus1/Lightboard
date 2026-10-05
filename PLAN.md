@@ -124,8 +124,9 @@ blackout/overlay/cycler (backward-compatible).
 - Pi: `pi@192.168.1.34`, dir `/home/pi/lightboard`, restart `sudo systemctl restart lightboard`.
 - Repo: https://github.com/JKlaus1/Lightboard.git (public). Pi pulls; phone (Termux) pushes.
 - Stage Messenger is a **separate app** (`/home/pi/stage-messenger/`) — not in this repo.
-  Since 2026-10-04 it also hosts the **WING remote mixer** at `/mixer` (see the session
-  handoff of that date at the end of this file, and PI_INFRA.md "WING remote mixer").
+  Since 2026-10-04 it also hosts the **WING remote mixer** at `/mixer` (see the two
+  session handoffs of 2026-10-04 at the end of this file — v1–v1.7, then v1.8–v2.2 — and
+  PI_INFRA.md "WING remote mixer" + "Low-latency listen (MediaMTX)").
 - Build against a fresh `git clone`; validate Python with `py_compile`, extracted
   JS with `node --check` (neutralize Jinja first), and a full Jinja render.
 
@@ -1139,3 +1140,133 @@ whitelists every writable address/endpoint and clamps to console ranges.
 - X32 Rack support (OSC 10023, X-USB 32×32) not started.
 - Deploy note: from the laptop use PowerShell + `git`; put commit messages in
   **single quotes** (a `$` in double quotes expands and broke a commit).
+
+### Session handoff 2026-10-04/05 (Stage Messenger mixer v1.8 → v2.2)
+
+Laptop session (PowerShell deploys). StageMessenger commits, all on `main`, deployed on
+the rack Pi and verified on hardware: `a3a99d3` v1.8 → `3d87b41` v1.9 → `5b9d2a4` v1.10 →
+`63462dc` v2.0 → `ef57387` v2.1 → `feafb3c` v2.2 (GitHub HEAD at close-out, hashes
+checked against the validated builds). OS-level additions are in PI_INFRA.md
+("Low-latency listen (MediaMTX)").
+
+**v1.8 — failures are visible (`a3a99d3`).** Trigger: a friend could hear audio but had no
+control and saw no updates. Server code never limited control to one user; root cause was
+an expired **Cloudflare Access session** (session duration was set to expire; Joseph
+raised it to 2 weeks): the MP3 stream was authorised once and kept playing while every
+SSE reconnect and POST bounced to the Access login, and the page swallowed the errors.
+- Every request is checked (`fetch` with `redirect: 'manual'`): red sticky banner with
+  the reason (sign-in expired / Cloudflare challenge / Pi unreachable / Pi rejected:
+  reason) + RELOAD; after a failure the page re-reads `/mixer/api/state` so it can't show
+  changes that never happened.
+- SSE watchdog: a dead stream (e.g. redirected to login = permanently CLOSED) is
+  diagnosed, shown as "No link to Pi", and rebuilt every 5 s.
+- Server: `after_request` logs every 4xx/5xx as `[mixer] REJECTED <code> <method> <path>
+  from tunnel <ip> (Access JWT yes/NO)`; the werkzeug quiet-filter now hides only 2xx.
+
+**v1.9 — layout, Buses, channel order (`3d87b41`).**
+- Section order: Listen → Main faders → Mute groups → (Recorder, v2.1) → Buses → Mix →
+  Channels.
+- Buses card (collapsible, open state per device in localStorage): 16 bus masters with
+  name/colour/fader/mute/meter (`/bus/N/fdr|mute`, meters `M.b`); header shows "N MUTED";
+  tapping a bus name selects that bus in Mix (sends on fader) and scrolls to it.
+- Channel order: Order button → compact rows with ≡ drag handles (only neighbours move,
+  so pointer capture holds; autoscroll near edges) → Done saves `POST /mixer/api/order`
+  → stored as `order` in `mixer_state.json`, broadcast (`t: order`) so every device
+  follows; Reset = console order. Page-only, never sent to the WING.
+
+**v1.10 — measured MP3 latency (`5b9d2a4`).** Per-stream id + start offset in the encoder
+(`/mixer/api/listenpos`) → page shows "behind live X s · network · buffer"; browser buffer
+held to `listen_target_s` (5 % fast / jump / reconnect if the browser won't seek); network
+catch-up reconnect when audio piles up in the tunnel; Pi cushion 1.5 → 0.5 s
+(`cushion_s`), per-listener queue capped (`max_queue_s`). Finding: cloudflared drains the
+Pi's queue instantly, so stalled audio waits *in the tunnel*, out of the Pi's reach. Result
+~2 s but hitchy at 0.8 s target (bursty arrival) → superseded by v2.0 for remote use.
+
+**v2.0 — low-latency WebRTC listen (`63462dc`).** Probe first: MediaMTX + Opus from the
+phone on the hotspot was "significantly better". As built:
+- One ffmpeg, two outputs via the tee muxer: MP3 (`pipe:1`, HTTP listeners) + Opus 96 k
+  (`-application lowdelay`) published to MediaMTX `rtsp://127.0.0.1:8554/listen`
+  (`onfail=ignore`, `use_fifo=1`: MediaMTX down never stops MP3).
+- Browser: `RTCPeerConnection` recvonly, complete (non-trickle) offer →
+  `POST /mixer/api/rtc/whep` (Flask proxy → MediaMTX `127.0.0.1:8889/listen/whep`, Location
+  rewritten to `/mixer/api/rtc/session/<uuid>`, DELETE on stop/pagehide) — so Cloudflare
+  Access still guards setup. ICE servers from `GET /mixer/api/rtc/config`: Cloudflare TURN
+  short-lived creds (Pi calls `rtc.live.cloudflare.com/v1/turn/keys/<id>/credentials/
+  generate-ice-servers`, cached, trimmed to STUN + TURN/UDP 3478 + TURN/TCP 3478 + TURNS
+  443) or STUN only without a key.
+- MediaMTX refuses readers until the path is publishing (404) → the WHEP proxy calls
+  `listener.hold_rtc(20)` and waits up to 6 s for `/v3/paths/get/listen` ready. Capture
+  stays up while MP3 clients OR MediaMTX readers exist (API polled every 2 s); 10 s idle
+  → stop. MediaMTX restart → encoder respawned in ~6 s without dropping MP3 listeners;
+  MediaMTX absent → no restart loop.
+- Page: tries WebRTC, falls back to MP3 with the reason shown; 3 reconnects then
+  fallback; 60 s hold before retrying after a failure; "Low latency / MP3 only" toggle
+  per device; readout from `getStats` (jitter buffer, RTT, route: direct/relay). iOS:
+  `srcObject` + `play()` set synchronously inside the tap.
+- Verified: local "direct", remote "via Cloudflare relay", latency "significantly
+  improved". TURN key entered on the Pi (see PI_INFRA).
+
+**v2.1 — WING-LIVE recorder (`ef57387`).** Recorder card (hidden unless `/cards/$type` =
+`WLIVE`), rows for SD A/B: state badge, elapsed clock (extrapolated locally), free time
+(amber < 15 min), card state/errors, marker count + last 4 markers. REC = tap; STOP =
+1 s hold; big MARKER marks every recording card. `POST /mixer/api/rec {action: rec|stop|
+marker, card: 1|2|'all'}` — validates `sdstate` READY / recording, logs every press.
+etime/sdfree pushes (10 Hz from the console) throttled to 2/s per card. Marker list read
+from the `$stat` node description on count/state change (`t: recm`). Hardware-tested.
+
+**v2.2 — Main/Alt inputs (`feafb3c`).** MAIN|ALT switch (confirm) in the Recorder card →
+`/io/altsw`; amber pulsing "INPUTS ON ALT" header badge; strips show the source actually
+heard ("ALT · Card 10" in amber) from `in/conn/altgrp|altin` + `in/set/altsrc`; selectors
+for the card's own automation `/cards/wlive/auto_play|auto_rec|auto_stop` (KEEP/MAIN/
+ALT). `/io/altsw` + `auto_*` whitelisted in `/api/set` and logged. Hardware-tested.
+
+**Hard-won WING facts added this session (fw 3.1) — also in mixer/wing.py docstring**
+- WING-LIVE: `/cards/wlive/{1,2}/$ctl/control` takes text `REC`/`STOP`/`PLAY`/`PPAUSE`.
+  `PPAUSE` is ignored while recording (no record-pause); REC while recording is a no-op.
+  `$ctl/setmarker` int 1 adds one marker and self-resets. `$stat/state|etime|sdfree|
+  markers|markerlist|sessions` are pushed via `/*S` (etime/sdfree/sessionlen in ms).
+  `/cards/wlive/sdlink` IND/PAR links the two cards (Joseph: IND).
+- List params: a **query returns `[text, norm, index]`, a push returns the text** — read
+  `args[0]` for recorder lists. A list's full option set (marker/session lists) only
+  exists in the `'#'` node description.
+- `$`-paths were dropped by the push filter; `/cards/…` is now let through.
+- Alt: every channel has `in/conn/altgrp` + `altin` (1-based like `in`, read from the
+  display arg). `/io/altsw` (int) is console-wide, OSC-writable, pushed; `in/set/altsrc`
+  (r/o, ch 1–40) follows it; `$name/$col/$icon` follow the active source.
+- Playback (probed, not built): `opensession N` is 1-based in `sessionlist` order (card A:
+  #1 = 2026-09-26 20:11:54, 1 h 56 m, 0 markers; #2 = 19:04:20, 34 m, 6 markers). `PLAY`
+  plays, `PPAUSE` is a real pause, `PLAY` resumes. `gotomarker 2` untested (session 1 had
+  no markers). `stime` had no effect while playing — **Joseph: the play head can be moved
+  while paused, not while playing**.
+- Page gotcha: `postSet()` suppresses the echo of an address for 500 ms (anti-jitter while
+  dragging); controls whose *confirmation* is the console's push (`/io/altsw`) must post
+  without it.
+
+**Left on the hardware**: card B holds a 15 s test session (3 markers) from the write
+probe — delete at the console. Card A's open session was moved to #1 by the playback
+probe (harmless). Probe outputs on the Pi: `~/wing_rec_probe.txt`,
+`~/wing_rec_write_probe.txt`, `~/wing_alt_probe.txt`, `~/wing_alt_watch.txt`,
+`~/wing_alt_write.txt`, `~/wing_play_probe.txt`.
+
+**Next session — agreed order**
+1. **v2.3 card playback** in the Recorder card: session picker (`opensession`, 1-based list
+   order), PLAY / PAUSE / STOP, position + session length, jump to marker. Seeking only
+   while paused (Joseph) — first re-probe `stime` and `gotomarker` while PAUSED on card A
+   session #2 (6 markers). Ties into v2.2's On-play → Alt automation.
+2. **v2.4 Pi → WING audio**: Spotify Connect on the Pi (librespot via Raspotify;
+   **Joseph has Premium**) → WING USB in 1/2 → **AUX 1** (stereo, keeps all 40 mic inputs
+   free; patch aux 1 to USB 1/2). Pi playback verified possible: `hw:WING` playback =
+   48 ch S24_3LE 48 kHz (same as capture). Plan: one shared ALSA output (dmix → plug
+   ttable, Spotify on ch 1-2; verify dmix accepts S24_3LE on the WING), Raspotify service
+   (OAuth, device name e.g. "Stage Rig"), a "Pi playback" strip on `/mixer` (level/mute/
+   now playing from librespot `--onevent`), optional page upload-and-play. Control stays
+   in the Spotify app (works across networks when logged into the same account; turn off
+   "Show local devices only"). **No Bluetooth** (not needed).
+
+**Backlog carried (mixer)**: hardware-verify gate Ratio / EQ band Type list writes, dyn
+attack/release, GR-bar scale; per-listener feeds (today one shared feed); data-saving
+meter toggle (meters ~46 MB/h per open page now exceed Opus audio ~43 MB/h); bus/main/mtx
+processing, DCA, FX, scenes; v1.11 adaptive MP3 jitter buffer (aim at buffer low-water
+mark, grow after stalls) — only matters for the fallback path now; packaging for other
+WING owners → X32 Rack. Deploy note: PowerShell commit messages in single quotes;
+attribution via `--trailer`.

@@ -6,6 +6,8 @@ Records the things that are NOT in any app source file (network, tunnel, access,
 - Pi 5, hostname `Lights` / `lights.local` (mDNS), Debian 13 (Trixie), NetworkManager.
 - App services (Flask, run as user `pi`): `lightboard` (:5000), `stage-messenger` (:3000).
 - `cloudflared` (systemd service, runs as root) — Cloudflare tunnel.
+- `mediamtx` (systemd service, user `pi`, since 2026-10-04) — WebRTC relay for the
+  mixer's low-latency listen. See "Low-latency listen (MediaMTX)" below.
 
 ## Networking (NetworkManager profiles on the Pi)
 - `netplan-wlan0-Lindentree` — home WiFi (netplan-managed).
@@ -260,11 +262,55 @@ Code is in the StageMessenger repo (`mixer/`); this records the OS/hardware side
     `mixer_ip` 192.168.0.91, `remote_enabled` false, `usb_patch` true,
     `ambient.follow_channel` 10 / `grp` B / `in` 4, `bitrate` "128k".
     Rebuild after an SD restore or the mixer is LAN-only (tunnel requests get 403).
-  - `mixer_state.json` — pending mute-group overrides (strip -> removed `#Mn` tags).
-    Safe to delete only when no override is active.
+  - `mixer_state.json` — pending mute-group overrides (strip -> removed `#Mn` tags) and,
+    since v1.9, `order` (shared channel display order). Safe to delete only when no
+    override is active (order resets to console order).
 - **Remote access** requires BOTH the Access app above and `remote_enabled: true`; the Pi
   also refuses tunnel requests that arrive without Cloudflare's Access JWT header.
   Kill switch: set `remote_enabled` false + `sudo systemctl restart stage-messenger`.
 - **Data use over the hotspot** (Pi upload): ~58 MB/h per active listener at 128k
   (~29 MB/h at 64k) + ~46 MB/h per open mixer page (meters, 10 Hz). If the listening
   phone is also the hotspot, its plan counts the traffic twice (Pi up + phone down).
+
+## Low-latency listen (MediaMTX, StageMessenger v2.0, 2026-10-04)
+WebRTC listen-back for `/mixer` (Opus, ~0.3–0.8 s) with the MP3 stream as automatic fallback.
+- **Binary** (not in any repo, not apt): MediaMTX **v1.21.1** linux_arm64 in `/home/pi/mediamtx/`
+  (pinned — the version the code was tested against). Install / reinstall:
+    mkdir -p ~/mediamtx && curl -fsSL https://github.com/bluenviron/mediamtx/releases/download/v1.21.1/mediamtx_v1.21.1_linux_arm64.tar.gz | tar -xz -C ~/mediamtx && ~/mediamtx/mediamtx --version
+  (The tarball's own `mediamtx.yml` in that folder is unused.)
+- **Unit**: `/etc/systemd/system/mediamtx.service`, copied from the StageMessenger repo
+  `mixer/mediamtx.service`; enabled. Runs `~/mediamtx/mediamtx ~/stage-messenger/mixer/mediamtx.yml`.
+    sudo cp ~/stage-messenger/mixer/mediamtx.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now mediamtx
+- **Config**: `mixer/mediamtx.yml` is tracked in the StageMessenger repo; MediaMTX hot-reloads
+  it on change (a `git pull` is enough). Healthy log: RTSP `127.0.0.1:8554`, WebRTC
+  `127.0.0.1:8889` + `:8189 (UDP/ICE)`, API `127.0.0.1:9997`.
+- **Ports**: only **UDP 8189** listens on all interfaces (audio packets). RTSP (publisher =
+  the mixer's ffmpeg), WHEP (setup, proxied by Flask under `/mixer/api/rtc/*` so Cloudflare
+  Access guards it) and the API (Flask checks readiness/listener count) are localhost-only.
+  STUN `stun.cloudflare.com:3478` lets the Pi learn its public address behind the hotspot.
+- **Cloudflare TURN** (remote listeners): key created in the Cloudflare dashboard (Realtime →
+  TURN, https://dash.cloudflare.com/?to=/:account/calls). Pricing: first 1,000 GB free, then
+  $0.05/GB; Opus 96 k ≈ 43 MB/h per listener. Browsers may reach TURN over UDP 3478, TCP
+  3478 or TLS 443; Cloudflare relays UDP to the Pi.
+- **`mixer_config.json`** (gitignored) additions — defaults in `mixer/__init__.py`:
+  - `rtc`: `enabled` true, `turn_key_id`, `turn_api_token` (secret — lives only in this
+    file), `turn_ttl` 86400, `opus_bitrate` "96k", plus localhost `rtsp`/`api`/`whep` URLs.
+  - MP3 fallback tuning: `cushion_s` 0.5, `max_queue_s` 1.0, `listen_target_s` 0.8
+    (Joseph may have set 1.5 on 2026-10-04 to stop hitching — check the file).
+  - Re-enter the TURN key after an SD restore (prompts; token not echoed or kept in history):
+      cd ~/stage-messenger && read -p 'TURN Key ID: ' KID && read -s -p 'TURN API token: ' TOK && echo && KID="$KID" TOK="$TOK" python3 -c "import json,os;p='mixer_config.json';c=json.load(open(p));c.setdefault('rtc',{}).update(turn_key_id=os.environ['KID'].strip(),turn_api_token=os.environ['TOK'].strip());json.dump(c,open(p,'w'),indent=2);print('saved TURN key', c['rtc']['turn_key_id'][:6]+'…')" && sudo systemctl restart stage-messenger
+    (`read -s` shows nothing while pasting — paste, then Enter.)
+- **Without MediaMTX** everything still works on MP3; the page says why ("MediaMTX is not
+  running on the Pi"). Kill switch: `"rtc": {"enabled": false}` + restart stage-messenger.
+- **Data use** (Pi upload over the hotspot): WebRTC ≈ 43 MB/h per listener; MP3 fallback
+  ≈ 58 MB/h at 128 k; mixer page meters ≈ 46 MB/h per open page.
+- Diagnostics: `journalctl -u mediamtx -n 30 --no-pager` (sessions), and
+  `curl -s http://127.0.0.1:9997/v3/paths/get/listen` (ready + readers).
+
+## WING-LIVE recorder & Main/Alt (StageMessenger v2.1–v2.2, 2026-10-04)
+No OS changes. The WING Rack has a WING-LIVE card (`/cards/$type` = WLIVE; two 128 GB SD
+cards, `sdlink` IND). Channels' ALT sources point at the card (`altgrp` CRD). The Pi drives
+REC/STOP/markers and `/io/altsw` over the existing OSC link; card/alt state is pushed by
+the console. Next (v2.4): the Pi will also **play into** the WING over the same USB link —
+`hw:WING` playback is 48 ch S24_3LE 48 kHz (verified with `aplay --dump-hw-params`), target
+USB in 1/2 → AUX 1.
