@@ -8,6 +8,8 @@ Records the things that are NOT in any app source file (network, tunnel, access,
 - `cloudflared` (systemd service, runs as root) — Cloudflare tunnel.
 - `mediamtx` (systemd service, user `pi`, since 2026-10-04) — WebRTC relay for the
   mixer's low-latency listen. See "Low-latency listen (MediaMTX)" below.
+- `go-librespot` (systemd service, user `pi`, since 2026-10-05) — Spotify Connect speaker
+  "Stage Rig" playing into WING USB 1/2 → AUX 1. See "Spotify → WING (go-librespot)" below.
 
 ## Networking (NetworkManager profiles on the Pi)
 - `netplan-wlan0-Lindentree` — home WiFi (netplan-managed).
@@ -217,6 +219,16 @@ re-deriving the config from memory. Two gaps the wizard model doesn't cover:
   Note: `install.sh`'s guided tunnel steps (printed when no creds are found)
   now fork on this — step 2 checks `tunnel list`, with a 3a restore-existing
   path (`tunnel token`) and a 3b new-tunnel path (`tunnel create`).
+- **Stage Messenger mixer extras (not covered by install.sh)** — after the base restore and
+  `git clone` of StageMessenger into `~/stage-messenger`, in this order:
+    1. `mixer_config.json` — recreate (`{"remote_enabled": true}` + anything below); it is
+       gitignored. See "WING remote mixer".
+    2. MediaMTX binary + unit + TURN key — see "Low-latency listen (MediaMTX)".
+    3. Spotify: `ssh -t pi@lights.local "bash ~/stage-messenger/mixer/setup_pi_playback.sh"`
+       (asound.conf, WirePlumber rule, go-librespot download — needs internet), then
+       `ssh -t pi@lights.local "bash ~/stage-messenger/mixer/setup_spotify.sh"` (unit, sudoers,
+       sign-in: approve the spotify.com/pair code). Search key: /mixer → Spotify → Library →
+       Search → "Set up search" (or `mixer/set_spotify_search.sh`). See "Spotify → WING".
 
 
 ## Lights-Rig AP clients & deploy-over-AP (2026-07-11)
@@ -311,6 +323,72 @@ WebRTC listen-back for `/mixer` (Opus, ~0.3–0.8 s) with the MP3 stream as auto
 No OS changes. The WING Rack has a WING-LIVE card (`/cards/$type` = WLIVE; two 128 GB SD
 cards, `sdlink` IND). Channels' ALT sources point at the card (`altgrp` CRD). The Pi drives
 REC/STOP/markers and `/io/altsw` over the existing OSC link; card/alt state is pushed by
-the console. Next (v2.4): the Pi will also **play into** the WING over the same USB link —
-`hw:WING` playback is 48 ch S24_3LE 48 kHz (verified with `aplay --dump-hw-params`), target
-USB in 1/2 → AUX 1.
+the console. v2.3–v2.3.2 (2026-10-05) added card playback, scrub and marker editing — all over
+the same OSC link, **no OS changes** (WING facts in PLAN.md / `mixer/wing.py`). The Pi also
+**plays into** the WING over the same USB link since v2.4 — see "Spotify → WING (go-librespot)".
+
+## Spotify → WING (go-librespot, StageMessenger v2.4–v2.5.1, 2026-10-05)
+Spotify Connect speaker **"Stage Rig"** on the rack Pi → WING USB in 1/2 → **AUX 1** → Main.
+Controlled from the Spotify app (any network, same account) and from /mixer (Spotify card:
+transport, seek, Library = playlists / start from a song / queue / up next / search).
+- **Audio path**: go-librespot (ALSA) → `wing_pi` (plug → route 2→48 ch) → `wing_dmix` (dmix,
+  48 ch S24_3LE 48 kHz, period 1024 / buffer 4096, `ipc_perm 0666`) → `hw:WING` playback. Capture
+  (listen-back `arecord -D hw:WING`) is a separate stream and runs alongside (verified). Console
+  side was already set: USB 1/2 = stereo pair ("USB 1/2"), AUX 1 source USB 1, AUX 1 → Main
+  0 dB. The **AUX 1 fader is the only volume** (go-librespot runs fixed full scale).
+- **PipeWire**: the kiosk desktop session (lightdm → openbox → Chromium) runs PipeWire +
+  WirePlumber as `pi`, which claimed the WING as a sink/source. A WirePlumber 0.5 rule disables
+  any `alsa_card.usb-BEHRINGER_WING*` for that session, so nothing in the desktop can lock or
+  play into the console. Verify: `wpctl status | grep WING` → no output.
+- **Files** (tracked in the StageMessenger repo `mixer/` → deployed location on the Pi):
+    mixer/asound.conf                      -> /etc/asound.conf                (setup_pi_playback.sh)
+    mixer/51-wing-ignore.conf              -> ~/.config/wireplumber/wireplumber.conf.d/
+    mixer/go-librespot.yml                 -> ~/.config/go-librespot/config.yml (SYMLINK — git pull updates it;
+                                              takes effect on `sudo systemctl restart go-librespot.service`)
+    mixer/go-librespot.service             -> /etc/systemd/system/            (enabled)
+    mixer/stage-messenger-spotify.sudoers  -> /etc/sudoers.d/stage-messenger-spotify (0440; NO dot in the name)
+  Scripts (idempotent, run with `ssh -t` — they ask for the pi sudo password once):
+  `mixer/setup_pi_playback.sh` (step A: asound.conf, WirePlumber rule, tone test, go-librespot
+  download), `mixer/setup_spotify.sh` (step B: config link, unit, sudoers, sign-in, playback
+  check), `mixer/set_spotify_search.sh` (search key; `--remove` to clear).
+- **Binary** (not in any repo, not apt): go-librespot **v0.10.3** linux_arm64 (released
+  2026-10-03) in `~/go-librespot/releases/v0.10.3/`, symlink `~/go-librespot/go-librespot`,
+  `~/go-librespot/VERSION`, and that release's `config_schema.json` beside it. Dynamically
+  linked; all libraries present on Trixie. Upgrade / pin:
+    GOLIBRESPOT_VERSION=v0.x.y bash ~/stage-messenger/mixer/setup_pi_playback.sh
+  then validate `mixer/go-librespot.yml` against the NEW `config_schema.json` (unknown keys are
+  fatal: `additionalProperties: false`) and `sudo systemctl restart go-librespot.service`.
+- **Config highlights** (`mixer/go-librespot.yml`): `device_name: Stage Rig`, `device_type:
+  speaker`, `audio_device: wing_pi`, `bitrate: 320`, `external_volume: true` (app slider does
+  nothing), `disable_autoplay: true` (stops at the end of a playlist/album), `credentials.type:
+  device_auth` + `zeroconf_enabled: false` (only this account sees it; nobody on venue Wi-Fi can
+  take it over), `prefer_firewall_friendly_ports: true`, `metadata.enabled: true` (song lists),
+  `server` on **127.0.0.1:3678 only** — Stage Messenger proxies it under /mixer (Cloudflare Access).
+- **Credentials — NOT in git, re-enter after an SD restore**:
+  - Spotify login: `~/.config/go-librespot/state.json` (signed in as `magickbob`, 2026-10-05).
+    **Re-pair**: /mixer → Spotify → ⋯ → Sign out & re-pair (shows the new code on the card), or
+    `sudo systemctl stop go-librespot.service; rm ~/.config/go-librespot/state.json;
+    sudo systemctl start go-librespot.service` and read the code in
+    `journalctl -u go-librespot -n 20` (or run `mixer/setup_spotify.sh`).
+  - Search key: `mixer_config.json` → `spotify.search_client_id`, `search_client_secret`,
+    `search_saved_at`. Your own Spotify developer app (client-credentials, app-only — searches
+    the public catalogue, never touches the account). The public Web API refuses
+    go-librespot's session token (429), hence the separate app.
+- **Search key renewal** (Spotify dashboard: secret lasts **180 days**; `search_secret_days`):
+  current key saved 2026-10-05 → **renew by ~2027-04-03**. /mixer warns 21 days ahead (amber
+  `SEARCH KEY N D` chip on the Spotify card) and turns red if Spotify refuses the key. Renew:
+  developer.spotify.com/dashboard → the app → **ROTATE** the client secret (old one dies
+  immediately) → /mixer Library → Search → paste → **TEST & SAVE** (saved only if a real search
+  works; no restart). Fallback: `ssh -t pi@lights.local "bash ~/stage-messenger/mixer/set_spotify_search.sh"`.
+- **Kill switch**: card → hold DISCONNECT (go-librespot `/player/stop`, no sudo) or ⋯ → Restart
+  (needs the sudoers drop-in; without it the page shows the refusal). From SSH:
+  `sudo systemctl restart go-librespot.service` (passwordless via the drop-in).
+- **`mixer_config.json` → `spotify`** (defaults in `mixer/__init__.py`): `enabled` true, `api`
+  http://127.0.0.1:3678, `aux` 1, `config_dir`, `market` US, the search key fields above.
+  Kill switch for the whole card: `"spotify": {"enabled": false}` + restart stage-messenger.
+- **Data use**: Spotify at 320 kbps ≈ 144 MB/h over the Pi's uplink (counts on the hotspot);
+  `bitrate: 160` in go-librespot.yml halves it.
+- **Diagnostics**: `systemctl status go-librespot`, `journalctl -u go-librespot -n 30 --no-pager`,
+  `curl -s 127.0.0.1:3678/status` (204 = not signed in), `curl -s 127.0.0.1:3678/auth/code`,
+  `cat /proc/asound/WING/pcm0p/sub0/status` (RUNNING while playing),
+  `journalctl -u stage-messenger | grep spotify` (every command / kill / key change is logged).

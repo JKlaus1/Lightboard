@@ -1270,3 +1270,127 @@ processing, DCA, FX, scenes; v1.11 adaptive MP3 jitter buffer (aim at buffer low
 mark, grow after stalls) — only matters for the fallback path now; packaging for other
 WING owners → X32 Rack. Deploy note: PowerShell commit messages in single quotes;
 attribution via `--trailer`.
+
+### Session handoff 2026-10-05 (Stage Messenger mixer v2.3 → v2.5.1: card playback, Spotify)
+
+Laptop session (PowerShell deploys). StageMessenger commits, all on `main`, deployed on the
+rack Pi and verified on hardware: `d8632c5` v2.3 → `e5b99ec` v2.3.1 → `26efdbd` v2.3.2 →
+`dbc6e40` v2.4 step A → `3386e75` v2.4 step B → `67f9df6` v2.4 step C → `cef7fe1` v2.5 →
+`880dc2f` v2.5.1 (GitHub HEAD at close-out; every commit compared file-for-file against the
+validated build). OS-level additions: PI_INFRA.md "Spotify → WING (go-librespot)". BOOT_FIX.md
+unchanged.
+
+Every build was validated off-hardware against stateful fakes (WING OSC, go-librespot API,
+Spotify accounts/Web API) with a Flask test-client API suite + a jsdom end-to-end page suite
+per feature (fake servers, page loaded from the real blueprint). The harness lives only in the
+session scratchpad — NOT in the repo (backlog: commit it as `mixer/tests/`).
+
+**v2.3 — WING-LIVE card playback (`d8632c5`).** Recorder card rows gained a collapsible
+Playback panel per SD card (auto-opens while that card plays; hidden while it records):
+session picker (`#n  26 Sep 2026 · 19:04:20`, from the `sessionlist` description, trailing
+`10` stripped, newest first = console order) → `opensession n`; PLAY / PAUSE / RESUME; STOP is a
+plain tap (rewinds to 0:00); position / length (`etime` / `sessionlen`, native ms) with local
+extrapolation; progress bar with marker ticks; marker chips (`◆3 13:53`) → `gotomarker n`,
+current `markerpos` highlighted. Server `POST /mixer/api/play {card, action, n}` — refuses while
+recording / no SD, every press logged (`[mixer] playback: GOTO 3 card A (was STOP) from …`).
+`/api/rec` now refuses REC while that card plays. etime/sdfree throttle (2/s) gained a
+trailing-edge publish so the final position (pause, jump) is never the dropped one.
+
+**v2.3.1 — scrub (`e5b99ec`).** Found by probing the console itself (watch mode: Joseph
+scrubbed on the Rack while a probe logged pushes): seek = `$ctl/stime` (float ms) then
+`$ctl/gotomarker 101`. Verified from OSC paused, stopped AND playing (the console UI only
+offers it paused). Page: draggable scrub bar (time bubble, one seek on release, target held
+until the push confirms or 1.5 s), nudges −30/−10/+10/+30 s (stack), marker chips work in
+every state (while playing a chip seeks to the marker's time; paused/stopped it uses
+`gotomarker n`). `POST /api/play {action:'seek', ms}` clamped to 0…sessionlen.
+
+**v2.3.2 — markers anytime (`26efdbd`).** `/api/play` actions `mark` (setmarker at the play
+head), `movemark n` (editmarker → marker n moves to the play head), `delmark n`
+(deletemarker); all any state but recording, all write to the SD card, logged with times
+(`MOVEMARK 1 (00:05:29.23 -> 25:30)`); the marker list is re-read at 0.4 + 1.5 s (editmarker
+pushes nothing useful). Page: "◆ ADD MARKER @ m:ss" per card, long-press a chip (0.6 s) →
+Move ◆n here / Delete ◆n (confirm). Big ◆ MARKER: recording cards if any record (unchanged
+show behaviour), else every playing/paused card; label says which ("· A+B (playback)").
+
+**v2.4 — Spotify → WING AUX 1 (steps A/B/C).**
+- Step A (`dbc6e40`, OS): `/etc/asound.conf` with `wing_dmix` (shared 48 ch S24_3LE on
+  `hw:WING`) + `wing_pi` (stereo → USB in 1/2); WirePlumber rule so the kiosk session's
+  PipeWire ignores the WING; go-librespot binary downloaded. Probe findings: dmix works on the
+  WING's 48 ch S24_3LE, two players mix, capture opens alongside playback; the console was
+  ALREADY patched (USB 1/2 stereo pair → AUX 1 → Main at 0 dB, AUX 1 fader −∞) — no WING writes.
+- Engine choice: **go-librespot** (v0.10.3), not Raspotify — it has a local control API +
+  status/events + internal-API library endpoints, no Spotify developer app needed.
+- Step B (`3386e75`): `mixer/go-librespot.yml` (Stage Rig, device-code sign-in, zeroconf off,
+  fixed volume `external_volume`, `disable_autoplay`, 320 kbps, firewall-friendly ports, API
+  127.0.0.1:3678), unit, `setup_spotify.sh` (pairing banner with spotify.com/pair code, waits,
+  playback check incl. `/proc/asound/WING/pcm0p/sub0/status` RUNNING). Signed in as
+  `magickbob`; played from the phone through AUX 1.
+- Step C (`67f9df6`): new `mixer/spotify.py` (stdlib; polls `/status` ~1/s with a page open,
+  10 s otherwise; pushes `{t:'sp'}` on change + 5 s re-anchor while playing; commands
+  whitelisted/clamped). Card (between Recorder and Buses): art/title/artist/album, badge,
+  seekable progress, ⏮ ⏯ ⏭ shuffle repeat(off→all→track), the AUX 1 strip pinned to the aux's
+  own fader (built with `buildRow`, kept out of `rows` so order/solo/sheet ignore it; painted
+  via `eachRow`), hold-to-Disconnect (`/player/stop`), ⋯ Restart / Sign out & re-pair (via
+  `sudo -n systemctl …` — new `mixer/stage-messenger-spotify.sudoers`), pairing panel (code,
+  link, countdown). Routes `/mixer/api/sp/cmd`, `/mixer/api/sp/service`.
+
+**v2.5 — Library (`cef7fe1`).** Probe: go-librespot's internal-API endpoints work
+(`/library/playlists` returned all 22 playlists in 0.1 s); the session token from `/token` is
+**429 on every public Web API call** (search, /me, queue) — unusable. Built: ♫ LIBRARY sheet
+(Playlists · Up next · Search). Playlists (Liked Songs first, folders), song lists via
+`/context/tracks` (progressive: `ready`/`cached` polled, needs `metadata.enabled: true` in
+go-librespot.yml), tap a song = `play {uri: playlist, skip_to_uri: song}` (confirm if something
+is playing), hold = queue bar (+ QUEUE / ▶ PLAY), ▶ PLAY / ⤮ SHUFFLE (shuffle set BEFORE
+play). Up next = rest of the current context after the playing song (+ `next_track`); songs
+queued from a phone are not visible (go-librespot doesn't expose the queue). Search = the
+user's own Spotify developer app, client-credentials (app-only, never the account),
+`set_spotify_search.sh`; song hits play inside their album from that song. Names always set
+as text (injection-tested). Routes `/mixer/api/sp/playlists|tracks|search`, cmd `play|queue`.
+
+**v2.5.1 — rename + search key lifecycle (`880dc2f`).** Card renamed "Pi playback" →
+"Spotify". The Spotify dashboard shows the client secret lasting 180 days (Spotify's docs only
+mention the ROTATE button): `spotify.search_saved_at` (stamped on first start if missing —
+the live key counts from **2026-10-05, renewal due ~2027-04-03**), `search_secret_days` 180.
+Amber `SEARCH KEY N D` chip from 21 days out; red on expiry OR the moment Spotify refuses the
+key (logged once). Library → Search has the guided renewal (dashboard link → ROTATE → paste →
+TEST & SAVE): `POST /mixer/api/sp/search_creds` tests a real search, saves only if it works
+(atomic write, other config keys kept, no restart), never echoes or logs the secret. Also does
+first-time setup from the page.
+
+**Hard-won facts (also in mixer/wing.py + mixer/spotify.py docstrings)**
+- WING-LIVE playback (fw 3.1): `control` PLAY / PPAUSE / STOP (STOP rewinds to 0:00);
+  `opensession N` 1-based in `sessionlist` order; `sessionpos` = open session; `gotomarker N`
+  1-based, works paused/stopped, pushes etime + markerpos, self-resets. **Seek = `stime` float
+  + `gotomarker 101`** (101 = "go to stime"); `stime` alone and int `stime` do nothing; a bare
+  `$stat/etime` write doesn't move the head (it is echoed and even updates markerpos —
+  misleading), though `etime` write + a second `PPAUSE` did move it once (probe 3 test E) — not
+  used: stime + 101 is the console's own method.
+  `setmarker 1` adds at the play head in any state; `editmarker N` moves marker N to the play
+  head; `deletemarker N` deletes. etime pushes ~7/s while playing. Display time strings are
+  inconsistent (`0:02:90`, `1:56:30:40`) — use native ms. `$stat/start`/`stop` writes accepted
+  but don't change where PLAY starts.
+- go-librespot v0.10.3: `--config_dir`; config.yml schema has `additionalProperties: false`
+  (validate against the release's own `config_schema.json`, saved next to the binary);
+  `device_auth` stores credentials in `state.json`, an expired code exits → systemd restarts →
+  new code; `/auth/code` exposes the pending code; `/status` 204 = no session; covers are
+  public `https://i.scdn.co` URLs; `/player/stop` = stop AND disconnect; shuffle must be set
+  BEFORE `/player/play` to start shuffled.
+- Spotify public Web API with librespot-derived tokens: 429 on everything (2026-10-05).
+- Pi: `sudo -n` is NOT generally passwordless (only the sudoers drop-ins) — scripts needing
+  root ask once and are run with `ssh -t`. The rack Pi's desktop session runs PipeWire.
+- Bash gotchas met: bare `wait` with `exec > >(tee …)` deadlocks (bash 5.1+ waits on the
+  process substitution); a `"` inside `python3 -c "…"` ends the shell string;
+  `pkill -f name` can match the invoking shell's own command line.
+
+**Left on the hardware**: card B holds test recordings/markers made during v2.3.2 testing
+(Joseph recorded a short session at 01:27) — tidy at the console. Probe outputs in `~/` on
+the Pi: `wing_seek_probe{,2,3,4}.txt`, `wing_marker_probe.txt`, `pi_audio_probe.txt`,
+`setup_pi_playback.txt`, `setup_spotify.txt`, `spotify_api_probe.txt` (+ the probe scripts).
+
+**Backlog (mixer/Spotify)**: commit the fake-server test harness to the repo; one-tap preset
+playlist buttons ("Walk-in", "Break"); Up next can't show phone-queued songs (go-librespot
+limit — revisit if it adds a queue endpoint); Spotify streaming data (320 kbps ≈ 144 MB/h on
+the hotspot — `bitrate: 160` halves it); carried from v2.2: list-write verification (gate
+Ratio, EQ Type), per-listener feeds, meter data toggle, bus/main/mtx processing, DCA, FX,
+scenes, X32 support. Deploy note unchanged: PowerShell, single-quoted commit messages,
+attribution via `--trailer`, check base hash before copying files.
