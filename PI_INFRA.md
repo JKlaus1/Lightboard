@@ -265,17 +265,21 @@ Code is in the StageMessenger repo (`mixer/`); this records the OS/hardware side
   `mixer_ip` if it moves. Discovery: UDP `WING?` -> 2222 bound to eth0.
   Ports: OSC UDP 2223 (Pi ephemeral source), meters TCP 2222 + UDP 14135 inbound on the Pi.
 - **USB output patch is owned by the Pi** (rewritten on start/reconnect, re-checked on
-  listen and ~10 s after a recall changes it; "Re-patch USB" forces it):
-  USB 1-2 Main LR (`MAIN` 1/2), 3-34 Bus 1-16 (`BUS` 1..32), 35-42 Mtx 1-4 (`MTX` 1..8),
-  43 ambient (follows Ch 10's input source, fallback `B` 4), 47-48 Monitor 1 (`MON` 1/2).
-  USB 44-46 untouched. Don't use WING USB outs 1-43/47-48 for anything else.
+  listen and ~10 s after a recall changes it; "Re-patch USB" forces it). **v3.9 layout
+  (2026-10-06; not yet run on the WING):** USB 1-32 Bus 1-16 (`BUS` 1..32), 33-40 Mtx 1-4
+  (`MTX` 1..8), 42 ambient (the Ch chosen on the Listen card's Mic picker, default Ch 10;
+  fallback `B` 4), 43-44 Main LR (`MAIN` 1/2), 45-46 Main 2 / subs (`MAIN` 3/4 — verify by
+  ear), 47-48 Monitor 1 (`MON` 1/2). USB 41 untouched. Before v3.9: Main 1-2, Bus 3-34,
+  Mtx 35-42, ambient 43. Don't use WING USB outs 1-40/42-48 for anything else.
 - **Runtime files** (in `/home/pi/stage-messenger/`, gitignored, NOT in any repo):
   - `mixer_config.json` — currently `{"remote_enabled": true}`. Keys/defaults:
     `mixer_ip` 192.168.0.91, `remote_enabled` false, `usb_patch` true,
-    `ambient.follow_channel` 10 / `grp` B / `in` 4, `bitrate` "128k".
+    `ambient.follow_channel` 10 / `grp` B / `in` 4, `bitrate` "128k",
+    v3.9 `capture` {wing: hw:WING 48 ch, x32: hw:XLIVE 32 ch}.
     Rebuild after an SD restore or the mixer is LAN-only (tunnel requests get 403).
   - `mixer_state.json` — pending mute-group overrides (strip -> removed `#Mn` tags) and,
-    since v1.9, `order` (shared channel display order). Safe to delete only when no
+    since v1.9, `order` (shared channel display order). v3.9 adds `listen.sub_on` / `listen.sub_db`
+    (sub blend, alongside `listen.opus_bitrate`) and `ambient` {wing: ch, x32: ch} (Mic picker). Safe to delete only when no
     override is active (order resets to console order).
 - **Remote access** requires BOTH the Access app above and `remote_enabled: true`; the Pi
   also refuses tunnel requests that arrive without Cloudflare's Access JWT header.
@@ -283,6 +287,28 @@ Code is in the StageMessenger repo (`mixer/`); this records the OS/hardware side
 - **Data use over the hotspot** (Pi upload): ~58 MB/h per active listener at 128k
   (~29 MB/h at 64k) + ~46 MB/h per open mixer page (meters, 10 Hz). If the listening
   phone is also the hotspot, its plan counts the traffic twice (Pi up + phone down).
+
+## X32 listen-back (X-LIVE USB, StageMessenger v3.9, 2026-10-06)
+- **Hardware**: X32 Rack (fw 4.15, `192.168.0.237` on eth0) with an X-LIVE card; card USB-B ->
+  Pi 5 USB. ALSA card `XLIVE` (USB 1397:050a), 32 ch in/out, S24_3LE, 48 kHz (card pref
+  `USB 32/32` — at 16 or 8 ch, card 25-32 doesn't exist). Only one program may open
+  `hw:XLIVE` capture (same as `hw:WING`). Plugging the cable into the unpowered M32C instead
+  shows nothing at all in `lsusb` — check that first.
+- **Console routing owned by the Pi** (written on load, re-checked every ~15 s, "Re-patch"
+  forces it): Card out 25-32 = User Out 1-8 (block value 26 = `UOUT1-8`); User Out 3 =
+  ambient (input behind the chosen channel: local n, AES50 A 32+n, B 80+n, card 128+n,
+  aux in 160+n), 4 = Out 14 (182, M/C sub), 5/6 = Monitor L/R (207/208), 7/8 = Out 15/16
+  (183/184, Main L/R, tapped PRE in the current scene). **Card out blocks 1-24 are never
+  touched** (AN1-8, AN9-16, AUX/TB — the SD multitrack). User Out 1/2 left OFF.
+  X-LIVE USB channels: 27 ambient, 28 sub, 29/30 monitor, 31/32 Main LR.
+- **Codes verified 2026-10-06** with the oscillator (no speakers connected) by sweeping user
+  out codes 161-208 into card 25-32: 169-184 Out 1-16, 201-206 Aux out 1-6, 207/208 Mon L/R.
+  `/node config/userrout/out` answers with numbers only (no names) — audio is the only proof.
+- **numpy in the service venv** (sub blend in `picker.py`): `venv/bin/pip install 'numpy>=1.24'`
+  (2.5.3 installed 2026-10-06; it is in `requirements.txt`). The venv has no system
+  site-packages, so the system `python3-numpy` doesn't count. Listen works without it (no blend).
+- Read-only probe: `python3 tools/x32_card_probe.py <ip>` (StageMessenger repo) dumps card blocks,
+  user outs and card prefs.
 
 ## Low-latency listen (MediaMTX, StageMessenger v2.0, 2026-10-04)
 WebRTC listen-back for `/mixer` (Opus, ~0.3–0.8 s) with the MP3 stream as automatic fallback.

@@ -1496,3 +1496,62 @@ visible camera: ~2–3 at 720p30); per-camera saved A/V delay; DroidCam audio. *
 PLAN.md has no handoff for mixer v3.0–v3.3.1 (X32/M32 driver, channel sheet, X-LIVE recorder,
 console auto-detect/hot swap) — commits `b07339a` … `994ea80`; write one from the commit messages
 and `mixer/tests/README.md` next time.
+
+### Session handoff 2026-10-06 (Stage Messenger mixer v3.9: X32 listen, sub blend, ambient picker)
+Commit `a38db24` (StageMessenger). Deployed and live-verified on the X32 Rack via the laptop
+(SSH key from the Windows laptop to `pi@lights.local` works; Claude ran probes/deploy itself).
+
+**What shipped**
+- **Console-generic listen**: capture device + channel count per console from `mixer_config`
+  `capture` (WING `hw:WING` 48 ch, X32 `hw:XLIVE` 32 ch; both S24_3LE 48 kHz).
+  `Listener.set_capture()` respawns capture on a console hot-swap; `picker.py` reads the width
+  from env `PICKER_CHANNELS`. `caps.x32.listen` = true.
+- **X32 listen block** (`Mixer._ensure_x32_patch`): Card out 25-32 kept at `UOUT1-8` (26);
+  User Out 3 ambient, 4 = 182 (Out 14 / M/C sub), 5/6 = 207/208 (Mon L/R), 7/8 = 183/184
+  (Out 15/16, Main LR). Blocks 1-24 never written (SD multitrack). Written on load, re-checked
+  every ~15 s in `_routing_poll`, on ambient-channel re-patches (pushed), and by "Re-patch".
+  Feeds: Main LR (USB 31/32), Sub (28 mono), Monitor (29/30), Ambient (27).
+- **WING USB re-layout** ("listen block" in the last 8, same idea as the X32): Bus 1-32, Mtx
+  33-40, ambient 42, Main LR 43/44, **Main 2 45/46 (new feed)**, Mon 47/48. Not yet run on the
+  WING — confirm Main 2 = `MAIN` 3/4 by ear.
+- **Sub blend**: on Main LR only, output = L/R + g·(SL+SR)/2, g from −30…+12 dB, saturating,
+  gain ramped over one 10 ms block. Control file is now `L R [SL SR GAIN]` (old 2-field files
+  still parse). numpy in `picker.py`; without it a `W` line clears `blend.numpy` and plain L/R
+  plays. Shared `+ Subs` toggle + slider (double-tap = 0 dB) on the Listen card; saved in
+  `mixer_state.json` `listen.sub_on/sub_db`; `/mixer/api/listen/set` takes `sub_on`, `sub_db`.
+  Note line shows "+ subs X dB" while active.
+- **Ambient Mic picker**: Listen card row when Ambient is the feed; lists channels by name;
+  `ambient_ch` → per-console `mixer_state.json` `ambient` {wing, x32}; label
+  "Ambient · Ch N name (source)". Follows the channel's re-patches on both consoles.
+- `save_listen_bitrate` now merges into `listen` (it used to overwrite the whole dict).
+- `requirements.txt` + numpy; `tools/x32_card_probe.py` (read-only routing/card probe).
+- Tests: WING regression (layout written, blend route, ambient save), new X32 listen-block suite
+  (UO writes, card blocks untouched, blend on mono sub, picker ctl file, recall restore, ambient
+  follows block re-routes), page suite (X32 feeds, + Subs, slider, Mic picker). All green except
+  the known flaky X32 meter check and a timing-flaky cam delay check (passes on rerun).
+
+**Live verification (X32 Rack, oscillator, no speakers)** — peaks through the real pipeline:
+osc L+R → Main LR −23.5, Monitor −33.8 (monitor level −10.5), Sub silent; osc M/C → Sub −19.6,
+Main LR silent with blend off, −22.5 with + Subs 0 dB, −30.3 at −6 dB. Ambient (Local 10, open
+input) −103 dB noise floor. Console restored after every test (osc off, dest L+R, main/M/C
+faders −∞, Bus 15 muted, user outs as the Pi owns them).
+
+**Hard-won facts**
+- X32 user-out source codes: 0 OFF, 1-32 local in, 33-80 AES50 A, 81-128 B, 129-160 card,
+  161-166 aux in, 167/168 TB, 169-184 Local Out 1-16, 185-200 P16, 201-206 Aux out, 207/208
+  Mon L/R. A user out tapping a local output follows that output's source AND tap (Out 15/16
+  here are Main L/R **PRE**, so they carry signal with the main fader at −∞).
+- `/outputs/main/NN/src`: 0 OFF, 1/2 Main L/R, 3 M/C, 4-19 Bus 1-16 … — an early probe read
+  17/18/19 for Out 14-16 before a scene recall; always re-read before trusting.
+- X32 oscillator: `/config/osc/dest` 0-15 Bus 1-16, 16 L, 17 R, 18 L+R, 19 M/C, 20+ Mtx;
+  `/-stat/osc/on` 1/0. Joseph's default: pink, F1 47.4 Hz, −14 dB, dest L+R.
+- PowerShell → ssh: nested double quotes inside the remote command get mangled; keep inner
+  quoting single, or scp a script and run it.
+
+**Pi state at close-out**: console X32RACK; User Out 3 = Local 10 (Ch 10 default ambient);
+blend off, 0 dB; feed Main LR; Listen Opus 160k; venv numpy 2.5.3.
+
+**Next**: run v3.9 on the WING (USB re-layout, Main 2 by ear, blend on a stereo sub feed);
+X32 Rack meter/listen check during a real show; optional sub delay/polarity or LPF on the sub
+feed; per-listener blend (blend is shared, like the feed).
+
