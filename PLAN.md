@@ -1394,3 +1394,105 @@ the hotspot — `bitrate: 160` halves it); carried from v2.2: list-write verific
 Ratio, EQ Type), per-listener feeds, meter data toggle, bus/main/mtx processing, DCA, FX,
 scenes, X32 support. Deploy note unchanged: PowerShell, single-quoted commit messages,
 attribution via `--trailer`, check base hash before copying files.
+
+### Session handoff 2026-10-05/06 (Stage Messenger mixer v3.4 → v3.8.2: video feed)
+
+Laptop session (deploys through the linked MSI laptop: files moved as a tarball into the
+`C:\Users\josep\StageMessenger` clone, SHA-256 checked against the validated build, `git add`
+of the named files only, push, then `ssh pi@lights.local` → `git pull && sudo systemctl restart
+stage-messenger`). StageMessenger commits on `main`, all deployed on the rack Pi:
+`9ac6fb8` v3.4 → `1f947b0` v3.5 → (`4398def` v3.6, network camera, pushed from ANOTHER session
+mid-build — v3.7 was rebased onto it) → `4265c58` v3.7 → `49143a7` v3.8 → `7b00502` v3.8.1 →
+`cffc1d6` v3.8.2 = GitHub HEAD at close-out (every push compared against the validated tree).
+OS-level: none (no packages, no units). PI_INFRA.md gained "Video feed". BOOT_FIX.md unchanged.
+Tests: everything ships with `mixer/tests` (test_cam.py: fake 48-ch capture, lavfi camera, fake
+IP Webcam phone serving MJPEG/status/audio.wav; test_page.js: jsdom with stubbed WebRTC /
+Web Audio / PiP / fullscreen). All suites green at v3.8.2 (test_x32_api has a pre-existing
+timing flake, `aux1 muted -> post -99, pre -40`, also on untouched code).
+
+**Architecture (as built).** One capture: `arecord -D hw:WING` (single opener) → `picker.py`
+slices the listen pair AND, when `PICKER_CAM_CTL` names a control file (`L R delay_ms fifo`),
+a second pair → `DelayLine` (sample-accurate, live) → bounded non-blocking `CamOut` → fifo.
+The listen write happens first and never waits on the cam side. `mixer/cam.py` runs one niced
+(15) ffmpeg per watched camera: camera input + sound fifo → libx264 (baseline, zerolatency,
+2 threads, GOP 2 s, `scenecut=0`) + libopus → RTSP → MediaMTX path `cam` → WHEP proxied by
+Flask (`/mixer/api/cam/whep`, `/cam/session/<sid>`). On-demand (viewer `hold`), idle stop 15 s,
+restart/give-up supervision (>4 fails in 60 s), `epoch` +1 per encoder start (the page rejoins
+when it changes). Capture is kept alive via `Listener.keepalive()` / `ensure_capture()`.
+Measured: 720p30 ultrafast ≈ 0.4–0.6 core on the Pi 5 (40 % niced at Good), temp ≤ 64 °C.
+
+**What each version added**
+- v3.4: Video card (Watch, sound feed = console feed, default Main LR; A/V sync slider 0–3000 ms
+  delaying the SOUND at the Pi), picture-only fallback when the console audio isn't there.
+- v3.5: Watch stops Listen and plays the video's own synced sound (Listen resumes on Stop);
+  Picture-in-Picture (iPad Safari; Chrome desktop = Document PiP window carrying the sync
+  controls); picture tiers High 3.5M / **Good 2.5M (default)** / Medium 720p15 1.2M / Low 480p10
+  500k / Min 360p5 250k (camera always opened 1280x720 MJPEG; lower tiers drop frames first
+  and use slower x264 presets); Opus 64/96/**128**/160k separately for Listen
+  (`/mixer/api/listen/set`, respawns the listen encoder) and the video sound. Saved in
+  `mixer_state.json` (`cam`, `listen`).
+- v3.6 (other session): `cam.video_url` in mixer_config.json → network camera (http MJPEG /
+  rtsp), scaled/padded to the tier; URL never in status/logs (`redact`).
+- v3.7: **warble fix** (below); Listen pressed while watching CLOSES the video (always one or
+  the other); per-device volume 0–400 % on Listen + video (Web Audio gain → limiter only when
+  ≠100 %; element muted while routed; back to plain playback when the page is hidden or the
+  AudioContext isn't running; MP3 fallback not boosted); Pause (freeze frame via canvas
+  poster, drop connection) / Live (reconnect at now); fullscreen (`#cam-pop` incl. controls;
+  iPhone → `webkitEnterFullscreen`); pop-out window fills.
+- v3.8: camera list — every USB webcam (`/dev/v4l/by-id/*-video-index0`, first = default) +
+  config camera (`net0`) + Wi-Fi cameras added on the page (`/mixer/api/cam/add|remove|find`,
+  ids `n` + 6 hex, max 12, saved in `mixer_state.json` `cam.cams` WITH the URL, page sees only
+  names). Online check every 5 s (IP Webcam `/status.json`, else TCP connect; never opens the
+  video). Chosen camera used while reachable, else fall back to USB and return by itself.
+  "Find cameras" scans the Pi's /24s for :8080 (IP Webcam, confirmed via status.json) and
+  :4747 (DroidCam). Sound source **Camera mic** (USB: the ALSA card on the same USB parent as
+  the video node, e.g. `hw:CARD=Webcam`; IP Webcam: `/audio.wav`; rtsp: audio in the stream).
+  Rotation 0/90/180/270 per camera (transpose before encoding; portrait output = swapped tier
+  size) + Auto for IP Webcam from `/sensors.json?sense=accel` (debounced 1.5 s, relative to the
+  app's `curvals.orientation`). Controls moved onto the picture (fade after 3 s): pause, sound,
+  fullscreen, pop-out; native PiP play/pause keeps the connection (WebRTC resumes at live);
+  fullscreen from the Chrome pop-out pops in first (no fullscreen inside Document PiP).
+  Console sound switched on only once ffmpeg holds the fifo (`/proc/<pid>/fd`).
+- v3.8.1: alsa demuxer needs `-channels/-sample_rate` (not `-ac/-ar`); mic failures remembered
+  per camera; a Wi-Fi camera isn't marked offline while it streams or after one missed check.
+- v3.8.2: phone mic dropped the picture to ~3 fps → `MicRelay` (below). Measured on the Pi:
+  phone+phone mic 25 fps (phone's own rate), USB+USB mic 27 fps.
+
+**Hard-won facts**
+- ffmpeg `aresample=async=1000` on a wall-clock-stamped fifo stretches ±2 % to follow stamp
+  jitter = the "warbly cassette" sound. Use `aresample=async=1:min_hard_comp=0.3` (align once).
+- A fifo with a holder fd accepts ~0.22 s (64 KB) before ffmpeg reads it; that backlog gets
+  stamped late = constant A/V offset after every start (worse with slow-opening Wi-Fi inputs).
+  Enable the writer only when `/proc/<ffmpeg pid>/fd` links to the fifo.
+- ffmpeg 7.x keeps multiple inputs in step: a bursty wall-clock-stamped audio input (IP Webcam
+  `/audio.wav` arrives in ~85 ms bursts) throttles the video demuxer → frames bunch → `fps`
+  filter drops them. Feed every non-camera sound through a paced 10 ms writer (picker or
+  `MicRelay`: decoder ffmpeg → ~120 ms cushion → 10 ms per 10 ms, silence on gaps, one jump
+  back when >200 ms ahead, live DelayLine). Without wall-clock on the audio, video stalls.
+- IP Webcam (phone 192.168.1.195:8080): `/video` MJPEG 1280x720 ~25 fps, `/audio.wav` 44.1 kHz
+  mono s16, `/audio.opus`, `/audio.aac`, `/status.json` (`curvals.orientation`, video_size…),
+  `/sensors.json` = `{}` until sensors are enabled in the app, rtsp `/h264_ulaw.sdp` = H.264 +
+  8 kHz µ-law (poor sound — not used). Pulling audio doesn't lower the phone's frame rate.
+- NexiGo N930E: MJPG 640x480…1920x1080 @30/25/20 (YUYV only low fps); mic = separate ALSA card
+  `Webcam` (S16_LE mono 8–48 kHz), same USB parent (`3-1`) as `video0`.
+- iPad Safari ignores `media.volume` (Web Audio is the only volume control); Chrome needs the
+  remote stream attached to a (muted) element for `createMediaStreamSource` to get audio.
+- PowerShell → Pi: pipe a here-string to `ssh … 'bash -s'` with `-replace "`r",""`; the LAST
+  line still gets a CR — end scripts with a `#` line. ffmpeg inside such a script must use
+  `-nostdin < /dev/null` or it eats the rest of the script.
+
+**Pi state at close-out** (mixer_state.json): chosen camera `net0` (the phone, from
+`cam.video_url`), rotation 180, quality High, video sound 128k, feed Main LR, A/V delay 0
+(reset during testing — redo the clap test), Listen Opus 160k. USB webcam still plugged in.
+
+**Not yet verified on hardware**: auto-rotate (enable sensors in IP Webcam), iPad PiP +
+background playback, volume boost in the background on iPad, fullscreen on iPad, Document PiP
+on the laptop, Find cameras with a phone not yet in the list, A/V sync calibration per camera.
+
+**Backlog (video)**: YouTube unlisted livestream from /mixer (RTMPS, copy H.264, Opus→AAC 128k,
+needs ≥3 Mbps tier + ~3.5 Mbps upload; stream key in mixer_config only) — shelved by Joseph;
+rename the config camera from the page (now `cam.video_name`); multi-view grid (one encode per
+visible camera: ~2–3 at 720p30); per-camera saved A/V delay; DroidCam audio. **Docs gap:**
+PLAN.md has no handoff for mixer v3.0–v3.3.1 (X32/M32 driver, channel sheet, X-LIVE recorder,
+console auto-detect/hot swap) — commits `b07339a` … `994ea80`; write one from the commit messages
+and `mixer/tests/README.md` next time.

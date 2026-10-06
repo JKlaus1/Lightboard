@@ -327,6 +327,26 @@ the console. v2.3–v2.3.2 (2026-10-05) added card playback, scrub and marker ed
 the same OSC link, **no OS changes** (WING facts in PLAN.md / `mixer/wing.py`). The Pi also
 **plays into** the WING over the same USB link since v2.4 — see "Spotify → WING (go-librespot)".
 
+## Video feed (StageMessenger v3.4–v3.8.2, 2026-10-05/06)
+**No OS changes** (ffmpeg/libx264/libopus were already installed; no new units or packages).
+- **MediaMTX**: `mixer/mediamtx.yml` gained path `cam` (`source: publisher`) — hot-reloaded on
+  `git pull`. Diagnostics: `curl -s http://127.0.0.1:9997/v3/paths/get/cam` (ready, tracks).
+- **Cameras**: USB webcams are found by `/dev/v4l/by-id/*-video-index0` (rack Pi: NexiGo N930E
+  on USB bus 3, mic = ALSA card `Webcam`). Wi-Fi cameras: the Pi pulls their stream over wlan0
+  (no inbound port). Encoder = niced ffmpeg, only while someone watches (idle stop 15 s).
+- **`mixer_config.json` → `cam`** (defaults in `mixer/__init__.py`): `enabled` true, `device` ''
+  (pin one USB camera), `video_url` (config network camera, may carry user:password — lives only
+  here; currently `http://192.168.1.195:8080/video`, Joseph's phone running IP Webcam),
+  `video_name` (its label, default "Network camera"), `rtsp_transport` tcp, `idle_s` 15, `nice`
+  15, `threads` 2, `gop_s` 2, `probe` true, starting values `quality` good / `feed` main1 /
+  `delay_ms` 0 / `audio_bitrate` 128k. `rtc.opus_bitrate` default is now 128k.
+  Kill switch: `"cam": {"enabled": false}` (or `rtc.enabled` false) + restart stage-messenger.
+- **`mixer_state.json`** additions (page-made, win over the config): `cam` = feed, delay_ms,
+  quality, audio_bitrate, source (chosen camera id), rot (per camera), **cams (Wi-Fi cameras
+  WITH their URLs)**; `listen.opus_bitrate`. Back it up with the config before an SD rebuild.
+- **Data use** (Pi upload): video at Good ≈ 1.1 GB/h per viewer (2.5 Mbps + 128k sound), High
+  ≈ 1.6 GB/h, Low ≈ 0.3 GB/h, Min ≈ 0.17 GB/h — mind the hotspot.
+
 ## Spotify → WING (go-librespot, StageMessenger v2.4–v2.5.1, 2026-10-05)
 Spotify Connect speaker **"Stage Rig"** on the rack Pi → WING USB in 1/2 → **AUX 1** → Main.
 Controlled from the Spotify app (any network, same account) and from /mixer (Spotify card:
