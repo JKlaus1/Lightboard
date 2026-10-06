@@ -1620,3 +1620,22 @@ writable (not used yet — the tag-removal override still stands).
 DCA and mute-group assignment editing (tags); send tap (pre/post) display; icons on name tiles (WING `icon`);
 X32 FX returns (`/fxrtn/01-08`) as a strip kind; Joseph to try the console view on the Fold, S26-size phone and
 iPad and say what feels off (strip width default, Fine ratio, knob sensitivity 180 px full turn).
+
+#### Addendum 2026-10-06 morning (v4.0.3 → v4.0.4, commits `07e9350`, `29e6221`)
+- **Bus / main / matrix pages**: tapping a bus / main / matrix name in the console view now opens its page
+  (it no longer selects sends on fader — that's the right-hand list only). Tiles: Config (groups / DCAs, buses
+  only), EQ, Comp (curve + live GR from new meter fields `bd`/`md`/`xd`), Sends (bus / main → matrices), Main
+  (bus → Main 1-4; X32 LR / M/C). WING output EQ = Low, 1-6, High; low/high types PEQ / SHV / CUT / BW6-48 /
+  BS12-24 / LR12-48 drawn as Butterworth (LR = two half-order Butterworths). X32 output EQ = 6 bands
+  (`eq6` spec — **unverified on hardware**, same scalings as the channel EQ).
+- **Mute group / DCA assignment**: chips on the Config page; `POST /mixer/api/assign {kind, n, grp: 'M'|'D', idx,
+  on}` (ch / aux / bus, X32 also fxr). WING edits `tags` (`#M1,#M2,#D3` — DCA tags confirmed on Ch 24 `#D1`),
+  refused (409) for mute groups while the Pi holds a group override on that strip. X32 sets the `grp/mute` /
+  `grp/dca` bit; X32 tags now include `#Dn`.
+- **WING send tap** `/ch|aux/N/send/B/mode` PRE / POST / GRP: select per bus on the Sends page, shown after the
+  strip label while mixing that bus on the faders. Loaded in a second pass after "loaded" (with the main / matrix
+  sends) so the page's load time stays ~6 s.
+- **X32 FX returns** (`fxr` kind, `/fxrtn/01-08`): faders, mute, solo 41-48, pan, bus sends, LR / M/C, groups / DCAs,
+  4-band EQ page, meters; in the layer editor and default layer 2. **Unverified on hardware** (fake M32C only).
+- Still open: WING icons on the name tiles (no icon-number → picture table yet); X32 output EQ / FX return paths
+  to confirm on the M32C or X32 Rack.
