@@ -1555,3 +1555,68 @@ blend off, 0 dB; feed Main LR; Listen Opus 160k; venv numpy 2.5.3.
 X32 Rack meter/listen check during a real show; optional sub delay/polarity or LPF on the sub
 feed; per-listener blend (blend is shared, like the feed).
 
+
+### Session handoff 2026-10-06 (Stage Messenger mixer v4.0 → v4.0.2: console view, channel page, restyle)
+Commits `c029583`, `84d46df`, `275f48b` (StageMessenger). Built overnight from Joseph's Mixing Station
+screenshots; each step tested off-hardware, pushed, pulled on the Rack Pi (`pi@lights.local`, from the
+laptop), restarted, and checked against the live WING (state, meter stream, page served). GitHub HEAD,
+the Pi and the laptop clone byte-match at `275f48b`. Nothing was written to the console.
+
+**What shipped**
+- **Console view (v4.0)** — a mode of the same `/mixer` page (CONSOLE / CLASSIC in the header, or
+  `?view=console|classic`; remembered per device in localStorage `mixer.view`). Listen-back and video keep
+  playing across the switch; the Listen card and the mute-group buttons move into header popovers (🎧, MG).
+  - Vertical strips: colour name tile, MUTE (dark red / bright red; MG = group-muted, amber ring = overridden),
+    dB, fader with scale + meter, label, SOLO. Faders are **relative only**; vertical drag engages, a sideways
+    swipe scrolls the strips; **double-tap = 0 dB**. Strips across: auto 8-12 (≈80 px), ⚙ +/- / Auto, or pinch;
+    saved per device (`mixer.cvAcross`). Narrow strips (<52 px) drop the scale numbers.
+  - Column 1: **Mute Enable** (off = MUTE / send ON taps ignored, the button flashes), **Fine** (fader and
+    knobs move 1:3), **Layers 1-3** (custom; hold to edit), **Mtx/Main** (WING: Mtx 1-8 + Main 1-4; X32: Mtx 1-6
+    + LR, M/C), **DCA** (WING 16, X32 8).
+  - Column 2: scrolling target list — LR (= normal faders), WING Main 2-4, Bus 1-16, Matrices. Selecting one =
+    **sends on fader**: strips show the send level, MUTE becomes the send ON/OFF (green), strips that can't feed
+    that target are greyed, a red bar marks channels muted at the channel, and the target's own master
+    (fader / MUTE / SOLO) is **pinned** beside the buttons. Tap the same target again (or LR) to leave. Tapping a
+    bus / matrix / Main 2-4 name tile in a layer selects it too. Who feeds what: bus ← ch/aux; WING Main 2-4
+    ← ch/aux/bus (`/x/N/main/M/lvl|on`, separate from the channel fader on the WING); matrix ← WING ch/aux/bus/main
+    (`send/MXm`), X32 bus/main only.
+  - **Layer editor** (hold a layer button): current items with drag-reorder + ✕, tabs Channels / Aux / Buses /
+    Mains / Matrix / DCA, tap to add/remove, Add all / Clear / Default, rename (12 chars).
+  - **Layout profiles on the Pi**: `mixer_state.json` `layouts.{wing|x32}.{profile}.layers[3]` (+ `email`),
+    `GET/POST /mixer/api/layouts` ({profile, layers} / {profile, delete}), cleaned server-side (valid keys, in
+    range, no dupes, ≤128 items). Pushed live to every page (`{t:'layouts'}`); snapshot carries `layouts` and
+    `who` (Cloudflare Access email, tunnel requests only). Each device picks its profile (⚙ → Layout; New copies
+    the current layers; Delete); with no local choice a profile whose `email` matches `who` is used, else
+    "Default". Editing saves into the profile the device is using.
+- **Driver additions** — WING: DCAs (name/col/fdr/mute/$solo), Main 3/4, mtx col/$solo, $solo + pan on every
+  strip kind, `flt/lcs|hcs`, ch/aux/bus → Main 1-4 and ch/aux/bus/main → MX1-8 sends (≈4.6k load addresses, ~9 s);
+  meter collection adds Main 3/4 + matrices (`m` has 4, new `x` = 8 mtx outs) — verified streaming on the WING.
+  X32/M32: `dca` kind (`/dca/N/fader|on|config/*`, solosw 73-80), $solo on bus/mtx/LR/M/C, pan (ch/aux/bus),
+  LR assign (`mix/st`) + M/C assign/level (`mix/mono`, `mix/mlevel`) as `/x/N/main/1|2/...`, bus/main →
+  matrix sends (`mix/01-06`), matrix meters, low-cut slope (`preamp/hpslope` 0-2 ↔ `flt/lcs` 12/18/24).
+  `SETTABLE` + caps (`nmain`, `ndca`, `mtxsrc`, `mainsof`) extended to match.
+- **Channel page (v4.0.1)** — the old sheet, full screen, used by both views: back / prev / next (prev/next walk
+  the console layer, else the classic order), overview tiles with live mini graphs (Config flags +48V/LC/HC/Ø/ALT,
+  Gate, EQ, Comp, Sends bars, Main assigns), the channel's own strip + pan slider on the right.
+  Config: source picker, preamp gain + 48V, trim, polarity, low/high cut with **slope selects**. Every lin/log
+  parameter is a **rotary knob** (relative vertical drag, wheel; Fine 1:3). Gate / Comp: **transfer-curve graphs**
+  (gate: threshold / range / 1:x expander or gate / duck; comp: threshold / ratio / knee ≈ knee×3 dB) with the live
+  key level, draggable threshold, gate range and comp ratio (snaps to the ratio list). **EQ graph now includes the
+  channel filter block**: LC/HC as Butterworth 6/12/18/24 dB/oct, each band shaded in its own colour, LC/HC
+  handles draggable, LC/HC chips with ON / freq / slope. Sends page: a send strip per bus (WING + matrices);
+  Main page: Main 1-4 (X32 LR assign + M/C) strips + pan knob.
+- **Classic page restyle (v4.0.2)** — Mixing Station palette (navy panels, dark-red MUTE, olive SOLO, ribbed caps,
+  green selection outlines). Layout/behaviour unchanged.
+- Tests: new `test_console_api.py` (fake M32C + layouts API) and `test_console.js` (jsdom console view + channel
+  page); all suites green (page, console, console API, x32 API, WING regression, autoswitch).
+
+**Hard-won facts (WING fw 3.1 probe, Oct 2026)**: `/ch/N/send/MX1-8` exist (channels feed matrices directly);
+buses / mains send only to matrices (`/bus/N/send/1-16` is r/o); `/ch/N/main/1-4/{on,lvl,pre}` is separate from the
+channel fader (Ch 1 Kick: fader +4.9, Main 1 send −9.4); DCAs have no `$name`/`$col`; `flt` = lc, lcf 20-2k, lcs
+6/12/18/24, hc, hcf 50-20k, hcs 6/12, tf, mdl TILT/MAX/AP1/AP2, tilt; aux strips have no `flt`; `$muteovr` is
+writable (not used yet — the tag-removal override still stands).
+
+**Not done / next**: bus / main / matrix detail pages (EQ/dyn on output strips — node API only allows ch/aux);
+DCA and mute-group assignment editing (tags); send tap (pre/post) display; icons on name tiles (WING `icon`);
+X32 FX returns (`/fxrtn/01-08`) as a strip kind; Joseph to try the console view on the Fold, S26-size phone and
+iPad and say what feels off (strip width default, Fine ratio, knob sensitivity 180 px full turn).
