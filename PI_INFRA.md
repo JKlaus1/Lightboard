@@ -4,7 +4,8 @@ Records the things that are NOT in any app source file (network, tunnel, access,
 
 ## Host / services
 - Pi 5, hostname `Lights` / `lights.local` (mDNS), Debian 13 (Trixie), NetworkManager.
-- App services (Flask, run as user `pi`): `lightboard` (:5000), `stage-messenger` (:3000).
+- App services (Flask, run as user `pi`): `lightboard` (:5000), `stage-messenger` (:3001, chat only),
+  `mixer` (:3000, separate repo JKlaus1/mixer with its own install.sh / PLAN.md / PI_INFRA.md — 2026-10-08 split).
 - `cloudflared` (systemd service, runs as root) — Cloudflare tunnel.
 - `mediamtx` (systemd service, user `pi`, since 2026-10-04) — WebRTC relay for the
   mixer's low-latency listen. See "Low-latency listen (MediaMTX)" below.
@@ -35,7 +36,8 @@ Records the things that are NOT in any app source file (network, tunnel, access,
 - Config `/etc/cloudflared/config.yml` (+ creds `/etc/cloudflared/<UUID>.json`). Lives under /etc
   because the service runs as root.
 - Ingress:
-  - `stage-messenger.com`        -> http://localhost:3000   (Stage Messenger — singer pages, PUBLIC)
+  - `stage-messenger.com` path `^/mixer(/|$)` -> http://localhost:3000   (mixer app, Access-gated)
+  - `stage-messenger.com`        -> http://localhost:3001   (Stage Messenger chat — singer pages, PUBLIC)
   - `admin.stage-messenger.com`  -> http://localhost:5000   (Lightboard — PRIVATE)
   - catch-all -> 404
 - Tunnel passes full path + query through, so auto-login links work over the domain.
@@ -50,7 +52,7 @@ Three self-hosted apps, each Allow -> your email (one-time PIN):
 Singer sender/receiver pages on `stage-messenger.com` stay public.
 
 ## Singer join links (control.html "Create Join Link" — dual-path)
-- Local:    http://lights.local:3000/?name=NAME&role=sender|receiver   (on the band WiFi)
+- Local:    http://lights.local:3001/?name=NAME&role=sender|receiver   (on the band WiFi)
 - Internet: https://stage-messenger.com/?name=NAME&role=sender|receiver (anywhere, via tunnel)
 
 ## This session's file changes
@@ -219,8 +221,11 @@ re-deriving the config from memory. Two gaps the wizard model doesn't cover:
   Note: `install.sh`'s guided tunnel steps (printed when no creds are found)
   now fork on this — step 2 checks `tunnel list`, with a 3a restore-existing
   path (`tunnel token`) and a 3b new-tunnel path (`tunnel create`).
-- **Stage Messenger mixer extras (not covered by install.sh)** — after the base restore and
-  `git clone` of StageMessenger into `~/stage-messenger`, in this order:
+- **Mixer (2026-10-08: its own repo, JKlaus1/mixer, private)** — not covered by this install.sh.
+  Restore with `GITHUB_TOKEN=... bash install.sh --git` from that repo (clones to `~/mixer`,
+  unit `mixer`, :3000, MediaMTX, netwifi; see its PI_INFRA.md). Its data files are
+  `~/mixer/mixer_config.json` + `mixer_state.json`. The notes below are the pre-split
+  procedure kept for reference; paths are now `~/mixer/mixer/...` and the unit is `mixer`:
     1. `mixer_config.json` — recreate (`{"remote_enabled": true}` + anything below); it is
        gitignored. See "WING remote mixer".
     2. MediaMTX binary + unit + TURN key — see "Low-latency listen (MediaMTX)".

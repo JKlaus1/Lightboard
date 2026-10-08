@@ -926,7 +926,7 @@ def api_touch_fader_arm(fid):
 def messenger_page():
     """Stage Messenger control panel embedded in Lightboard."""
     messenger_host = config.get("messenger_host", "")
-    messenger_port = config.get("messenger_port", 3000)
+    messenger_port = config.get("messenger_port", 3001)
     return render_template("messenger.html",
         show=show_config,
         messenger_host=messenger_host,
@@ -938,7 +938,7 @@ def api_messenger_config():
     """Return Stage Messenger connection settings for the popup listener."""
     return jsonify({
         "host": config.get("messenger_host", ""),
-        "port": config.get("messenger_port", 3000),
+        "port": config.get("messenger_port", 3001),
     })
 
 # ── State ─────────────────────────────────────────────────────────────────

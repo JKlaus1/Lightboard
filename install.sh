@@ -80,7 +80,7 @@ AP_BAND="a"; AP_CHANNEL="149"      # a/149 = 5GHz non-DFS; bg/6 = 2.4GHz
 AP_IP="10.42.0.1"
 SCREEN="dsi_auto"                  # dsi_auto | dsi_waveshare | hdmi | headless
 KIOSK="yes"                        # chromium kiosk at :5000/touch
-MESSENGER="no"                     # Stage Messenger (:3000)
+MESSENGER="no"                     # Stage Messenger chat (:3001); the mixer is its own repo/installer (JKlaus1/mixer, :3000)
 TUNNEL="no"                        # Cloudflare tunnel (guided)
 TUNNEL_DOMAIN="stage-messenger.com"
 TUNNEL_NAME="stage-messenger"
@@ -198,7 +198,7 @@ run_wizard() {
   elif w_yesno "Boot straight into the touch UI (Chromium kiosk at :5000/touch)?"; then KIOSK="yes"; else KIOSK="no"; fi
 
   if [ "$ROLE" = "rack" ]; then
-    if w_yesno "Install Stage Messenger (:3000)?"; then MESSENGER="yes"; else MESSENGER="no"; fi
+    if w_yesno "Install Stage Messenger chat (:3001)?"; then MESSENGER="yes"; else MESSENGER="no"; fi
   fi
 
   if w_yesno "Install the Cloudflare tunnel?\n(Remote access over the internet. GUIDED: needs a Cloudflare account + domain; creds via one-time login or a backup tarball. Skip for local-only rigs.)"; then
@@ -373,7 +373,7 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=${MSG_DIR}
-Environment=PORT=3000
+Environment=PORT=3001
 ExecStart=${MSG_VENV}/bin/python ${MSG_DIR}/server.py
 Restart=on-failure
 RestartSec=3
@@ -426,8 +426,14 @@ STEPS
   local uuid="TUNNEL_UUID_HERE"
   [ -n "$creds_json" ] && uuid=$(basename "$creds_json" .json)
   local ingress_root=""
+  # Root hostname: /mixer* -> the mixer box app (JKlaus1/mixer, :3000, installed by its own
+  # install.sh); everything else -> Stage Messenger chat (:3001). The /mixer rule is harmless
+  # (502) on a Pi without the mixer installed.
   [ "$MESSENGER" = "yes" ] && ingress_root="  - hostname: ${TUNNEL_DOMAIN}
-    service: http://localhost:3000"
+    path: ^/mixer(/|$)
+    service: http://localhost:3000
+  - hostname: ${TUNNEL_DOMAIN}
+    service: http://localhost:3001"
   sudo tee /etc/cloudflared/config.yml >/dev/null <<CFG
 tunnel: ${uuid}
 credentials-file: /etc/cloudflared/${uuid}.json
