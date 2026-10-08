@@ -288,6 +288,35 @@ Code is in the StageMessenger repo (`mixer/`); this records the OS/hardware side
   (~29 MB/h at 64k) + ~46 MB/h per open mixer page (meters, 10 Hz). If the listening
   phone is also the hotspot, its plan counts the traffic twice (Pi up + phone down).
 
+## Venue WiFi by hostname (Stage Messenger `netwifi`, 2026-10-07)
+Why: a Stage-Messenger-only Pi (built with `mixer/setup_x32_pi.sh`, no Lightboard) had no `/wifi`
+page, so moving it onto a new network meant finding its IP and running nmcli by hand.
+- **Use:** from any device on the same network as the Pi, open **`http://<hostname>.local/`** and
+  you land on the Venue WiFi page (scan / connect / saved / forget, auto-revert if no internet).
+  It also lives at `http://<hostname>.local:3000/wifi`, and remotely at
+  `https://<tunnel domain>/mixer/wifi` (WIFI button in the `/mixer` header).
+- **Code (StageMessenger repo):** `netwifi/__init__.py` (port of Lightboard `wifi_routes.py`,
+  loaded from `server.py` in a try/except like `/mixer`), `netwifi/wifi.html` (same page; API base
+  follows the URL it was loaded from).
+- **Gating:** `/wifi` = LAN only; tunnel requests (`Cf-Connecting-Ip`) get 403 on the API and a
+  302 to `/mixer/wifi` for the page, so the public stage-messenger.com side never reaches it.
+  `/mixer/wifi` = same gate as `/mixer`: tunnel needs `remote_enabled` in mixer_config.json AND a
+  Cloudflare Access JWT (covered by the existing `/mixer` Access path rule).
+- **OS pieces (installed by `sudo bash ~/stage-messenger/netwifi/install_netwifi.sh`, idempotent;
+  `setup_x32_pi.sh` runs it on new builds):**
+  - `/etc/polkit-1/rules.d/50-lightboard-nm.rules` -- same file as Lightboard's; lets `pi` drive NM
+    from the service (no login session). Without it the page scans but connect/forget fail.
+  - `avahi-daemon` enabled (mDNS `<hostname>.local`).
+  - `stage-wifi-redirect.service` -- port 80 -> :3000 (`/` -> `/wifi`, other paths kept), 302 no-store.
+    Script copied to `/usr/local/lib/stage-messenger/redirect80.py` (because /home/pi is 0700);
+    DynamicUser, only CAP_NET_BIND_SERVICE. Re-run the installer after a pull that changes it.
+- Portal button only appears when the Pi runs the kiosk watcher (`kiosk_portal_watch`), i.e. it has
+  a touchscreen; headless Pis just report "no internet -- reverted" for captive-portal networks.
+- On a Pi with both apps, Lightboard's `/wifi` on :5000 still works; the two keep separate connect
+  state, so don't start connects from both at once.
+- Hostnames must be unique per Pi for `.local` to resolve to the right box. Android browsers resolve
+  `.local` inconsistently -- use an iPad/laptop, or the IP, if a phone can't find it.
+
 ## X32 listen-back (X-LIVE USB, StageMessenger v3.9, 2026-10-06)
 - **Hardware**: X32 Rack (fw 4.15, `192.168.0.237` on eth0) with an X-LIVE card; card USB-B ->
   Pi 5 USB. ALSA card `XLIVE` (USB 1397:050a), 32 ch in/out, S24_3LE, 48 kHz (card pref
