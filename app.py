@@ -21,6 +21,7 @@ from engine import LightingEngine
 import cell_strip
 import effects
 from wifi_routes import register_wifi_routes
+from ai_routes import register_ai_routes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -452,6 +453,17 @@ if startup:
 
 app = Flask(__name__)
 register_wifi_routes(app)  # venue WiFi page (/wifi)
+
+# ── AI (Claude API) routes — /api/ai/* ────────────────────────────────────
+register_ai_routes(app, {
+    "config":              lambda: config,
+    "save_config":         save_config,
+    "show_config":         lambda: show_config,
+    "effects_registry":    effects.get_registry,
+    "list_library_scenes": list_library_scenes,
+    "load_library_scene":  load_library_scene,
+    "engine":              engine,
+})
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 @app.after_request

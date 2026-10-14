@@ -55,7 +55,8 @@ main{padding:12px;display:flex;flex-direction:column;gap:10px;padding-bottom:50p
   <h1>📚 Scenes</h1>
   <button class="hbtn" onclick="location.href='/'">← Back</button>
   <button class="hbtn" onclick="location.href='/editor?type=effect'" style="background:#3a205a;border-color:#5a3380;color:#d4b6ff;">+ Effect</button>
-  <button class="hbtn primary" onclick="location.href='/editor'">+ New</button>
+  <button class="hbtn" data-ai-feature="scene_from_prompt" style="border-color:#5a3380;color:#d4b6ff;display:none" onclick="aiSceneOpen()">✨ Generate</button>
+<button class="hbtn primary" onclick="location.href='/editor'">+ New</button>
 </header>
 
 <main>
@@ -74,6 +75,7 @@ main{padding:12px;display:flex;flex-direction:column;gap:10px;padding-bottom:50p
 </main>
 
 <div id="toast"></div>
+{% include "_ai_library.html" %}
 
 <script>
 let library = [];

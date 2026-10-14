@@ -1,0 +1,194 @@
+{# Settings → AI card + "From manual" sheet. Included by settings.html after the
+   Fixture Library card. Relies on settings.html globals: library, renderLibrary(),
+   openBuilder(existing), toast(). #}
+{% include "_ai_shared.html" %}
+
+<div class="card" id="ai-card">
+  <div class="card-head"><h2>AI (Claude API)</h2><span id="ai-head-status" style="font-size:0.72rem;color:var(--sub);"></span></div>
+  <div class="card-body">
+    <div class="ai-tog"><span>Enable AI features<small>Uses your Claude Platform API credits, never the chat plan.</small></span>
+      <label class="ai-sw"><input type="checkbox" id="ai-enabled" onchange="aiSaveCfg()"><i></i></label></div>
+    <div class="ai-tog"><span>Fixture profile from manual<small>Fixture Library → ✨ From manual</small></span>
+      <label class="ai-sw"><input type="checkbox" id="ai-fixture_from_manual" onchange="aiSaveCfg()"><i></i></label></div>
+    <div class="ai-tog"><span>Scenes from a prompt / setlist<small>Scene Library → ✨ Generate</small></span>
+      <label class="ai-sw"><input type="checkbox" id="ai-scene_from_prompt" onchange="aiSaveCfg()"><i></i></label></div>
+    <div class="ai-tog"><span>Stage Messenger can adjust lights<small>Messages from allowed senders become scene actions (coming next phase).</small></span>
+      <label class="ai-sw"><input type="checkbox" id="ai-messenger_control" onchange="aiSaveCfg()"><i></i></label></div>
+    <div class="ai-row" id="ai-allow-row">
+      <label>Allowed sender names (one per line)</label>
+      <textarea id="ai-messenger_allow" rows="2" placeholder="Joseph&#10;Presley" onchange="aiSaveCfg()"></textarea>
+    </div>
+    <div class="ai-row">
+      <label>Model</label>
+      <div class="ai-inline">
+        <select id="ai-model" onchange="aiSaveCfg()">
+          <option value="claude-sonnet-5-5">Sonnet 5.5 — best for manuals (default)</option>
+          <option value="claude-haiku-5-5">Haiku 5.5 — fastest / cheapest</option>
+          <option value="claude-opus-5-5">Opus 5.5 — strongest, ~2× Sonnet cost</option>
+        </select>
+      </div>
+    </div>
+    <div class="ai-row">
+      <label>API key <span id="ai-key-hint" style="text-transform:none;letter-spacing:0;"></span></label>
+      <div class="ai-inline">
+        <input type="password" id="ai-key" placeholder="sk-ant-…  (from platform.claude.com → API keys)" autocomplete="off">
+        <button class="ai-btn go" style="flex:0" onclick="aiSaveKey()">Save key</button>
+        <button class="ai-btn danger" style="flex:0" onclick="aiClearKey()">Clear</button>
+      </div>
+    </div>
+    <div class="ai-inline">
+      <button class="ai-btn" onclick="aiTest()">Test connection</button>
+      <div class="ai-status" id="ai-test-status" style="flex:3"></div>
+    </div>
+    <div class="hint">Key is stored in <code>ai_key</code> next to <code>pi_role</code> (gitignored, mode 600) — or set <code>ANTHROPIC_API_KEY</code> in the service environment. Credits: platform.claude.com → Billing.</div>
+  </div>
+</div>
+
+<!-- ── From manual sheet ─────────────────────────────────────────── -->
+<div class="ai-sheet-bg" id="ai-manual-sheet">
+  <div class="ai-sheet">
+    <h2>✨ Fixture profile from manual <button class="x" onclick="AI.closeSheet('ai-manual-sheet')">✕</button></h2>
+    <div class="ai-row">
+      <label>Manual (PDF, ≤ 30 MB)</label>
+      <input type="file" id="ai-manual-file" accept="application/pdf,.pdf">
+    </div>
+    <div class="ai-row">
+      <label>Hint (optional)</label>
+      <input type="text" id="ai-manual-hint" placeholder="e.g. only the 54ch mode · it's a 4-zone bar · brand name if the PDF is generic">
+    </div>
+    <div class="ai-inline">
+      <button class="ai-btn go" id="ai-manual-go" onclick="aiManualRun()">Extract profiles</button>
+      <div class="ai-status" id="ai-manual-status" style="flex:3"></div>
+    </div>
+    <div class="ai-cards" id="ai-manual-results"></div>
+    <div class="ai-usage" id="ai-manual-usage"></div>
+  </div>
+</div>
+
+<script>
+/* ── Settings card ──────────────────────────────────────────────── */
+async function aiLoadCard(){
+  const st = await AI.refresh();
+  const c  = st.cfg || {};
+  for (const k of ['enabled','fixture_from_manual','scene_from_prompt','messenger_control']) {
+    const el = document.getElementById('ai-'+k); if (el) el.checked = !!c[k];
+  }
+  document.getElementById('ai-messenger_allow').value = (c.messenger_allow||[]).join('\n');
+  document.getElementById('ai-allow-row').style.display = c.messenger_control ? '' : 'none';
+  const ms = document.getElementById('ai-model');
+  if (c.model && ![...ms.options].some(o=>o.value===c.model)) {
+    const o = document.createElement('option'); o.value = c.model; o.textContent = c.model + ' (custom)'; ms.appendChild(o);
+  }
+  ms.value = c.model || 'claude-sonnet-5-5';
+  const k = st.key || {};
+  document.getElementById('ai-key-hint').textContent = k.configured ? `· set (${k.source}) ${k.hint||''}` : '· not set';
+  const hs = document.getElementById('ai-head-status');
+  hs.textContent = !st.sdk ? 'SDK missing — pip install' : !k.configured ? 'no key' : c.enabled ? 'ready' : 'off';
+  hs.style.color = st.available ? 'var(--success)' : 'var(--sub)';
+}
+async function aiSaveCfg(){
+  const body = {};
+  for (const k of ['enabled','fixture_from_manual','scene_from_prompt','messenger_control'])
+    body[k] = document.getElementById('ai-'+k).checked;
+  body.model = document.getElementById('ai-model').value;
+  body.messenger_allow = document.getElementById('ai-messenger_allow').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const d = await fetch('/api/ai/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+  if (!d.ok) toast(d.error||'save failed','err');
+  aiLoadCard();
+}
+async function aiSaveKey(){
+  const key = document.getElementById('ai-key').value.trim();
+  if (!key) { toast('Paste a key first','err'); return; }
+  const d = await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}).then(r=>r.json());
+  if (d.ok) { document.getElementById('ai-key').value=''; toast('Key saved ✓','ok'); aiLoadCard(); }
+  else toast(d.error||'failed','err');
+}
+async function aiClearKey(){
+  if (!confirm('Remove the stored API key?')) return;
+  await fetch('/api/ai/key',{method:'DELETE'}); toast('Key removed','ok'); aiLoadCard();
+}
+async function aiTest(){
+  const el = document.getElementById('ai-test-status');
+  el.className='ai-status'; el.innerHTML='<span class="ai-spin"></span>Testing…';
+  try {
+    const d = await fetch('/api/ai/test',{method:'POST'}).then(r=>r.json());
+    if (d.ok) { el.className='ai-status ok'; el.textContent=`OK — ${d.model} replied "${d.reply}" in ${d.ms} ms`; }
+    else { el.className='ai-status err'; el.textContent=d.error||'failed'; }
+  } catch(e){ el.className='ai-status err'; el.textContent=String(e); }
+}
+
+/* ── From manual ────────────────────────────────────────────────── */
+let aiManualProfiles = [];
+function aiOpenManual(){
+  document.getElementById('ai-manual-results').innerHTML='';
+  document.getElementById('ai-manual-usage').textContent='';
+  document.getElementById('ai-manual-status').textContent='';
+  AI.openSheet('ai-manual-sheet');
+}
+async function aiManualRun(){
+  const f = document.getElementById('ai-manual-file').files[0];
+  if (!f) { toast('Pick a PDF first','err'); return; }
+  const go = document.getElementById('ai-manual-go'), st = document.getElementById('ai-manual-status');
+  go.disabled = true; st.className='ai-status'; st.innerHTML='<span class="ai-spin"></span>Uploading…';
+  document.getElementById('ai-manual-results').innerHTML='';
+  try {
+    const fd = new FormData(); fd.append('pdf', f); fd.append('hint', document.getElementById('ai-manual-hint').value);
+    const d = await fetch('/api/ai/fixture-from-manual',{method:'POST',body:fd}).then(r=>r.json());
+    if (!d.ok) throw new Error(d.error||'request failed');
+    st.innerHTML='<span class="ai-spin"></span>Reading the manual… (30–90 s for a big PDF)';
+    const res = await AI.poll(d.job, j=>{ if (j.status==='running') st.innerHTML=`<span class="ai-spin"></span>Reading the manual… ${j.elapsed}s`; });
+    aiManualProfiles = res.profiles || [];
+    st.className='ai-status ok';
+    st.textContent = `${aiManualProfiles.length} mode(s) found` + (res.rejected?.length ? ` · ${res.rejected.length} unusable` : '') +
+                     ((res.manufacturer||res.model) ? ` · ${res.manufacturer||''} ${res.model||''}`.trimEnd() : '');
+    aiManualRender(res);
+    document.getElementById('ai-manual-usage').textContent = AI.usage(res.usage);
+  } catch(e){ st.className='ai-status err'; st.textContent = e.message||String(e); }
+  go.disabled = false;
+}
+function aiManualRender(res){
+  const wrap = document.getElementById('ai-manual-results'); wrap.innerHTML='';
+  aiManualProfiles.forEach((p,i)=>{
+    const conf = p._confidence ?? 0.5, cc = conf>=0.8?'conf-hi':conf>=0.6?'conf-mid':'conf-lo';
+    let meta='';
+    if (p.type==='pod') meta=`${p.pods} cell(s) × ${p.channels_per_pod}ch from ch ${p.first_pod_channel} · dimmer ${p.dimmer_channel||'none'} · emitters <b>${Object.keys(p.pod_color_offsets).join(' ')}</b>`;
+    else if (p.type==='pixel_strip') meta=`${p.pixel_count} px × ${p.channels_per_pixel}ch · emitters <b>${Object.keys(p.pixel_color_offsets).join(' ')}</b>`;
+    else meta=`roles: <b>${Object.entries(p.channel_roles).map(([r,c])=>`${r}→${c}`).join(', ')}</b>` + (Object.keys(p.channel_slots||{}).length? ` · wheel tables: ${Object.keys(p.channel_slots).join(', ')}`:'');
+    const exists = library.some(f=>f.id===p.id);
+    const card = document.createElement('div'); card.className='ai-card';
+    card.innerHTML = `
+      <div class="t">${AI.esc(p.name)} <span class="ai-tag">${p.type}</span><span class="ai-tag">${p.channels}ch</span><span class="ai-tag ${cc}">${Math.round(conf*100)}%</span>${exists?'<span class="ai-tag" style="color:#ffb347">id exists</span>':''}</div>
+      <div class="m">${meta}</div>
+      ${p._notes ? `<div class="m">${AI.esc(p._notes)}</div>`:''}
+      ${(p._warnings||[]).length ? `<div class="w">⚠ ${p._warnings.map(AI.esc).join(' · ')}</div>`:''}
+      <div class="b">
+        <button class="ai-btn go" onclick="aiManualReview(${i})">Review in builder</button>
+        <button class="ai-btn" onclick="aiManualSave(${i})">${exists?'Overwrite':'Save as-is'}</button>
+      </div>`;
+    wrap.appendChild(card);
+  });
+  (res.rejected||[]).forEach(r=>{
+    const card = document.createElement('div'); card.className='ai-card';
+    card.innerHTML=`<div class="t" style="color:var(--sub)">${AI.esc(r.mode_name||'?')} <span class="ai-tag conf-lo">unusable</span></div><div class="w">${(r.errors||[]).map(AI.esc).join(' · ')}</div>`;
+    wrap.appendChild(card);
+  });
+}
+function aiClean(p){ const o={}; for (const k in p) if(!k.startsWith('_')) o[k]=p[k]; return o; }
+function aiManualReview(i){
+  const p = aiClean(aiManualProfiles[i]);
+  AI.closeSheet('ai-manual-sheet');
+  openBuilder(p);
+  // openBuilder() treats a passed object as "edit existing" and keeps its id;
+  // make the title say what's going on.
+  document.getElementById('builder-title').textContent = '✨ Review AI profile';
+}
+async function aiManualSave(i){
+  const p = aiClean(aiManualProfiles[i]);
+  const d = await fetch('/api/fixtures',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}).then(r=>r.json());
+  if (!d.ok) { toast(d.error||'save failed','err'); return; }
+  const j = library.findIndex(f=>f.id===p.id); if (j>=0) library[j]=p; else library.push(p);
+  renderLibrary(); toast('Saved to library ✓','ok');
+  aiManualRender({rejected:[]});
+}
+document.addEventListener('DOMContentLoaded', aiLoadCard);
+</script>

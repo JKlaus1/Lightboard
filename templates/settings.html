@@ -379,9 +379,11 @@ main{padding:12px;display:flex;flex-direction:column;gap:12px;padding-bottom:50p
   </div>
 
   <div class="card">
-    <div class="card-head"><h2>Fixture Library</h2><button class="smbtn accent" onclick="openBuilder(null)">+ Build New</button></div>
+    <div class="card-head"><h2>Fixture Library</h2><button class="smbtn" data-ai-feature="fixture_from_manual" style="border-color:#5a3380;color:#d4b6ff;display:none" onclick="aiOpenManual()">✨ From manual</button><button class="smbtn accent" onclick="openBuilder(null)">+ Build New</button></div>
     <div id="library-list"></div>
   </div>
+
+{% include "_ai_settings.html" %}
 
   <div class="card">
     <div class="card-head"><h2>Scene Library &amp; Files</h2><button class="smbtn accent" onclick="location.href='/library'">📚 Open Library</button></div>

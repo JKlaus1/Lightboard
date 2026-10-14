@@ -1,0 +1,158 @@
+{# Scene Library → "✨ Generate" sheet (prompt + setlist). Included by library.html.
+   Relies on library.html globals: load(), toast(). #}
+{% include "_ai_shared.html" %}
+
+<div class="ai-sheet-bg" id="ai-scene-sheet">
+  <div class="ai-sheet">
+    <h2>✨ Generate scenes <button class="x" onclick="aiSceneClose()">✕</button></h2>
+    <div class="ai-tabs">
+      <button id="ai-tab-prompt" class="on" onclick="aiSceneTab('prompt')">From a prompt</button>
+      <button id="ai-tab-setlist" onclick="aiSceneTab('setlist')">From a setlist</button>
+    </div>
+
+    <div id="ai-pane-prompt">
+      <div class="ai-row">
+        <label>Describe the look</label>
+        <textarea id="ai-prompt" placeholder="e.g. slow amber wash on the pars, bars chasing lime at half speed, beat-locked · or: purple/blue alternating zones crossfading every 10 s"></textarea>
+      </div>
+      <div class="ai-inline">
+        <div class="ai-row" style="margin:0"><label>Type</label>
+          <select id="ai-scene-type"><option value="auto">Let it choose</option><option value="effect">Effect (animated)</option><option value="main">Main (static / steps)</option></select></div>
+        <div class="ai-row" style="margin:0"><label>Candidates</label>
+          <select id="ai-scene-n"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></div>
+        <div class="ai-row" style="margin:0"><label>Folder</label>
+          <input type="text" id="ai-scene-folder" value="AI drafts"></div>
+      </div>
+      <div class="ai-inline" style="margin-top:8px">
+        <button class="ai-btn go" id="ai-scene-go" onclick="aiSceneRun('prompt')">Generate</button>
+        <div class="ai-status" id="ai-scene-status" style="flex:3"></div>
+      </div>
+    </div>
+
+    <div id="ai-pane-setlist" style="display:none">
+      <div class="ai-row">
+        <label>Setlist — one song per line, add vibe words after a dash</label>
+        <textarea id="ai-setlist" style="min-height:140px" placeholder="Uptown Funk — party, bright, punchy&#10;Tennessee Whiskey — slow, warm amber&#10;Mr. Brightside — fast, red/white strobe-y"></textarea>
+      </div>
+      <div class="ai-inline">
+        <div class="ai-row" style="margin:0;flex:3"><label>Overall style (optional)</label>
+          <input type="text" id="ai-setlist-style" placeholder="wedding reception, keep UV off, bars are the hero"></div>
+        <div class="ai-row" style="margin:0"><label>Folder</label>
+          <input type="text" id="ai-setlist-folder" value="Setlist"></div>
+      </div>
+      <div class="ai-inline" style="margin-top:8px">
+        <button class="ai-btn go" id="ai-setlist-go" onclick="aiSceneRun('setlist')">Generate set</button>
+        <div class="ai-status" id="ai-setlist-status" style="flex:3"></div>
+      </div>
+    </div>
+
+    <div class="ai-inline" id="ai-scene-bulk" style="display:none;margin-top:10px">
+      <button class="ai-btn go" onclick="aiSceneSaveAll()">Save all unsaved</button>
+      <button class="ai-btn" onclick="aiScenePreview(null)">Stop preview</button>
+    </div>
+    <div class="ai-cards" id="ai-scene-results"></div>
+    <div class="ai-usage" id="ai-scene-usage"></div>
+  </div>
+</div>
+
+<script>
+let aiScenes = [];          // {scene, saved_id}
+let aiPreviewIdx = null;
+
+function aiSceneOpen(){ AI.openSheet('ai-scene-sheet'); }
+function aiSceneClose(){ aiScenePreview(null); AI.closeSheet('ai-scene-sheet'); }
+function aiSceneTab(t){
+  for (const k of ['prompt','setlist']) {
+    document.getElementById('ai-pane-'+k).style.display = k===t ? '' : 'none';
+    document.getElementById('ai-tab-'+k).classList.toggle('on', k===t);
+  }
+}
+async function aiSceneRun(kind){
+  const go = document.getElementById(kind==='prompt'?'ai-scene-go':'ai-setlist-go');
+  const st = document.getElementById(kind==='prompt'?'ai-scene-status':'ai-setlist-status');
+  let url, body;
+  if (kind==='prompt') {
+    body = { prompt: document.getElementById('ai-prompt').value, n: +document.getElementById('ai-scene-n').value,
+             scene_type: document.getElementById('ai-scene-type').value, folder: document.getElementById('ai-scene-folder').value };
+    if (body.prompt.trim().length < 3) { toast('Describe the look first','err'); return; }
+    url = '/api/ai/scenes-from-prompt';
+  } else {
+    body = { setlist: document.getElementById('ai-setlist').value, style: document.getElementById('ai-setlist-style').value,
+             folder: document.getElementById('ai-setlist-folder').value };
+    if (!body.setlist.trim()) { toast('Paste a setlist first','err'); return; }
+    url = '/api/ai/scenes-from-setlist';
+  }
+  go.disabled = true; st.className='ai-status'; st.innerHTML='<span class="ai-spin"></span>Thinking…';
+  aiScenePreview(null); aiScenes = []; aiSceneRender();
+  try {
+    const d = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+    if (!d.ok) throw new Error(d.error||'request failed');
+    const res = await AI.poll(d.job, j=>{ if (j.status==='running') st.innerHTML=`<span class="ai-spin"></span>Designing… ${j.elapsed}s`; });
+    aiScenes = (res.scenes||[]).map(s=>({scene:s, saved_id:null}));
+    st.className='ai-status ok';
+    st.textContent = `${aiScenes.length} scene(s)` + (res.rejected?.length ? ` · ${res.rejected.length} rejected (${res.rejected.map(r=>r.errors.join(', ')).join('; ')})` : '');
+    aiSceneRender();
+    document.getElementById('ai-scene-usage').textContent = AI.usage(res.usage);
+  } catch(e){ st.className='ai-status err'; st.textContent = e.message||String(e); }
+  go.disabled = false;
+}
+function aiSceneDesc(s){
+  if (s.scene_type==='effect') {
+    const p = Object.entries(s.params||{}).filter(([k])=>k!=='brightness').map(([k,v])=>`${k} ${v}`).join(' · ');
+    return `<b>${AI.esc(s.effect)}</b> · ${s.fixtures_enabled.length} fixture(s) · ${s.rendering_mode==='continuous_strip'?'one strip':'per segment'}${s.tempo_sync?` · beat ÷${s.beat_division}`:''}${p?` · ${AI.esc(p)}`:''}`;
+  }
+  const n = s.steps.length, fx = Object.keys(s.steps[0].fixtures).length;
+  return `<b>main</b> · ${n} step(s) · ${fx} fixture(s) · fade ${s.steps[0].fade} ms / hold ${s.steps[0].hold} ms${s.tempo_sync?` · beat ÷${s.beat_division}`:''}`;
+}
+function aiSceneSwatches(s){
+  let cols = [];
+  if (s.scene_type==='effect') cols = [s.primary, s.secondary, s.accent].filter(Boolean);
+  else { const seen = new Set(); for (const fd of Object.values(s.steps[0].fixtures)) for (const c of (fd.pods||[])) { if (!c) continue; const k=JSON.stringify(c); if(!seen.has(k)){seen.add(k); cols.push(c);} if (cols.length>=4) break; } }
+  return cols.map(c=>`<span class="sw" style="background:${AI.swatch(c)}"></span>`).join('');
+}
+function aiSceneRender(){
+  const wrap = document.getElementById('ai-scene-results'); wrap.innerHTML='';
+  document.getElementById('ai-scene-bulk').style.display = aiScenes.length ? '' : 'none';
+  aiScenes.forEach((e,i)=>{
+    const s = e.scene, card = document.createElement('div'); card.className='ai-card';
+    const live = aiPreviewIdx===i;
+    card.innerHTML = `
+      <div class="t">${aiSceneSwatches(s)} ${AI.esc(s.name)} ${e.saved_id?'<span class="ai-tag conf-hi">saved</span>':''}</div>
+      <div class="m">${aiSceneDesc(s)}</div>
+      ${s._rationale ? `<div class="m">${AI.esc(s._rationale)}</div>`:''}
+      ${(s._warnings||[]).length ? `<div class="w">⚠ ${s._warnings.map(AI.esc).join(' · ')}</div>`:''}
+      <div class="b">
+        <button class="ai-btn ${live?'go':''}" onclick="aiScenePreview(${live?'null':i})">${live?'■ Stop preview':'▶ Preview'}</button>
+        ${e.saved_id
+          ? `<button class="ai-btn" onclick="location.href='/editor/${e.saved_id}'">Edit</button>`
+          : `<button class="ai-btn go" onclick="aiSceneSave(${i})">Save</button><button class="ai-btn" onclick="aiSceneSave(${i},true)">Save &amp; edit</button>`}
+      </div>`;
+    wrap.appendChild(card);
+  });
+}
+async function aiScenePreview(i){
+  if (i===null) {
+    if (aiPreviewIdx!==null) { aiPreviewIdx=null; await fetch('/api/ai/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clear:true})}); aiSceneRender(); }
+    return;
+  }
+  aiPreviewIdx = i;
+  const d = await fetch('/api/ai/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scene: aiClean(aiScenes[i].scene)})}).then(r=>r.json());
+  if (!d.ok) { toast(d.error||'preview failed','err'); aiPreviewIdx=null; }
+  aiSceneRender();
+}
+function aiClean(s){ const o={}; for (const k in s) if(!k.startsWith('_')) o[k]=s[k]; return o; }
+async function aiSceneSave(i, edit){
+  const e = aiScenes[i];
+  if (!e.saved_id) {
+    const d = await fetch('/api/library/scene',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(aiClean(e.scene))}).then(r=>r.json());
+    if (!d.ok) { toast(d.error||'save failed','err'); return; }
+    e.saved_id = d.id; toast(`Saved "${e.scene.name}" ✓`,'ok');
+  }
+  aiSceneRender();
+  if (edit) { await aiScenePreview(null); location.href = '/editor/'+e.saved_id; }
+  else load();
+}
+async function aiSceneSaveAll(){
+  for (let i=0;i<aiScenes.length;i++) if (!aiScenes[i].saved_id) await aiSceneSave(i);
+}
+</script>
