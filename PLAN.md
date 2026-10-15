@@ -1722,6 +1722,11 @@ prompt teaches the compact form (main scene whose steps ROTATE a `colors`+`patte
 N steps, pars get staggered pattern starts; fade = crossfade, hold = step − fade). Messenger
 `!` messages may run to 1000 chars (display messages stay 160); route accepts 2000.
 
+**Follow-ups (23:52).** No chat memory between `!` messages; continuity comes from the running
+state in the prompt (temp scenes flagged). Effects are edited in place; a running MAIN scene is
+changed by re-emitting it with `create_scene` + `replaces: <id>` (old one stopped, temp entry
+dropped). `set_param`/`scale_param` on `fade`/`hold` now also edit running main scenes.
+
 **Show controls + model (added same night).** Commands now run on `cfg.model` (Sonnet by default;
 `ai.COMMAND_MODEL = FAST_MODEL` forces Haiku). New actions: `singer_mode {on}`, `singer_level
 {level}` (>1 treated as percent), `singer_color {kelvin | palette_id}` (persists to show.json via

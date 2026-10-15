@@ -961,6 +961,8 @@ _COMMAND_TOOL = {
                                   "description": "set_master / set_dimmer: 0.0-1.0"},
                         "mode": {"type": "string", "enum": ["full", "color"]},
                         "on": {"type": "boolean", "description": "singer_mode / freeze / overlay: true = on"},
+                        "replaces": {"type": "string",
+                                     "description": "create_scene: id of a RUNNING scene this new one replaces (it is stopped once the new one starts). Use when re-building a running scene with changed colours/pattern/timing."},
                         "kelvin": {"type": "integer", "minimum": 1500, "maximum": 10000,
                                    "description": "singer_color: colour temperature"},
                         "palette_id": {"type": "string", "description": "singer_color: id from PALETTE"},
@@ -1005,6 +1007,11 @@ HOW TO BUILD LOOKS (create_scene):
   continuous_strip = all enabled fixtures joined into one long strip so the motion travels across them.
 - "Red blue purple palette" → colors [{r:255},{b:255},{r:150,b:255,uv:120}] (emitter levels, not
   sRGB). Keep scenes compact: never list a fixture that isn't in the request.
+- To CHANGE a running MAIN scene's colours, pattern or timing, re-emit the whole scene with
+  create_scene and set `replaces` to its id (keep its name unless asked). Running EFFECT scenes are
+  edited in place with set_param / set_color / swap_effect / blackout_fixtures instead.
+  set_param also works on main scenes for `fade` and `hold` (ms); scale_param factor applies to both
+  ("slower" on a stepped scene = factor 2 on hold).
 - create_scene: when NOTHING running can be edited to satisfy the request (nothing is playing, or
   the request names fixtures / a look that no running scene covers) and no enabled library scene
   fits, BUILD the scene yourself in `scene` (same format as the operator's scenes: effect scenes
@@ -1266,8 +1273,15 @@ def execute_actions(actions, engine, show_cfg, registry, load_scene, history, sa
                     v = max(spec.get("min", v), min(spec.get("max", v), v))
                     sc["params"][pname] = int(round(v)) if spec.get("type") == "int" else round(v, 3)
                 n = _apply_effect_edit(engine, run, a.get("scene_id"), mut)
-                if not n: raise ValueError(f"no running effect has '{pname}'")
-                applied.append(f"{pname} {'=' if k=='set_param' else '×'} {a.get('value', a.get('factor'))} on {n} effect(s)")
+                if pname in ("fade", "hold"):
+                    def mut_m(sc):
+                        for st in sc.get("steps", []):
+                            cur = float(st.get(pname, 0))
+                            v = float(a.get("value", cur)) if k == "set_param" else cur * float(a.get("factor", 1))
+                            st[pname] = int(max(0, min(600000, v)))
+                    n += _apply_main_edit(engine, run, a.get("scene_id"), mut_m)
+                if not n: raise ValueError(f"no running scene has '{pname}'")
+                applied.append(f"{pname} {'=' if k=='set_param' else '×'} {a.get('value', a.get('factor'))} on {n} scene(s)")
             elif k == "set_color":
                 slot, col = a.get("slot") or "primary", _clamp_color(a.get("color"))
                 if not col: raise ValueError("no colour given")
@@ -1310,7 +1324,14 @@ def execute_actions(actions, engine, show_cfg, registry, load_scene, history, sa
                 else:
                     engine.play_scene(scene, scene_id=tid)
                 history.temp[tid] = scene
-                applied.append(f"created+playing \"{scene['name']}\" ({tid})" + (f" ⚠ {'; '.join(warns)}" if warns else ""))
+                rep = a.get("replaces")
+                if rep and rep != tid:
+                    engine.stop_effect_scene(rep)
+                    engine.stop_scene(scene_id=rep)
+                    history.temp.pop(rep, None)
+                applied.append(f"created+playing \"{scene['name']}\" ({tid})"
+                               + (f" replacing {rep}" if rep else "")
+                               + (f" ⚠ {'; '.join(warns)}" if warns else ""))
             elif k == "save_scene":
                 if not save_scene: raise ValueError("saving not available")
                 tid = a.get("scene_id")
