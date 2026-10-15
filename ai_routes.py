@@ -187,7 +187,7 @@ def register_ai_routes(app, ctx):
         if err:
             return jsonify({"ok": False, "error": err, "reply": "Lights: " + err}), 403
         d = request.json or {}
-        text   = (d.get("text") or "").strip()[:500]
+        text   = (d.get("text") or "").strip()[:2000]
         sender = (d.get("sender") or "").strip()
         source = d.get("source") or "messenger"
         if not text:
