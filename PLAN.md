@@ -1710,6 +1710,14 @@ to the library id so the home page highlights it. Temp scenes live in `CommandHi
 saved; `_running_context()` flags them TEMPORARY(unsaved) in the prompt. Route ctx gained
 `save_library_scene` (`_ai_save_new_scene` in app.py) and `save_show`.
 
+**Show controls + model (added same night).** Commands now run on `cfg.model` (Sonnet by default;
+`ai.COMMAND_MODEL = FAST_MODEL` forces Haiku). New actions: `singer_mode {on}`, `singer_level
+{level}` (>1 treated as percent), `singer_color {kelvin | palette_id}` (persists to show.json via
+`_ai_set_singer_color`, same as /api/singer/color), `freeze {on}`, `overlay {on}` (`_ai_set_overlay`).
+The prompt gets a SYSTEM STATE block: singer mode/level/colour, **which fixtures/pods are flagged
+singer lights** (`singer_pods`), freeze/overlay state, palette ids. Undo restores singer mode +
+level (not colour — it's a persisted setting).
+
 **StageMessenger side (server.py + control.html).** Message starting with `!` is intercepted in
 `handle_send_message` — never reaches displays — and `lights_command()` (thread, urllib, 25 s
 timeout) POSTs to `LIGHTBOARD_URL` (env, default `http://127.0.0.1:5000`). Reply comes back as a

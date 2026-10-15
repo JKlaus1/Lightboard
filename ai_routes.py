@@ -205,9 +205,12 @@ def register_ai_routes(app, ctx):
                    if s["id"] in set(show.get("enabled_scenes", []))]
         try:
             run = ai._running_context(eng)
+            run["palette_ids"] = [c.get("id") for c in (ctx["palette"]() or {}).get("colors", []) if c.get("id")]
             actions, usage = ai.parse_command(text, sender, run, show, reg, enabled, cfg)
             res = ai.execute_actions(actions, eng, show, reg, ctx["load_library_scene"], HISTORY,
-                                     save_scene=_save_from_chat)
+                                     save_scene=_save_from_chat,
+                                     host={"set_singer_color": ctx.get("set_singer_color"),
+                                           "set_overlay": ctx.get("set_overlay")})
         except Exception as e:                      # noqa: BLE001
             msg = ai._friendly_error(e)
             log.warning("ai command failed: %s", msg)

@@ -463,6 +463,28 @@ def _ai_save_new_scene(data):
     save_library_scene(new_id, data)
     return new_id
 
+def _ai_set_singer_color(mode, kelvin=None, palette_id=None):
+    """Same effect as POST /api/singer/color (persisted)."""
+    if mode == "kelvin" and kelvin is not None:
+        show_config["singer_kelvin"] = max(color_temp.KELVIN_MIN, min(color_temp.KELVIN_MAX, int(kelvin)))
+    elif mode == "palette":
+        if not any(c.get("id") == palette_id for c in palette.get("colors", [])):
+            raise ValueError(f"unknown palette colour '{palette_id}'")
+        show_config["singer_palette_id"] = palette_id
+    show_config["singer_color_mode"] = mode
+    save_json(SHOWS_DIR / config["active_show"] / "show.json", show_config)
+    engine.update_show_settings(show_config)
+
+def _ai_set_overlay(on):
+    """Same effect as POST /api/overlay {"action": on|off}."""
+    ov_id = show_config.get("overlay_scene")
+    if not ov_id:
+        raise ValueError("no overlay scene assigned for this show")
+    if on:
+        engine.start_overlay(load_library_scene(ov_id))
+    else:
+        engine.stop_overlay()
+
 register_ai_routes(app, {
     "config":              lambda: config,
     "save_config":         save_config,
@@ -472,6 +494,9 @@ register_ai_routes(app, {
     "load_library_scene":  load_library_scene,
     "save_library_scene":  _ai_save_new_scene,
     "save_show":           lambda: save_json(SHOWS_DIR / config["active_show"] / "show.json", show_config),
+    "palette":             lambda: palette,
+    "set_singer_color":    _ai_set_singer_color,
+    "set_overlay":         _ai_set_overlay,
     "engine":              engine,
 })
 app.config["TEMPLATES_AUTO_RELOAD"] = True

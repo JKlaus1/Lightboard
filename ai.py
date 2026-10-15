@@ -900,12 +900,13 @@ def validate_scene(s, show_cfg, registry, default_folder):
 # engine, the library file is never written. A snapshot of the running state
 # is taken before every command so "undo" can put it back.
 
-COMMAND_MODEL = FAST_MODEL
+COMMAND_MODEL = None     # None → cfg["model"] (Sonnet by default); set to FAST_MODEL for Haiku
 
 _ACTION_KINDS = ["launch_scene", "stop_scene", "stop_all_effects", "stop_all_main",
                  "blackout", "blackout_off", "blackout_fixtures", "restore_fixtures",
                  "set_param", "scale_param", "set_color", "swap_effect",
-                 "set_master", "set_dimmer", "create_scene", "save_scene", "undo", "reply"]
+                 "set_master", "set_dimmer", "create_scene", "save_scene",
+                 "singer_mode", "singer_level", "singer_color", "freeze", "overlay", "undo", "reply"]
 
 def _command_tool(registry, fixture_ids, group_ids):
     t = json.loads(json.dumps(_COMMAND_TOOL))
@@ -939,6 +940,10 @@ _COMMAND_TOOL = {
                         "level": {"type": "number", "minimum": 0, "maximum": 1,
                                   "description": "set_master / set_dimmer: 0.0-1.0"},
                         "mode": {"type": "string", "enum": ["full", "color"]},
+                        "on": {"type": "boolean", "description": "singer_mode / freeze / overlay: true = on"},
+                        "kelvin": {"type": "integer", "minimum": 1500, "maximum": 10000,
+                                   "description": "singer_color: colour temperature"},
+                        "palette_id": {"type": "string", "description": "singer_color: id from PALETTE"},
                         "text": {"type": "string", "description": "reply: one short line (≤ 80 chars) for the person who sent the message."},
                         # "scene" (create_scene) is attached per call by _command_tool()
                     },
@@ -973,7 +978,15 @@ Action semantics:
   a TEMPORARY scene. Never refuse a doable request for lack of an existing scene.
 - save_scene: write the most recent temporary scene (or scene_id) to the library permanently —
   the person says "save", "keep that", "save it as X" (put X in `text`).
+- singer_mode (on/off): the singer-light override — the pods flagged as singer lights (see SYSTEM
+  STATE) go to the singer colour on top of whatever is playing. "singer lights off" = singer_mode off.
+- singer_level: the singer dimmer, 0.0-1.0 ("100" / "full" = 1.0, "half" = 0.5).
+- singer_color: kelvin (warm 2700-3200, neutral 4000, cool 5600+) OR palette_id from PALETTE.
+- freeze (on/off): hold the current look; changes queue until unfreeze. overlay (on/off): the
+  show's overlay scene.
 - undo: revert the previous command.
+Live show controls ARE changeable from here (singer, master, blackout, freeze, overlay). Only
+patch/config edits (addresses, fixture profiles, network) are not.
 - reply: ALWAYS last. ≤ 80 chars, plain, e.g. "✓ bars out, chase at half speed". After a
   create_scene say it is temporary and that "!save" keeps it. If the message is not a lighting
   request or is truly ambiguous, return ONLY a reply saying what you need.
@@ -992,7 +1005,19 @@ def _running_context(engine):
                  for e in engine._active_effects if e["target"] == 1.0]
         master = engine._master_level
         bo = engine._blackout_mode if engine._blackout_target == 1.0 else None
-    return {"mains": mains, "effects": effs, "master": master, "blackout": bo}
+        singer_mode  = bool(engine._singer_mode)
+        singer_level = float(engine._singer_level)
+        freeze  = bool(getattr(engine, "_freeze_active", False))
+        overlay = getattr(engine, "_overlay_target", 0.0) == 1.0
+        ov_name = getattr(engine, "_current_overlay_name", None)
+    show = getattr(engine, "_show", {}) or {}
+    sc_mode = show.get("singer_color_mode", "custom")
+    singer_color = (f"{show.get('singer_kelvin')}K" if sc_mode == "kelvin"
+                    else f"palette:{show.get('singer_palette_id')}" if sc_mode == "palette"
+                    else "custom")
+    return {"mains": mains, "effects": effs, "master": master, "blackout": bo,
+            "singer_mode": singer_mode, "singer_level": singer_level, "singer_color": singer_color,
+            "freeze": freeze, "overlay": overlay, "overlay_name": ov_name, "palette_ids": []}
 
 
 def _command_context_text(run, show_cfg, registry, enabled_scenes):
@@ -1008,10 +1033,22 @@ def _command_context_text(run, show_cfg, registry, enabled_scenes):
         fx = list((sc.get("steps") or [{}])[0].get("fixtures", {}).keys())
         tmp = " TEMPORARY(unsaved)" if str(m["id"]).startswith(TEMP_PREFIX) else ""
         return f"- id={m['id']}  \"{m['name']}\"{tmp}  main, {len(sc.get('steps') or [])} step(s), fixtures={fx}"
-    fx_lines, grp_lines = [], []
+    fx_lines, grp_lines, singer_fx = [], [], []
     for fx in show_cfg.get("fixtures", []):
         t = fx.get("type") or ("pixel_strip" if fx.get("pixel_count") else "pod")
-        fx_lines.append(f"- {fx['id']}  \"{fx.get('name','')}\"  {t}")
+        sp = fx.get("singer_pods") or []
+        fx_lines.append(f"- {fx['id']}  \"{fx.get('name','')}\"  {t}" + (f"  singer_pods={sp}" if sp else ""))
+        if sp:
+            singer_fx.append(f"{fx.get('name','')} pods {sp}")
+    sys_lines = [
+        f"singer_mode={'ON' if run.get('singer_mode') else 'OFF'} singer_level={run.get('singer_level', 0):.2f} "
+        f"singer_color={run.get('singer_color')}",
+        "singer lights: " + ("; ".join(singer_fx) if singer_fx else "(no pods flagged as singer lights)"),
+        f"freeze={'ON' if run.get('freeze') else 'off'} overlay={'ON' if run.get('overlay') else 'off'}"
+        + (f" ({run.get('overlay_name')})" if run.get('overlay_name') else "")
+        + (" — no overlay scene assigned" if not show_cfg.get("overlay_scene") else ""),
+        "PALETTE ids: " + ", ".join(run.get("palette_ids") or []),
+    ]
     for g in show_cfg.get("groups", []):
         grp_lines.append(f"- \"{g.get('name','')}\" → {g.get('members', [])}")
     lib = [f"- {s['id']}  \"{s['name']}\"  {s.get('scene_type','main')}" for s in enabled_scenes]
@@ -1020,6 +1057,7 @@ def _command_context_text(run, show_cfg, registry, enabled_scenes):
             + ("\n".join(brief_main(m) for m in run["mains"]) or "(no main scene)") + "\n"
             + ("\n".join(brief_effect(e) for e in run["effects"]) or "(no effects)") + "\n"
             + f"master={run['master']:.2f} blackout={run['blackout']}\n\n"
+            "SYSTEM STATE:\n" + "\n".join(sys_lines) + "\n\n"
             "PATCH:\n" + "\n".join(fx_lines) + "\n\nGROUPS:\n" + ("\n".join(grp_lines) or "(none)")
             + "\n\nENABLED LIBRARY SCENES (launchable):\n" + ("\n".join(lib) or "(none)")
             + "\n\nEFFECTS AND THEIR PARAMS:\n" + json.dumps(reg, separators=(",", ":")))
@@ -1033,7 +1071,7 @@ def parse_command(text, sender, run, show_cfg, registry, enabled_scenes, cfg):
     fixture_ids = [fx["id"] for fx in show_cfg.get("fixtures", []) if fx.get("type") != "mover"]
     group_ids   = [g["id"] for g in show_cfg.get("groups", []) if g.get("id")]
     tool = _command_tool(registry, fixture_ids, group_ids)
-    data, usage = _call_tool(COMMAND_MODEL, system, user, tool, max_tokens=2500)
+    data, usage = _call_tool(COMMAND_MODEL or c["model"], system, user, tool, max_tokens=2500)
     return data.get("actions") or [], usage
 
 
@@ -1064,6 +1102,9 @@ def _restore(engine, snap, load_scene):
         engine.play_effect_scene(dict(e["scene"]), scene_id=e["id"])
     engine.set_master(snap["master"])
     engine.set_blackout(snap["blackout"] or "off")
+    if "singer_mode" in snap:
+        engine.set_singer_mode(snap["singer_mode"])
+        engine.set_singer_level(snap["singer_level"])
 
 
 def _apply_effect_edit(engine, run, scene_id, mutate):
@@ -1093,10 +1134,12 @@ def _apply_main_edit(engine, run, scene_id, mutate):
     return hit
 
 
-def execute_actions(actions, engine, show_cfg, registry, load_scene, history, save_scene=None):
+def execute_actions(actions, engine, show_cfg, registry, load_scene, history, save_scene=None,
+                    host=None):
     """Apply parsed actions. Returns {"applied": [...], "reply": str, "errors": [...]}.
-    save_scene(scene_dict) → new library id; supplied by the route (writes the
-    file and enables it in the active show)."""
+    save_scene(scene_dict) → new library id; host = optional dict of app-level
+    callbacks: set_singer_color(mode, kelvin, palette_id), set_overlay(on)."""
+    host = host or {}
     run = _running_context(engine)
     # The state before THIS command becomes the undo point; the one before
     # the PREVIOUS command is what "undo" restores now.
@@ -1259,6 +1302,31 @@ def execute_actions(actions, engine, show_cfg, registry, load_scene, history, sa
                         engine.play_scene(sc2, launch_fade_ms=0, scene_id=new_id, force=True)
                         engine.stop_scene(scene_id=tid)
                 applied.append(f"saved \"{scene['name']}\" as {new_id} (Library → From chat)")
+            elif k == "singer_mode":
+                on = bool(a.get("on", True))
+                engine.set_singer_mode(on); applied.append(f"singer {'on' if on else 'off'}")
+            elif k == "singer_level":
+                lvl = float(a.get("level", 1.0))
+                if lvl > 1.0: lvl = lvl / 100.0          # "80" → 0.8
+                lvl = max(0.0, min(1.0, lvl))
+                engine.set_singer_level(lvl); applied.append(f"singer level {lvl:.2f}")
+            elif k == "singer_color":
+                fn = host.get("set_singer_color")
+                if not fn: raise ValueError("singer colour not available")
+                if a.get("palette_id"):
+                    fn("palette", None, a["palette_id"]); applied.append(f"singer colour {a['palette_id']}")
+                elif a.get("kelvin"):
+                    fn("kelvin", int(a["kelvin"]), None); applied.append(f"singer colour {int(a['kelvin'])}K")
+                else:
+                    raise ValueError("give kelvin or palette_id")
+            elif k == "freeze":
+                on = bool(a.get("on", True))
+                engine.set_freeze(on); applied.append(f"freeze {'on' if on else 'off'}")
+            elif k == "overlay":
+                fn = host.get("set_overlay")
+                if not fn: raise ValueError("overlay not available")
+                on = bool(a.get("on", True))
+                fn(on); applied.append(f"overlay {'on' if on else 'off'}")
             elif k == "undo":
                 if not prev_snap: raise ValueError("nothing to undo")
                 _restore(engine, prev_snap, load_scene); applied.append("undo")
