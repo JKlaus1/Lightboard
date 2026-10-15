@@ -520,19 +520,13 @@ def _color_schema(desc):
             "additionalProperties": False}
 
 
-def _scene_tool(registry, fixture_ids, group_ids):
+def _scene_item_schema(registry, fixture_ids, group_ids):
+    """JSON schema for ONE scene (effect or main) — shared by the Generate
+    sheet's save_scenes tool and the command tool's create_scene action."""
     effect_ids = sorted(registry.keys())
     color = _color_schema("Colour as emitter levels 0-255. Keys: r g b a(amber) w(white) uv l(lime). "
                           "Include only the emitters you want lit; omit keys the mood doesn't need.")
     return {
-        "name": "save_scenes",
-        "description": "Return the requested scenes in Lightboard's scene format.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "scenes": {
-                    "type": "array",
-                    "items": {
                         "type": "object",
                         "properties": {
                             "name":   {"type": "string", "description": "Short, evocative, ≤ 32 chars."},
@@ -580,9 +574,17 @@ def _scene_tool(registry, fixture_ids, group_ids):
                             },
                         },
                         "required": ["name", "scene_type", "rationale"],
-                    },
-                },
-            },
+                    }
+
+
+def _scene_tool(registry, fixture_ids, group_ids):
+    return {
+        "name": "save_scenes",
+        "description": "Return the requested scenes in Lightboard's scene format.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"scenes": {"type": "array",
+                                      "items": _scene_item_schema(registry, fixture_ids, group_ids)}},
             "required": ["scenes"],
         },
     }
@@ -903,7 +905,14 @@ COMMAND_MODEL = FAST_MODEL
 _ACTION_KINDS = ["launch_scene", "stop_scene", "stop_all_effects", "stop_all_main",
                  "blackout", "blackout_off", "blackout_fixtures", "restore_fixtures",
                  "set_param", "scale_param", "set_color", "swap_effect",
-                 "set_master", "set_dimmer", "undo", "reply"]
+                 "set_master", "set_dimmer", "create_scene", "save_scene", "undo", "reply"]
+
+def _command_tool(registry, fixture_ids, group_ids):
+    t = json.loads(json.dumps(_COMMAND_TOOL))
+    t["input_schema"]["properties"]["actions"]["items"]["properties"]["scene"] = \
+        _scene_item_schema(registry, fixture_ids, group_ids)
+    return t
+
 
 _COMMAND_TOOL = {
     "name": "lighting_actions",
@@ -931,6 +940,7 @@ _COMMAND_TOOL = {
                                   "description": "set_master / set_dimmer: 0.0-1.0"},
                         "mode": {"type": "string", "enum": ["full", "color"]},
                         "text": {"type": "string", "description": "reply: one short line (≤ 80 chars) for the person who sent the message."},
+                        # "scene" (create_scene) is attached per call by _command_tool()
                     },
                     "required": ["kind"],
                 },
@@ -954,9 +964,19 @@ Action semantics:
   "cooler" → more white/blue; "dimmer" on a colour means lower brightness → prefer set_dimmer.
 - swap_effect: change a running effect's type (chase→comet etc.), keeping its colours/fixtures.
 - set_master: whole-rig colour dimmer 0-1. set_dimmer: per-fixture dimmer 0-1 on running scenes.
+- create_scene: when NOTHING running can be edited to satisfy the request (nothing is playing, or
+  the request names fixtures / a look that no running scene covers) and no enabled library scene
+  fits, BUILD the scene yourself in `scene` (same format as the operator's scenes: effect scenes
+  for anything animated — a "colour fade" between two colours is effect "colorfade", a slow
+  "breathe", a "chase"…; main scenes for static looks or stepped crossfades). Pick exactly the
+  fixtures asked for; if none are named, use every non-mover fixture. It starts playing at once as
+  a TEMPORARY scene. Never refuse a doable request for lack of an existing scene.
+- save_scene: write the most recent temporary scene (or scene_id) to the library permanently —
+  the person says "save", "keep that", "save it as X" (put X in `text`).
 - undo: revert the previous command.
-- reply: ALWAYS last. ≤ 80 chars, plain, e.g. "✓ bars out, chase at half speed". If the message
-  is not a lighting request or is ambiguous, return ONLY a reply saying what you need.
+- reply: ALWAYS last. ≤ 80 chars, plain, e.g. "✓ bars out, chase at half speed". After a
+  create_scene say it is temporary and that "!save" keeps it. If the message is not a lighting
+  request or is truly ambiguous, return ONLY a reply saying what you need.
 
 Resolve names loosely: "bars" = fixtures/groups whose names contain bar/EXA; "pars"/"cans" =
 par fixtures; "tube" = the pixel strip; scene names fuzzy-match ("UV" → "Full UV").
@@ -979,13 +999,15 @@ def _command_context_text(run, show_cfg, registry, enabled_scenes):
     def brief_effect(e):
         sc = e["scene"]
         p = {k: v for k, v in (sc.get("params") or {}).items()}
-        return (f"- id={e['id']}  \"{e['name']}\"  effect={sc.get('effect')} params={json.dumps(p)} "
+        tmp = " TEMPORARY(unsaved)" if str(e["id"]).startswith(TEMP_PREFIX) else ""
+        return (f"- id={e['id']}  \"{e['name']}\"{tmp}  effect={sc.get('effect')} params={json.dumps(p)} "
                 f"primary={json.dumps(sc.get('primary'))} secondary={json.dumps(sc.get('secondary'))} "
                 f"fixtures={sc.get('fixtures_enabled')}")
     def brief_main(m):
         sc = m["scene"]
         fx = list((sc.get("steps") or [{}])[0].get("fixtures", {}).keys())
-        return f"- id={m['id']}  \"{m['name']}\"  main, {len(sc.get('steps') or [])} step(s), fixtures={fx}"
+        tmp = " TEMPORARY(unsaved)" if str(m["id"]).startswith(TEMP_PREFIX) else ""
+        return f"- id={m['id']}  \"{m['name']}\"{tmp}  main, {len(sc.get('steps') or [])} step(s), fixtures={fx}"
     fx_lines, grp_lines = [], []
     for fx in show_cfg.get("fixtures", []):
         t = fx.get("type") or ("pixel_strip" if fx.get("pixel_count") else "pod")
@@ -1008,15 +1030,23 @@ def parse_command(text, sender, run, show_cfg, registry, enabled_scenes, cfg):
     c = merged_cfg(cfg)
     system = [_cached(_COMMAND_SYSTEM + "\n\n" + _command_context_text(run, show_cfg, registry, enabled_scenes))]
     user = [{"type": "text", "text": f"From {sender or 'operator'}: {text.strip()}"}]
-    data, usage = _call_tool(COMMAND_MODEL, system, user, _COMMAND_TOOL, max_tokens=800)
+    fixture_ids = [fx["id"] for fx in show_cfg.get("fixtures", []) if fx.get("type") != "mover"]
+    group_ids   = [g["id"] for g in show_cfg.get("groups", []) if g.get("id")]
+    tool = _command_tool(registry, fixture_ids, group_ids)
+    data, usage = _call_tool(COMMAND_MODEL, system, user, tool, max_tokens=2500)
     return data.get("actions") or [], usage
 
 
+TEMP_PREFIX = "ai_tmp_"
+
+
 class CommandHistory:
-    """Last-command snapshot for undo (one level; enough for a show)."""
+    """Last-command snapshot for undo (one level; enough for a show), plus the
+    temporary scenes created from chat (id → scene) until they're saved."""
     def __init__(self):
         self._snap = None
         self._lock = threading.Lock()
+        self.temp = {}           # ordered: last inserted = most recent
     def swap(self, snap):
         """Store `snap` as the new undo point, return the previous one."""
         with self._lock:
@@ -1063,8 +1093,10 @@ def _apply_main_edit(engine, run, scene_id, mutate):
     return hit
 
 
-def execute_actions(actions, engine, show_cfg, registry, load_scene, history):
-    """Apply parsed actions. Returns {"applied": [...], "reply": str, "errors": [...]}."""
+def execute_actions(actions, engine, show_cfg, registry, load_scene, history, save_scene=None):
+    """Apply parsed actions. Returns {"applied": [...], "reply": str, "errors": [...]}.
+    save_scene(scene_dict) → new library id; supplied by the route (writes the
+    file and enables it in the active show)."""
     run = _running_context(engine)
     # The state before THIS command becomes the undo point; the one before
     # the PREVIOUS command is what "undo" restores now.
@@ -1188,6 +1220,45 @@ def execute_actions(actions, engine, show_cfg, registry, load_scene, history):
                                 fd["dimmer"] = int(round(255 * lvl))
                 n = _apply_effect_edit(engine, run, a.get("scene_id"), mut_e) + _apply_main_edit(engine, run, a.get("scene_id"), mut_m)
                 applied.append(f"dimmer {lvl:.2f} on {n} scene(s)")
+            elif k == "create_scene":
+                sc_in = a.get("scene") or {}
+                scene, errs2, warns = validate_scene(sc_in, show_cfg, registry, "From chat")
+                if errs2: raise ValueError("; ".join(errs2))
+                tid = TEMP_PREFIX + uuid.uuid4().hex[:6]
+                scene.pop("_warnings", None)
+                if scene["scene_type"] == "effect":
+                    engine.play_effect_scene(scene, scene_id=tid)
+                else:
+                    engine.play_scene(scene, scene_id=tid)
+                history.temp[tid] = scene
+                applied.append(f"created+playing \"{scene['name']}\" ({tid})" + (f" ⚠ {'; '.join(warns)}" if warns else ""))
+            elif k == "save_scene":
+                if not save_scene: raise ValueError("saving not available")
+                tid = a.get("scene_id")
+                if not tid or tid not in history.temp:
+                    if not history.temp: raise ValueError("no temporary scene to save")
+                    tid = list(history.temp)[-1]
+                # Save the scene AS IT IS NOW (later "!slower" etc. mutated the
+                # running copy), then re-id the running entry to the library id.
+                live = _running_context(engine)
+                cur = next((e for e in live["effects"] + live["mains"] if e["id"] == tid), None)
+                scene = json.loads(json.dumps(cur["scene"] if cur else history.temp[tid]))
+                for k in [k for k in scene if k.startswith("_")]:
+                    scene.pop(k)
+                new_name = (a.get("text") or "").strip()
+                if new_name and not new_name.lower().startswith(("save", "keep")):
+                    scene["name"] = new_name[:40]
+                new_id = save_scene(scene)
+                history.temp.pop(tid, None)
+                if cur:
+                    if scene.get("scene_type") == "effect":
+                        engine.play_effect_scene(dict(scene), scene_id=new_id)
+                        engine.stop_effect_scene(tid)
+                    else:
+                        sc2 = dict(scene); sc2["launch_fade"] = 0
+                        engine.play_scene(sc2, launch_fade_ms=0, scene_id=new_id, force=True)
+                        engine.stop_scene(scene_id=tid)
+                applied.append(f"saved \"{scene['name']}\" as {new_id} (Library → From chat)")
             elif k == "undo":
                 if not prev_snap: raise ValueError("nothing to undo")
                 _restore(engine, prev_snap, load_scene); applied.append("undo")

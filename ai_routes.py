@@ -166,6 +166,17 @@ def register_ai_routes(app, ctx):
         return jsonify({"ok": True, "job": jid})
 
 
+    def _save_from_chat(scene):
+        """Persist a chat-created scene to the library and enable it in the
+        active show so it appears on the home page immediately."""
+        new_id = ctx["save_library_scene"](scene)
+        show = ctx["show_config"]()
+        en = show.setdefault("enabled_scenes", [])
+        if new_id not in en:
+            en.append(new_id)
+            ctx["save_show"]()
+        return new_id
+
     # ── Feature 3: natural-language command (Stage Messenger / control page) ─
     @app.route("/api/ai/command", methods=["POST"])
     def api_ai_command():
@@ -195,7 +206,8 @@ def register_ai_routes(app, ctx):
         try:
             run = ai._running_context(eng)
             actions, usage = ai.parse_command(text, sender, run, show, reg, enabled, cfg)
-            res = ai.execute_actions(actions, eng, show, reg, ctx["load_library_scene"], HISTORY)
+            res = ai.execute_actions(actions, eng, show, reg, ctx["load_library_scene"], HISTORY,
+                                     save_scene=_save_from_chat)
         except Exception as e:                      # noqa: BLE001
             msg = ai._friendly_error(e)
             log.warning("ai command failed: %s", msg)

@@ -455,6 +455,14 @@ app = Flask(__name__)
 register_wifi_routes(app)  # venue WiFi page (/wifi)
 
 # ── AI (Claude API) routes — /api/ai/* ────────────────────────────────────
+def _ai_save_new_scene(data):
+    """New library scene with a fresh id (same as api_library_new)."""
+    new_id = gen_scene_id()
+    while library_path(new_id).exists():
+        new_id = gen_scene_id()
+    save_library_scene(new_id, data)
+    return new_id
+
 register_ai_routes(app, {
     "config":              lambda: config,
     "save_config":         save_config,
@@ -462,6 +470,8 @@ register_ai_routes(app, {
     "effects_registry":    effects.get_registry,
     "list_library_scenes": list_library_scenes,
     "load_library_scene":  load_library_scene,
+    "save_library_scene":  _ai_save_new_scene,
+    "save_show":           lambda: save_json(SHOWS_DIR / config["active_show"] / "show.json", show_config),
     "engine":              engine,
 })
 app.config["TEMPLATES_AUTO_RELOAD"] = True

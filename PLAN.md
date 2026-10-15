@@ -1699,6 +1699,17 @@ before each command is the undo point (one level; a second undo re-applies = red
 multi-action command refreshes the snapshot so they compose. Errors are per-action; reply is "✗ …"
 only when nothing applied.
 
+**create_scene / save_scene (added same night).** If nothing running can be edited to satisfy a
+request and no enabled library scene fits ("fade the bars blue to purple" with nothing playing),
+the model builds the scene itself (`scene` carries the same item schema as the Generate sheet,
+attached per call by `_command_tool()`), it's validated by `validate_scene()`, played under a
+temporary id `ai_tmp_xxxxxx`, and the reply says "!save to keep". `!save` / `!save as NAME` writes
+the scene **as it is live now** (later `!slower` etc. included) to the library (folder "From
+chat"), enables it in the active show (`enabled_scenes` + show.json) and re-ids the running entry
+to the library id so the home page highlights it. Temp scenes live in `CommandHistory.temp` until
+saved; `_running_context()` flags them TEMPORARY(unsaved) in the prompt. Route ctx gained
+`save_library_scene` (`_ai_save_new_scene` in app.py) and `save_show`.
+
 **StageMessenger side (server.py + control.html).** Message starting with `!` is intercepted in
 `handle_send_message` — never reaches displays — and `lights_command()` (thread, urllib, 25 s
 timeout) POSTs to `LIGHTBOARD_URL` (env, default `http://127.0.0.1:5000`). Reply comes back as a
