@@ -214,7 +214,7 @@ def register_ai_routes(app, ctx):
         except Exception as e:                      # noqa: BLE001
             msg = ai._friendly_error(e)
             log.warning("ai command failed: %s", msg)
-            return jsonify({"ok": False, "error": msg, "reply": "Lights: " + msg[:100]}), 502
+            return jsonify({"ok": False, "error": msg, "reply": "Lights: " + msg[:150]}), 502
         log.info("ai command from %s (%s): %r → %s", sender, source, text, res["applied"] or res["errors"])
         res["ok"] = True
         res["usage"] = usage

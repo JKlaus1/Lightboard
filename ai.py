@@ -240,6 +240,14 @@ class Jobs:
 def _friendly_error(e):
     name = type(e).__name__
     msg  = str(e)
+    # SDK API errors carry the server's own message in .body — surface that,
+    # it says exactly which field was rejected.
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        inner = body.get("error") if isinstance(body.get("error"), dict) else body
+        if isinstance(inner, dict) and inner.get("message"):
+            msg = f"{inner.get('type', 'api_error')}: {inner['message']}"
+            log.error("Claude API %s (%s): %s", name, getattr(e, "status_code", "?"), inner["message"])
     if "credit" in msg.lower() or "billing" in msg.lower():
         return "API credit balance exhausted or billing issue — check platform.claude.com."
     if name in ("AuthenticationError",) or "401" in msg:
@@ -248,7 +256,7 @@ def _friendly_error(e):
         return "Rate limited (429) — wait a moment and retry."
     if name in ("APIConnectionError", "APITimeoutError"):
         return "Could not reach the Claude API — check the Pi's internet (wlan0)."
-    return f"{name}: {msg}"[:400]
+    return f"{name}: {msg}"[:600]
 
 
 # ── Feature 1: fixture profile from manual ─────────────────────────────────
