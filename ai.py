@@ -147,33 +147,42 @@ def _client():
 
 
 def _call_tool(model, system_blocks, user_content, tool, max_tokens=8000):
-    """One forced-tool-use round trip. Returns (tool_input, usage_dict)."""
+    """One tool-use round trip; returns (tool_input, usage_dict).
+
+    Current models reject forced tool_choice ("tool"/"any" → 400), so the tool
+    is offered with tool_choice=auto and the system prompt instructs the model
+    to always answer by calling it. If it replies in prose anyway, one retry
+    nudges it; a second miss raises."""
     client = _client()
-    resp = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=system_blocks,
-        messages=[{"role": "user", "content": user_content}],
-        tools=[tool],
-        tool_choice={"type": "tool", "name": tool["name"]},
-    )
-    tool_input = None
-    for block in resp.content:
-        if getattr(block, "type", None) == "tool_use" and block.name == tool["name"]:
-            tool_input = block.input
-            break
-    if tool_input is None:
-        raise RuntimeError("Model returned no structured result (stop_reason=%s)"
-                           % getattr(resp, "stop_reason", "?"))
-    u = resp.usage
-    usage = {
-        "input":        getattr(u, "input_tokens", 0),
-        "output":       getattr(u, "output_tokens", 0),
-        "cache_read":   getattr(u, "cache_read_input_tokens", 0) or 0,
-        "cache_write":  getattr(u, "cache_creation_input_tokens", 0) or 0,
-        "model":        model,
-    }
-    return tool_input, usage
+    system = list(system_blocks) + [{"type": "text", "text":
+        f"Respond ONLY by calling the `{tool['name']}` tool. Never answer in prose."}]
+    messages = [{"role": "user", "content": user_content}]
+    usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    resp = None
+    for attempt in range(2):
+        resp = client.messages.create(
+            model=model, max_tokens=max_tokens, system=system, messages=messages,
+            tools=[tool], tool_choice={"type": "auto"},
+        )
+        u = resp.usage
+        usage_total["input"]       += getattr(u, "input_tokens", 0) or 0
+        usage_total["output"]      += getattr(u, "output_tokens", 0) or 0
+        usage_total["cache_read"]  += getattr(u, "cache_read_input_tokens", 0) or 0
+        usage_total["cache_write"] += getattr(u, "cache_creation_input_tokens", 0) or 0
+        for block in resp.content:
+            if getattr(block, "type", None) == "tool_use" and block.name == tool["name"]:
+                usage_total["model"] = model
+                return block.input, usage_total
+        if attempt == 0:
+            prose = "".join(getattr(b, "text", "") for b in resp.content).strip()
+            log.warning("model answered in prose instead of calling %s — retrying once: %r",
+                        tool["name"], prose[:200])
+            messages.append({"role": "assistant", "content": resp.content})
+            messages.append({"role": "user", "content":
+                             f"Call the `{tool['name']}` tool now with your answer."})
+    raise RuntimeError("Model returned no structured result (stop_reason=%s)"
+                       % getattr(resp, "stop_reason", "?"))
+
 
 
 def _cached(text):

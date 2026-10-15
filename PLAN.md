@@ -1710,6 +1710,11 @@ to the library id so the home page highlights it. Temp scenes live in `CommandHi
 saved; `_running_context()` flags them TEMPORARY(unsaved) in the prompt. Route ctx gained
 `save_library_scene` (`_ai_save_new_scene` in app.py) and `save_show`.
 
+**Gotcha (hardware, 23:18): forced `tool_choice` ({"type":"tool"} / "any") is rejected with 400 by
+the 5.5 models.** `_call_tool` now offers the tool with `tool_choice: auto` plus a trailing system
+line "respond only by calling the tool", and retries once with a nudge if the model answers in
+prose; a second miss raises. All three features go through the same helper.
+
 **Show controls + model (added same night).** Commands now run on `cfg.model` (Sonnet by default;
 `ai.COMMAND_MODEL = FAST_MODEL` forces Haiku). New actions: `singer_mode {on}`, `singer_level
 {level}` (>1 treated as percent), `singer_color {kelvin | palette_id}` (persists to show.json via
