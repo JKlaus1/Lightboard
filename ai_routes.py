@@ -215,7 +215,9 @@ def register_ai_routes(app, ctx):
             msg = ai._friendly_error(e)
             log.warning("ai command failed: %s", msg)
             return jsonify({"ok": False, "error": msg, "reply": "Lights: " + msg[:150]}), 502
-        log.info("ai command from %s (%s): %r → %s", sender, source, text, res["applied"] or res["errors"])
+        log.info("ai command from %s (%s): %r → %d action(s) %s; applied=%s errors=%s",
+                 sender, source, text[:120], len(actions), [a.get("kind") for a in actions],
+                 res["applied"], res["errors"])
         res["ok"] = True
         res["usage"] = usage
         res["actions"] = actions

@@ -169,6 +169,9 @@ def _call_tool(model, system_blocks, user_content, tool, max_tokens=8000):
         usage_total["output"]      += getattr(u, "output_tokens", 0) or 0
         usage_total["cache_read"]  += getattr(u, "cache_read_input_tokens", 0) or 0
         usage_total["cache_write"] += getattr(u, "cache_creation_input_tokens", 0) or 0
+        if getattr(resp, "stop_reason", None) == "max_tokens":
+            raise RuntimeError("The answer was too long for one reply (hit the output limit) — "
+                               "ask for fewer fixtures or a simpler pattern, or split it into two commands.")
         for block in resp.content:
             if getattr(block, "type", None) == "tool_use" and block.name == tool["name"]:
                 usage_total["model"] = model
@@ -986,6 +989,22 @@ Action semantics:
   "cooler" → more white/blue; "dimmer" on a colour means lower brightness → prefer set_dimmer.
 - swap_effect: change a running effect's type (chase→comet etc.), keeping its colours/fixtures.
 - set_master: whole-rig colour dimmer 0-1. set_dimmer: per-fixture dimmer 0-1 on running scenes.
+HOW TO BUILD LOOKS (create_scene):
+- Timing words → step fields: "5 s step with 1 s crossfade" = fade 1000, hold 4000 (hold is the
+  time AFTER the fade). "every 10 s" = fade+hold = 10000.
+- A stepped colour chase / colour walk across pods or zones is a MAIN scene whose steps ROTATE a
+  pattern — give each fixture `colors` (the palette, ≤4) and a `pattern` of colour indexes; the
+  pattern is cycled across the fixture's cells, so you need only as many steps as the pattern has
+  entries (3 colours → 3 steps), NOT one step per pod. Step 1 pattern [0,1,2], step 2 [1,2,0],
+  step 3 [2,0,1]. "Per pod" = per cell: use a pattern; "per fixture" = one `color` per fixture.
+  Single-cell fixtures (pars) are one pod each: to walk the chase across them give each par a
+  pattern starting one index later than the previous par (par1 [0], par2 [1], par3 [2], par4 [0]…)
+  and rotate those the same way per step.
+- Continuous / smooth movement (chase, comet, scanner, wave, colorfade, breathe, rainbow…) is an
+  EFFECT scene; `rendering_mode` lock_to_segments = each fixture animates on its own,
+  continuous_strip = all enabled fixtures joined into one long strip so the motion travels across them.
+- "Red blue purple palette" → colors [{r:255},{b:255},{r:150,b:255,uv:120}] (emitter levels, not
+  sRGB). Keep scenes compact: never list a fixture that isn't in the request.
 - create_scene: when NOTHING running can be edited to satisfy the request (nothing is playing, or
   the request names fixtures / a look that no running scene covers) and no enabled library scene
   fits, BUILD the scene yourself in `scene` (same format as the operator's scenes: effect scenes
@@ -1088,7 +1107,7 @@ def parse_command(text, sender, run, show_cfg, registry, enabled_scenes, cfg):
     fixture_ids = [fx["id"] for fx in show_cfg.get("fixtures", []) if fx.get("type") != "mover"]
     group_ids   = [g["id"] for g in show_cfg.get("groups", []) if g.get("id")]
     tool = _command_tool(registry, fixture_ids, group_ids)
-    data, usage = _call_tool(COMMAND_MODEL or c["model"], system, user, tool, max_tokens=2500)
+    data, usage = _call_tool(COMMAND_MODEL or c["model"], system, user, tool, max_tokens=8000)
     return data.get("actions") or [], usage
 
 
@@ -1354,7 +1373,12 @@ def execute_actions(actions, engine, show_cfg, registry, load_scene, history, sa
             errors.append(f"{k}: {e}")
             log.warning("command action %s failed: %s", k, e)
     if not reply:
-        reply = ("✓ " + "; ".join(applied)) if applied else "Didn't catch a lighting change in that."
+        if applied:
+            reply = "✓ " + "; ".join(applied)
+        elif not actions:
+            reply = "Couldn't turn that into actions — try naming the fixtures and the look more plainly."
+        else:
+            reply = "Didn't catch a lighting change in that."
     if errors and not applied:
         reply = "✗ " + "; ".join(errors)[:110]
     return {"applied": applied, "errors": errors, "reply": reply}

@@ -1715,6 +1715,13 @@ the 5.5 models.** `_call_tool` now offers the tool with `tool_choice: auto` plus
 line "respond only by calling the tool", and retries once with a nudge if the model answers in
 prose; a second miss raises. All three features go through the same helper.
 
+**Long commands (23:49).** A per-pod stepped chase across bars + pars overran the 2500-token
+command output budget → truncated tool call → empty actions → "Didn't catch…". Now: max_tokens
+8000 for commands, `stop_reason == max_tokens` raises a clear "too long, split it" error, and the
+prompt teaches the compact form (main scene whose steps ROTATE a `colors`+`pattern`; N colours →
+N steps, pars get staggered pattern starts; fade = crossfade, hold = step − fade). Messenger
+`!` messages may run to 1000 chars (display messages stay 160); route accepts 2000.
+
 **Show controls + model (added same night).** Commands now run on `cfg.model` (Sonnet by default;
 `ai.COMMAND_MODEL = FAST_MODEL` forces Haiku). New actions: `singer_mode {on}`, `singer_level
 {level}` (>1 treated as percent), `singer_color {kelvin | palette_id}` (persists to show.json via
