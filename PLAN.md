@@ -1649,7 +1649,7 @@ forced tool-use with schemas derived from the engine's own formats, and are vali
 active show before anything reaches the UI or the engine. Nothing bypasses the existing save paths.
 
 **Commits:** `ab8e73c` (v1: fixture-from-manual + scenes-from-prompt/setlist + Settings card),
-`<this commit>` (v2: natural-language commands + Stage Messenger bridge). StageMessenger side:
+`4efda5a` (v2: natural-language commands + Stage Messenger bridge). StageMessenger side:
 see that repo's commit of the same date.
 
 **Files (Lightboard repo)**
