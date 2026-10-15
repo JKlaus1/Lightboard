@@ -1639,3 +1639,78 @@ iPad and say what feels off (strip width default, Fine ratio, knob sensitivity 1
   4-band EQ page, meters; in the layer editor and default layer 2. **Unverified on hardware** (fake M32C only).
 - Still open: WING icons on the name tiles (no icon-number → picture table yet); X32 output EQ / FX return paths
   to confirm on the M32C or X32 Rack.
+
+### Session handoff 2026-10-14 (AI integration: Claude API on the Max-plan credits)
+
+Context: Max 5x includes **$100/month of Claude Platform API credits** (separate from the chat
+plan; claimed by linking a Console org under claude.ai Settings → Billing). Lightboard now spends
+those credits on three features. All API calls run in worker threads (never the engine tick), use
+forced tool-use with schemas derived from the engine's own formats, and are validated against the
+active show before anything reaches the UI or the engine. Nothing bypasses the existing save paths.
+
+**Commits:** `ab8e73c` (v1: fixture-from-manual + scenes-from-prompt/setlist + Settings card),
+`<this commit>` (v2: natural-language commands + Stage Messenger bridge). StageMessenger side:
+see that repo's commit of the same date.
+
+**Files (Lightboard repo)**
+- `ai.py` — Flask-free helpers: key/config, `Jobs` thread runner, `fixture_from_manual()`,
+  `scenes_from_prompt()` / `scenes_from_setlist()`, `validate_fixture_profile()` / `validate_scene()`,
+  `parse_command()` + `execute_actions()` + `CommandHistory` (undo).
+- `ai_routes.py` — `/api/ai/status | config | key (POST/DELETE) | test | job/<id> |
+  fixture-from-manual | scenes-from-prompt | scenes-from-setlist | preview | command`.
+  Registered from app.py via `register_ai_routes(app, ctx)` (one call after the wifi routes).
+- `templates/_ai_shared.html` (CSS + `AI` JS helper), `_ai_settings.html` (Settings card + "From
+  manual" sheet), `_ai_library.html` ("Generate" sheet). One `{% include %}` + one button each in
+  `settings.html` / `library.html`.
+- `requirements.txt` + `anthropic>=1.0` (1.14.0 installed on the rack 2026-10-14).
+- `.gitignore` + `ai_key`.
+
+**Config / key**
+- `config.json` top-level `"ai": {enabled, model, fixture_from_manual, scene_from_prompt,
+  messenger_control, messenger_allow:[names]}` (shared key, flows through `save_config()`).
+- API key: `ANTHROPIC_API_KEY` env wins, else `/home/pi/lightboard/ai_key` (gitignored, mode 600,
+  written by the Settings card). Never in config.json / the repo.
+- Models: generation uses `cfg.model` (default `claude-sonnet-5-5`); commands always use
+  `claude-haiku-5-5` (`ai.COMMAND_MODEL`) for the ~1 s round trip. Static context (schemas, registry,
+  patch, running state) goes in a cached system block.
+
+**Feature 1 — Fixture Library → ✨ From manual.** PDF (≤30 MB) sent as a document block; one
+candidate per DMX mode in the exact `fixtures/*.json` shape (pod / pixel_strip / mover incl.
+`channel_slots`). Confidence badge, warnings, notes. "Review in builder" = `openBuilder(profile)`;
+"Save as-is" = normal `POST /api/fixtures`. Validator recovers the common over-counted-pods case,
+rejects blocks that don't fit, drops unknown roles/offsets.
+
+**Feature 2 — Scene Library → ✨ Generate.** Prompt tab (1–5 candidates, type auto/effect/main,
+folder) and Setlist tab (one scene per line, "NN Title" names, ≤30 songs). Candidates: swatches,
+rationale, ▶ Preview (`/api/ai/preview` → `engine.preview_effect` / `preview_set`), Save, Save & edit.
+Validator: effect in registry, params clamped to registry ranges, unknown fixtures/movers dropped,
+groups expanded, `colors`+`pattern` expanded to the fixture's real pod/segment count (`pods` key for
+both pod fixtures and pixel strips — editor compat). Model never emits raw DMX.
+
+**Feature 3 — Stage Messenger → lights (`POST /api/ai/command`).** Body `{text, sender, source}`.
+Gated by Settings → AI → "Stage Messenger can adjust lights"; phone senders must be on the allowed
+list (case-insensitive — Messenger uppercases names); `source: "control"` (control page / Settings
+"Try a command" box) skips the list. One Haiku call → action list: launch_scene, stop_scene,
+stop_all_effects/main, blackout/blackout_off, blackout_fixtures/restore_fixtures (fixture or group
+ids), set_param/scale_param, set_color, swap_effect, set_master, set_dimmer, undo, reply. Actions
+apply through `play_effect_scene` hot-swap / `refresh_active_scene` / `set_blackout` / `set_master`
+— **live-only**, library files untouched (relaunch = saved version). `_running_context()` snapshot
+before each command is the undo point (one level; a second undo re-applies = redo). Each action in a
+multi-action command refreshes the snapshot so they compose. Errors are per-action; reply is "✗ …"
+only when nothing applied.
+
+**StageMessenger side (server.py + control.html).** Message starting with `!` is intercepted in
+`handle_send_message` — never reaches displays — and `lights_command()` (thread, urllib, 25 s
+timeout) POSTs to `LIGHTBOARD_URL` (env, default `http://127.0.0.1:5000`). Reply comes back as a
+`message` from **LIGHTS** (purple `#6a3fb5`, 8 s) to the sender's `personal-<NAME>` room + control
+clients, plus `log-entry` kind `lights`. Lightboard 403/offline replies are relayed verbatim.
+Control page: `!` messages need no target; new 💡 LIGHTS… quick button prefills `!` and focuses.
+
+**Validated** (mocked API, Flask/SocketIO test clients, real engine): every action kind, undo,
+allowlist/control bypass, display isolation, offline path; py_compile, Jinja render + block
+balance, node --check. Rack: key saved via Settings, Test connection OK.
+
+**Not yet exercised on hardware:** a real manual extraction and a real prompt→scene; first live
+`!` command. **Next:** try a Betopper manual (messy-table case); then consider mixer-side
+natural-language mix moves (same action-layer pattern over `wing.py` typed writes, confirm-before-
+apply) and wheel-slot labelling from manual images.

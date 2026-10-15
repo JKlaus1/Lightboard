@@ -25,6 +25,7 @@ import ai
 
 log = logging.getLogger(__name__)
 JOBS = ai.Jobs()
+HISTORY = ai.CommandHistory()
 
 
 def register_ai_routes(app, ctx):
@@ -163,6 +164,47 @@ def register_ai_routes(app, ctx):
                          setlist, (d.get("style") or "")[:500],
                          show, reg, ex, _cfg(), d.get("folder") or "Setlist")
         return jsonify({"ok": True, "job": jid})
+
+
+    # ── Feature 3: natural-language command (Stage Messenger / control page) ─
+    @app.route("/api/ai/command", methods=["POST"])
+    def api_ai_command():
+        """Body {"text": "...", "sender": "NAME", "source": "messenger"|"control"}.
+        Synchronous (one Haiku call, ~1-2 s) so the messenger can relay the
+        reply straight back. Returns {"ok", "reply", "applied", "errors"}."""
+        err = _gate("messenger_control")
+        if err:
+            return jsonify({"ok": False, "error": err, "reply": "Lights: " + err}), 403
+        d = request.json or {}
+        text   = (d.get("text") or "").strip()[:500]
+        sender = (d.get("sender") or "").strip()
+        source = d.get("source") or "messenger"
+        if not text:
+            return jsonify({"ok": False, "error": "empty"}), 400
+        cfg = _cfg()
+        if source != "control":
+            allow = {n.lower() for n in cfg.get("messenger_allow", [])}
+            if sender.lower() not in allow:
+                return jsonify({"ok": False, "error": "sender not allowed",
+                                "reply": f"Lights: {sender or 'you'} isn't on the allowed list."}), 403
+        eng  = ctx["engine"]
+        show = ctx["show_config"]()
+        reg  = ctx["effects_registry"]()
+        enabled = [s for s in ctx["list_library_scenes"]()
+                   if s["id"] in set(show.get("enabled_scenes", []))]
+        try:
+            run = ai._running_context(eng)
+            actions, usage = ai.parse_command(text, sender, run, show, reg, enabled, cfg)
+            res = ai.execute_actions(actions, eng, show, reg, ctx["load_library_scene"], HISTORY)
+        except Exception as e:                      # noqa: BLE001
+            msg = ai._friendly_error(e)
+            log.warning("ai command failed: %s", msg)
+            return jsonify({"ok": False, "error": msg, "reply": "Lights: " + msg[:100]}), 502
+        log.info("ai command from %s (%s): %r → %s", sender, source, text, res["applied"] or res["errors"])
+        res["ok"] = True
+        res["usage"] = usage
+        res["actions"] = actions
+        return jsonify(res)
 
     # ── preview helper (lets the AI panel audition a candidate) ───────
     @app.route("/api/ai/preview", methods=["POST"])

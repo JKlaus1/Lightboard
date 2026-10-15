@@ -888,3 +888,317 @@ def validate_scene(s, show_cfg, registry, default_folder):
         return scene, errs, warns
 
     return scene, [f"unsupported scene_type {st!r}"], warns
+
+
+# ── Feature 3: natural-language commands (Stage Messenger → lights) ────────
+#
+# One Haiku round trip turns "!black out the bars, slower" into a short list
+# of actions; execute_actions() applies them through the engine's own
+# hot-swap / play / stop calls. Live-only: running scenes are mutated in the
+# engine, the library file is never written. A snapshot of the running state
+# is taken before every command so "undo" can put it back.
+
+COMMAND_MODEL = FAST_MODEL
+
+_ACTION_KINDS = ["launch_scene", "stop_scene", "stop_all_effects", "stop_all_main",
+                 "blackout", "blackout_off", "blackout_fixtures", "restore_fixtures",
+                 "set_param", "scale_param", "set_color", "swap_effect",
+                 "set_master", "set_dimmer", "undo", "reply"]
+
+_COMMAND_TOOL = {
+    "name": "lighting_actions",
+    "description": "Apply the operator's request as a list of concrete actions, then a reply.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "actions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": _ACTION_KINDS},
+                        "scene_id": {"type": "string",
+                                     "description": "Target scene id — a RUNNING scene for edits, an enabled library scene for launch_scene. Omit for 'all running effects'."},
+                        "fixture_ids": {"type": "array", "items": {"type": "string"},
+                                        "description": "Fixture ids (expand group names to their members yourself)."},
+                        "param": {"type": "string"},
+                        "value": {"type": "number"},
+                        "factor": {"type": "number", "description": "scale_param multiplier, e.g. 0.5 = half speed"},
+                        "slot": {"type": "string", "enum": ["primary", "secondary", "accent"]},
+                        "color": _color_schema("Emitter levels 0-255 (r g b a w uv l)."),
+                        "effect": {"type": "string"},
+                        "level": {"type": "number", "minimum": 0, "maximum": 1,
+                                  "description": "set_master / set_dimmer: 0.0-1.0"},
+                        "mode": {"type": "string", "enum": ["full", "color"]},
+                        "text": {"type": "string", "description": "reply: one short line (≤ 80 chars) for the person who sent the message."},
+                    },
+                    "required": ["kind"],
+                },
+            },
+        },
+        "required": ["actions"],
+    },
+}
+
+_COMMAND_SYSTEM = """You turn short messages from musicians/crew into Lightboard actions during a live show.
+
+Action semantics:
+- launch_scene: start a library scene by id (main scenes replace the current look; effects stack).
+- stop_scene: fade out one running scene. stop_all_effects / stop_all_main: clear a category.
+- blackout: everything dark (toggle-safe; use blackout_off to release). mode 'color' keeps whites.
+- blackout_fixtures / restore_fixtures: remove / re-add fixtures from the RUNNING scenes (edit, not stop).
+- set_param: set one param on a running effect (registry ranges apply). scale_param: multiply —
+  "slower" = factor 0.5, "faster" = 2, "a bit more" = 1.3. Param names come from the registry
+  (speed, size, tail, density, brightness, fade, duty…). Omit scene_id to hit every running effect.
+- set_color: replace one colour slot on a running effect. "warmer" → add amber/red, cut blue;
+  "cooler" → more white/blue; "dimmer" on a colour means lower brightness → prefer set_dimmer.
+- swap_effect: change a running effect's type (chase→comet etc.), keeping its colours/fixtures.
+- set_master: whole-rig colour dimmer 0-1. set_dimmer: per-fixture dimmer 0-1 on running scenes.
+- undo: revert the previous command.
+- reply: ALWAYS last. ≤ 80 chars, plain, e.g. "✓ bars out, chase at half speed". If the message
+  is not a lighting request or is ambiguous, return ONLY a reply saying what you need.
+
+Resolve names loosely: "bars" = fixtures/groups whose names contain bar/EXA; "pars"/"cans" =
+par fixtures; "tube" = the pixel strip; scene names fuzzy-match ("UV" → "Full UV").
+Never invent scene or fixture ids — only the ones listed."""
+
+
+def _running_context(engine):
+    """Snapshot of what's playing, in a form both the prompt and undo use."""
+    with engine._lock:
+        mains = [{"id": s["id"], "name": s["name"], "scene": s["scene"]}
+                 for s in engine._active_scenes if not s.get("stopping") and s["id"] != getattr(engine, "WASH_TAG", "__wash__")]
+        effs  = [{"id": e["id"], "name": e["name"], "scene": e["scene"]}
+                 for e in engine._active_effects if e["target"] == 1.0]
+        master = engine._master_level
+        bo = engine._blackout_mode if engine._blackout_target == 1.0 else None
+    return {"mains": mains, "effects": effs, "master": master, "blackout": bo}
+
+
+def _command_context_text(run, show_cfg, registry, enabled_scenes):
+    def brief_effect(e):
+        sc = e["scene"]
+        p = {k: v for k, v in (sc.get("params") or {}).items()}
+        return (f"- id={e['id']}  \"{e['name']}\"  effect={sc.get('effect')} params={json.dumps(p)} "
+                f"primary={json.dumps(sc.get('primary'))} secondary={json.dumps(sc.get('secondary'))} "
+                f"fixtures={sc.get('fixtures_enabled')}")
+    def brief_main(m):
+        sc = m["scene"]
+        fx = list((sc.get("steps") or [{}])[0].get("fixtures", {}).keys())
+        return f"- id={m['id']}  \"{m['name']}\"  main, {len(sc.get('steps') or [])} step(s), fixtures={fx}"
+    fx_lines, grp_lines = [], []
+    for fx in show_cfg.get("fixtures", []):
+        t = fx.get("type") or ("pixel_strip" if fx.get("pixel_count") else "pod")
+        fx_lines.append(f"- {fx['id']}  \"{fx.get('name','')}\"  {t}")
+    for g in show_cfg.get("groups", []):
+        grp_lines.append(f"- \"{g.get('name','')}\" → {g.get('members', [])}")
+    lib = [f"- {s['id']}  \"{s['name']}\"  {s.get('scene_type','main')}" for s in enabled_scenes]
+    reg = {eid: list(info.get("params", {}).keys()) for eid, info in registry.items()}
+    return ("RUNNING NOW:\n"
+            + ("\n".join(brief_main(m) for m in run["mains"]) or "(no main scene)") + "\n"
+            + ("\n".join(brief_effect(e) for e in run["effects"]) or "(no effects)") + "\n"
+            + f"master={run['master']:.2f} blackout={run['blackout']}\n\n"
+            "PATCH:\n" + "\n".join(fx_lines) + "\n\nGROUPS:\n" + ("\n".join(grp_lines) or "(none)")
+            + "\n\nENABLED LIBRARY SCENES (launchable):\n" + ("\n".join(lib) or "(none)")
+            + "\n\nEFFECTS AND THEIR PARAMS:\n" + json.dumps(reg, separators=(",", ":")))
+
+
+def parse_command(text, sender, run, show_cfg, registry, enabled_scenes, cfg):
+    """→ (actions list, usage). One Haiku call; the static tail is cached."""
+    c = merged_cfg(cfg)
+    system = [_cached(_COMMAND_SYSTEM + "\n\n" + _command_context_text(run, show_cfg, registry, enabled_scenes))]
+    user = [{"type": "text", "text": f"From {sender or 'operator'}: {text.strip()}"}]
+    data, usage = _call_tool(COMMAND_MODEL, system, user, _COMMAND_TOOL, max_tokens=800)
+    return data.get("actions") or [], usage
+
+
+class CommandHistory:
+    """Last-command snapshot for undo (one level; enough for a show)."""
+    def __init__(self):
+        self._snap = None
+        self._lock = threading.Lock()
+    def swap(self, snap):
+        """Store `snap` as the new undo point, return the previous one."""
+        with self._lock:
+            prev, self._snap = self._snap, snap
+            return prev
+
+
+def _restore(engine, snap, load_scene):
+    """Put the rig back to a _running_context() snapshot."""
+    engine.stop_effect_scene(None)
+    engine.stop_scene(None)
+    for m in snap["mains"]:
+        engine.play_scene(dict(m["scene"]), launch_fade_ms=300, scene_id=m["id"], force=True)
+    for e in snap["effects"]:
+        engine.play_effect_scene(dict(e["scene"]), scene_id=e["id"])
+    engine.set_master(snap["master"])
+    engine.set_blackout(snap["blackout"] or "off")
+
+
+def _apply_effect_edit(engine, run, scene_id, mutate):
+    """Run mutate(scene_dict) on one (or every) running effect and hot-swap."""
+    hit = 0
+    for e in run["effects"]:
+        if scene_id and e["id"] != scene_id:
+            continue
+        sc = json.loads(json.dumps(e["scene"]))
+        if mutate(sc) is not False:
+            engine.play_effect_scene(sc, scene_id=e["id"])
+            e["scene"] = sc              # keep the snapshot current for the next action
+            hit += 1
+    return hit
+
+
+def _apply_main_edit(engine, run, scene_id, mutate):
+    hit = 0
+    for m in run["mains"]:
+        if scene_id and m["id"] != scene_id:
+            continue
+        sc = json.loads(json.dumps(m["scene"]))
+        if mutate(sc) is not False:
+            engine.refresh_active_scene(m["id"], sc)
+            m["scene"] = sc
+            hit += 1
+    return hit
+
+
+def execute_actions(actions, engine, show_cfg, registry, load_scene, history):
+    """Apply parsed actions. Returns {"applied": [...], "reply": str, "errors": [...]}."""
+    run = _running_context(engine)
+    # The state before THIS command becomes the undo point; the one before
+    # the PREVIOUS command is what "undo" restores now.
+    prev_snap = history.swap(json.loads(json.dumps(run)))
+    fx_ids = {fx["id"] for fx in show_cfg.get("fixtures", [])}
+    group_members = {g.get("id"): g.get("members", []) for g in show_cfg.get("groups", [])}
+    applied, errors, reply = [], [], None
+
+    def resolve_fx(ids):
+        out = []
+        for i in ids or []:
+            if i in fx_ids:
+                out.append(i)
+            elif i in group_members:
+                out.extend(m for m in group_members[i] if m in fx_ids)
+        return list(dict.fromkeys(out))
+
+    for a in actions:
+        k = a.get("kind")
+        try:
+            if k == "reply":
+                reply = (a.get("text") or "").strip()[:120]
+            elif k == "launch_scene":
+                sid = a.get("scene_id")
+                sc = load_scene(sid)
+                st = sc.get("scene_type", "main")
+                if st == "effect":
+                    engine.play_effect_scene(sc, scene_id=sid)
+                elif st == "main":
+                    engine.play_scene(sc, scene_id=sid)
+                else:
+                    raise ValueError(f"can't launch {st} scenes from chat")
+                applied.append(f"launch {sc.get('name')}")
+            elif k == "stop_scene":
+                sid = a.get("scene_id")
+                engine.stop_effect_scene(sid)
+                engine.stop_scene(scene_id=sid)
+                applied.append(f"stop {sid}")
+            elif k == "stop_all_effects":
+                engine.stop_effect_scene(None); applied.append("stop all effects")
+            elif k == "stop_all_main":
+                engine.stop_scene(None); applied.append("stop main scenes")
+            elif k == "blackout":
+                engine.set_blackout(a.get("mode") or "full"); applied.append("blackout")
+            elif k == "blackout_off":
+                engine.set_blackout("off"); applied.append("blackout off")
+            elif k in ("blackout_fixtures", "restore_fixtures"):
+                ids = set(resolve_fx(a.get("fixture_ids")))
+                if not ids:
+                    raise ValueError("no matching fixtures")
+                if k == "blackout_fixtures":
+                    def mut_e(sc):
+                        sc["fixtures_enabled"] = [f for f in sc.get("fixtures_enabled", []) if f not in ids]
+                        sc.setdefault("_ai_removed", []).extend(sorted(ids))
+                    def mut_m(sc):
+                        for st in sc.get("steps", []):
+                            for fid, fd in st.get("fixtures", {}).items():
+                                if fid in ids and isinstance(fd, dict):
+                                    fd["dimmer"] = 0
+                                    for key in ("pods", "segments"):
+                                        if key in fd:
+                                            fd[key] = [({c: 0 for c in p} if isinstance(p, dict) else p) for p in fd[key]]
+                else:
+                    def mut_e(sc):
+                        rem = [f for f in sc.pop("_ai_removed", []) if f in ids]
+                        if not rem: return False
+                        sc["fixtures_enabled"] = list(dict.fromkeys(sc.get("fixtures_enabled", []) + rem))
+                    def mut_m(sc):
+                        # restore from the library copy of the same scene
+                        try: orig = load_scene(sc.get("_ai_id"))
+                        except Exception: return False
+                        for st, ost in zip(sc.get("steps", []), orig.get("steps", [])):
+                            for fid in ids:
+                                if fid in ost.get("fixtures", {}):
+                                    st.setdefault("fixtures", {})[fid] = ost["fixtures"][fid]
+                n = _apply_effect_edit(engine, run, a.get("scene_id"), mut_e)
+                for m in run["mains"]:
+                    m["scene"].setdefault("_ai_id", m["id"])
+                n += _apply_main_edit(engine, run, a.get("scene_id"), mut_m)
+                applied.append(f"{k.replace('_', ' ')} {sorted(ids)}")
+            elif k in ("set_param", "scale_param"):
+                pname = a.get("param")
+                def mut(sc):
+                    spec = registry.get(sc.get("effect"), {}).get("params", {}).get(pname)
+                    if not spec: return False
+                    cur = sc.setdefault("params", {}).get(pname, spec.get("default", 0))
+                    v = float(a.get("value", cur)) if k == "set_param" else float(cur) * float(a.get("factor", 1))
+                    v = max(spec.get("min", v), min(spec.get("max", v), v))
+                    sc["params"][pname] = int(round(v)) if spec.get("type") == "int" else round(v, 3)
+                n = _apply_effect_edit(engine, run, a.get("scene_id"), mut)
+                if not n: raise ValueError(f"no running effect has '{pname}'")
+                applied.append(f"{pname} {'=' if k=='set_param' else '×'} {a.get('value', a.get('factor'))} on {n} effect(s)")
+            elif k == "set_color":
+                slot, col = a.get("slot") or "primary", _clamp_color(a.get("color"))
+                if not col: raise ValueError("no colour given")
+                n = _apply_effect_edit(engine, run, a.get("scene_id"), lambda sc: sc.__setitem__(slot, col))
+                if not n: raise ValueError("no running effect to recolour")
+                applied.append(f"{slot} → {col}")
+            elif k == "swap_effect":
+                eid = a.get("effect")
+                if eid not in registry: raise ValueError(f"unknown effect {eid}")
+                def mut(sc):
+                    sc["effect"] = eid
+                    spec = registry[eid]["params"]
+                    sc["params"] = {p: sc.get("params", {}).get(p, s.get("default")) for p, s in spec.items()}
+                n = _apply_effect_edit(engine, run, a.get("scene_id"), mut)
+                if not n: raise ValueError("no running effect to swap")
+                applied.append(f"effect → {eid}")
+            elif k == "set_master":
+                engine.set_master(float(a.get("level", 1.0))); applied.append(f"master {a.get('level')}")
+            elif k == "set_dimmer":
+                lvl = max(0.0, min(1.0, float(a.get("level", 1.0))))
+                ids = set(resolve_fx(a.get("fixture_ids")))
+                def mut_e(sc):
+                    if ids and not (set(sc.get("fixtures_enabled", [])) & ids): return False
+                    sc.setdefault("params", {})["brightness"] = round(lvl, 3)
+                def mut_m(sc):
+                    for st in sc.get("steps", []):
+                        for fid, fd in st.get("fixtures", {}).items():
+                            if (not ids or fid in ids) and isinstance(fd, dict):
+                                fd["dimmer"] = int(round(255 * lvl))
+                n = _apply_effect_edit(engine, run, a.get("scene_id"), mut_e) + _apply_main_edit(engine, run, a.get("scene_id"), mut_m)
+                applied.append(f"dimmer {lvl:.2f} on {n} scene(s)")
+            elif k == "undo":
+                if not prev_snap: raise ValueError("nothing to undo")
+                _restore(engine, prev_snap, load_scene); applied.append("undo")
+                prev_snap = None
+            else:
+                raise ValueError(f"unknown action {k}")
+        except Exception as e:                       # noqa: BLE001
+            errors.append(f"{k}: {e}")
+            log.warning("command action %s failed: %s", k, e)
+    if not reply:
+        reply = ("✓ " + "; ".join(applied)) if applied else "Didn't catch a lighting change in that."
+    if errors and not applied:
+        reply = "✗ " + "; ".join(errors)[:110]
+    return {"applied": applied, "errors": errors, "reply": reply}

@@ -4,7 +4,9 @@ Records the things that are NOT in any app source file (network, tunnel, access,
 
 ## Host / services
 - Pi 5, hostname `Lights` / `lights.local` (mDNS), Debian 13 (Trixie), NetworkManager.
-- App services (Flask, run as user `pi`): `lightboard` (:5000), `stage-messenger` (:3001, chat only),
+- App services (Flask, run as user `pi`): `lightboard` (:5000, venv at `/home/pi/lightboard/venv` —
+  NOT `.venv` as install.sh writes for new builds; deps: `venv/bin/pip install -r requirements.txt`),
+  `stage-messenger` (:3001, chat only),
   `mixer` (:3000, separate repo JKlaus1/mixer with its own install.sh / PLAN.md / PI_INFRA.md — 2026-10-08 split).
 - `cloudflared` (systemd service, runs as root) — Cloudflare tunnel.
 - `mediamtx` (systemd service, user `pi`, since 2026-10-04) — WebRTC relay for the
@@ -472,3 +474,20 @@ transport, seek, Library = playlists / start from a song / queue / up next / sea
   `curl -s 127.0.0.1:3678/status` (204 = not signed in), `curl -s 127.0.0.1:3678/auth/code`,
   `cat /proc/asound/WING/pcm0p/sub0/status` (RUNNING while playing),
   `journalctl -u stage-messenger | grep spotify` (every command / kill / key change is logged).
+
+## Claude API (AI features, 2026-10-14)
+- Lightboard calls the Claude Platform (Messages API) from `ai.py` for fixture-from-manual, scene
+  generation and `!` commands from Stage Messenger. Billed to the **Max-plan monthly API credits**
+  (Console org linked under claude.ai Settings → Billing), never to the chat plan.
+- Key: `/home/pi/lightboard/ai_key` (gitignored, mode 600, written from Settings → AI) or
+  `ANTHROPIC_API_KEY` in the unit environment. Rotate = paste a new key in Settings.
+  Recommended Console setup: service-account key scoped to a "lightboard" workspace with a small
+  monthly spend cap; expiry "Never" (keys don't auto-rotate; an expired key = dead ✨ buttons at a gig).
+- Outbound HTTPS to `api.anthropic.com` over wlan0 (same uplink as the tunnel). Art-Net on eth0 is
+  unaffected. Models: Sonnet 5.5 (generation, configurable), Haiku 5.5 (commands).
+- `anthropic` pip package (1.14.0) in the lightboard venv; `git pull` alone doesn't install it —
+  run `venv/bin/pip install -r requirements.txt` when requirements.txt changes (the mixer
+  auto-updater does not).
+- Stage Messenger → Lightboard bridge: `LIGHTBOARD_URL` env on `stage-messenger` (default
+  `http://127.0.0.1:5000`, correct for the rack). Presley's Pi runs no Lightboard, so `!` there
+  just replies "Lights offline".

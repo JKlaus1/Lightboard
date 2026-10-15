@@ -12,11 +12,19 @@
       <label class="ai-sw"><input type="checkbox" id="ai-fixture_from_manual" onchange="aiSaveCfg()"><i></i></label></div>
     <div class="ai-tog"><span>Scenes from a prompt / setlist<small>Scene Library → ✨ Generate</small></span>
       <label class="ai-sw"><input type="checkbox" id="ai-scene_from_prompt" onchange="aiSaveCfg()"><i></i></label></div>
-    <div class="ai-tog"><span>Stage Messenger can adjust lights<small>Messages from allowed senders become scene actions (coming next phase).</small></span>
+    <div class="ai-tog"><span>Stage Messenger can adjust lights<small>Messages starting with <b>!</b> from allowed senders (or the control page) become live scene changes.</small></span>
       <label class="ai-sw"><input type="checkbox" id="ai-messenger_control" onchange="aiSaveCfg()"><i></i></label></div>
     <div class="ai-row" id="ai-allow-row">
       <label>Allowed sender names (one per line)</label>
       <textarea id="ai-messenger_allow" rows="2" placeholder="Joseph&#10;Presley" onchange="aiSaveCfg()"></textarea>
+    </div>
+    <div class="ai-row" id="ai-cmd-row">
+      <label>Try a command (applies live, like a message would)</label>
+      <div class="ai-inline">
+        <input type="text" id="ai-cmd" placeholder="black out the bars · slower · go to Full UV · undo" onkeydown="if(event.key==='Enter')aiCmdSend()">
+        <button class="ai-btn go" style="flex:0" onclick="aiCmdSend()">Send</button>
+      </div>
+      <div class="ai-status" id="ai-cmd-status"></div>
     </div>
     <div class="ai-row">
       <label>Model</label>
@@ -75,6 +83,7 @@ async function aiLoadCard(){
   }
   document.getElementById('ai-messenger_allow').value = (c.messenger_allow||[]).join('\n');
   document.getElementById('ai-allow-row').style.display = c.messenger_control ? '' : 'none';
+  document.getElementById('ai-cmd-row').style.display = c.messenger_control ? '' : 'none';
   const ms = document.getElementById('ai-model');
   if (c.model && ![...ms.options].some(o=>o.value===c.model)) {
     const o = document.createElement('option'); o.value = c.model; o.textContent = c.model + ' (custom)'; ms.appendChild(o);
@@ -114,6 +123,18 @@ async function aiTest(){
     const d = await fetch('/api/ai/test',{method:'POST'}).then(r=>r.json());
     if (d.ok) { el.className='ai-status ok'; el.textContent=`OK — ${d.model} replied "${d.reply}" in ${d.ms} ms`; }
     else { el.className='ai-status err'; el.textContent=d.error||'failed'; }
+  } catch(e){ el.className='ai-status err'; el.textContent=String(e); }
+}
+
+async function aiCmdSend(){
+  const inp = document.getElementById('ai-cmd'), el = document.getElementById('ai-cmd-status');
+  const text = inp.value.trim(); if (!text) return;
+  el.className='ai-status'; el.innerHTML='<span class="ai-spin"></span>…';
+  try {
+    const d = await fetch('/api/ai/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text, sender:'Settings', source:'control'})}).then(r=>r.json());
+    el.className = 'ai-status ' + (d.ok && !(d.errors||[]).length ? 'ok' : 'err');
+    el.textContent = (d.reply || d.error || '') + ((d.errors||[]).length ? ' — ' + d.errors.join('; ') : '');
+    if (d.ok) inp.value = '';
   } catch(e){ el.className='ai-status err'; el.textContent=String(e); }
 }
 
