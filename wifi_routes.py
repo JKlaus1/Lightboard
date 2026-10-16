@@ -100,6 +100,11 @@ def scan_networks(rescan=True):
         cur = nets.get(ssid)
         if cur is None or entry["in_use"] or sig > cur["signal"]:
             nets[ssid] = entry
+    saved = {}
+    for p in saved_wifi_profiles():
+        saved.setdefault(p["ssid"], p["name"])
+    for n in nets.values():
+        n["saved"] = saved.get(n["ssid"])
     return sorted(nets.values(), key=lambda n: (0 if n["in_use"] else 1, -n["signal"]))
 
 
@@ -111,6 +116,63 @@ def _active_wlan_connection():
             name = line.split(":", 1)[1].strip()
             return name if name and name != "--" else None
     return None
+
+
+def saved_wifi_profiles():
+    """Saved client WiFi profiles as [{"name", "ssid"}]. The profile name can differ from the SSID
+    (Imager's 'preconfigured'), so read the real SSID. AP-mode profiles (venue-ap) are left out --
+    they must never be joined as a client or shown with a Forget button."""
+    _, out, _ = _run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"])
+    names = [p[0] for p in (_split_terse(l) for l in out.splitlines())
+             if len(p) >= 2 and p[1] == "802-11-wireless" and p[0]]
+    profs = []
+    for name in names:
+        _, o, _ = _run(["nmcli", "-t", "-f", "802-11-wireless.ssid,802-11-wireless.mode",
+                        "connection", "show", name], timeout=10)
+        ssid, mode = name, ""
+        for line in o.splitlines():
+            parts = _split_terse(line)
+            key, val = parts[0], ":".join(parts[1:]).strip()
+            if key == "802-11-wireless.ssid" and val:
+                ssid = val
+            elif key == "802-11-wireless.mode":
+                mode = val
+        if mode == "ap":
+            continue
+        profs.append({"name": name, "ssid": ssid})
+    return profs
+
+
+def _profile_for_ssid(ssid):
+    for p in saved_wifi_profiles():
+        if p["ssid"] == ssid:
+            return p["name"]
+    return None
+
+
+def _join(ssid, password, profile=None):
+    """Join ssid. A saved profile is brought up as-is (no password needed); a password given for a
+    saved profile replaces its stored one first. Otherwise a new profile is created.
+    Returns (rc, out, err, conn, created): conn = the NM profile name now in use; created = this
+    call made a new profile (only those get deleted again if the join fails)."""
+    prof = profile or _profile_for_ssid(ssid)
+    if prof:
+        if password:
+            rc, out, err = _run(["nmcli", "connection", "modify", prof, "wifi-sec.psk", password], timeout=10)
+            if rc != 0:
+                return rc, out, err, prof, False
+        rc, out, err = _run(["nmcli", "connection", "up", prof, "ifname", WIFI_DEV], timeout=45)
+        return rc, out, err, prof, False
+    args = ["nmcli", "device", "wifi", "connect", ssid, "ifname", WIFI_DEV]
+    if password:
+        args += ["password", password]
+    rc, out, err = _run(args, timeout=45)
+    return rc, out, err, ssid, True
+
+
+def _keep(conn):
+    """Joined with internet: make sure it auto-reconnects (an earlier no-internet revert turns that off)."""
+    _run(["nmcli", "connection", "modify", conn, "connection.autoconnect", "yes"], timeout=10)
 
 
 def _wlan_ip():
@@ -151,18 +213,16 @@ def get_status():
     }
 
 
-def _do_connect(ssid, password, prev):
+def _do_connect(ssid, password, prev, profile=None):
     _set_state("connecting", ssid, "Associating with " + ssid)
-    args = ["nmcli", "device", "wifi", "connect", ssid, "ifname", WIFI_DEV]
-    if password:
-        args += ["password", password]
-    rc, out, err = _run(args, timeout=45)
+    rc, out, err, conn, created = _join(ssid, password, profile)
 
     if rc != 0:
         msg = (err or out or "Could not connect").strip().splitlines()
         _set_state("failed", ssid, (msg[-1] if msg else "Could not connect")[:200])
-        _run(["nmcli", "connection", "delete", ssid], timeout=10)  # drop half-made profile
-        if prev:
+        if created:                          # drop a half-made profile -- never a saved one
+            _run(["nmcli", "connection", "delete", conn], timeout=10)
+        if prev and prev != conn:
             _run(["nmcli", "connection", "up", prev], timeout=30)
         return
 
@@ -174,6 +234,7 @@ def _do_connect(ssid, password, prev):
             ok = True
             break
     if ok:
+        _keep(conn)
         _set_state("success", ssid, "Connected to " + ssid + " with internet")
         return
 
@@ -184,25 +245,23 @@ def _do_connect(ssid, password, prev):
         "limited": "Connected but no internet (limited).",
         "none":    "Connected but no internet.",
     }.get(label, "No internet after connecting.")
-    _run(["nmcli", "connection", "modify", ssid, "connection.autoconnect", "no"], timeout=10)
-    if prev:
+    _run(["nmcli", "connection", "modify", conn, "connection.autoconnect", "no"], timeout=10)
+    if prev and prev != conn:
         _run(["nmcli", "connection", "up", prev], timeout=30)
     _set_state("no_internet", ssid, detail + " Reverted to your previous network.")
 
 
-def _do_portal_login(ssid, password, prev):
+def _do_portal_login(ssid, password, prev, profile=None):
     """Connect, then pop the captive portal onto the Pi's touchscreen and wait for
     the user to complete it. Restores the touch kiosk and keeps/reverts accordingly."""
     _set_state("connecting", ssid, "Connecting to " + ssid)
-    args = ["nmcli", "device", "wifi", "connect", ssid, "ifname", WIFI_DEV]
-    if password:
-        args += ["password", password]
-    rc, out, err = _run(args, timeout=45)
+    rc, out, err, conn, created = _join(ssid, password, profile)
     if rc != 0:
         msg = (err or out or "Could not connect").strip().splitlines()
         _set_state("failed", ssid, (msg[-1] if msg else "Could not connect")[:200])
-        _run(["nmcli", "connection", "delete", ssid], timeout=10)
-        if prev:
+        if created:
+            _run(["nmcli", "connection", "delete", conn], timeout=10)
+        if prev and prev != conn:
             _run(["nmcli", "connection", "up", prev], timeout=30)
         return
 
@@ -218,10 +277,11 @@ def _do_portal_login(ssid, password, prev):
     _kiosk_cmd("restore")               # always put the touch kiosk back
 
     if ok:
+        _keep(conn)
         _set_state("success", ssid, "Portal complete — " + ssid + " is connected with internet.")
         return
-    _run(["nmcli", "connection", "modify", ssid, "connection.autoconnect", "no"], timeout=10)
-    if prev:
+    _run(["nmcli", "connection", "modify", conn, "connection.autoconnect", "no"], timeout=10)
+    if prev and prev != conn:
         _run(["nmcli", "connection", "up", prev], timeout=30)
     _set_state("portal_timeout", ssid, "Portal not completed in time — reverted to your previous network.")
 
@@ -245,14 +305,17 @@ def register_wifi_routes(app):
         data = request.get_json(silent=True) or {}
         ssid = (data.get("ssid") or "").strip()
         password = data.get("password") or ""
+        profile = (data.get("profile") or "").strip() or None
         if not ssid:
             return jsonify({"ok": False, "error": "SSID required"}), 400
+        if profile and profile not in {p["name"] for p in saved_wifi_profiles()}:
+            return jsonify({"ok": False, "error": "No saved network named " + profile}), 400
         with _state_lock:
             if _connect_state["status"] in ("connecting", "checking"):
                 return jsonify({"ok": False, "error": "A connect attempt is already running"}), 409
             _connect_state.update(status="connecting", ssid=ssid, detail="Starting", ts=time.time())
         prev = _active_wlan_connection()
-        threading.Thread(target=_do_connect, args=(ssid, password, prev), daemon=True).start()
+        threading.Thread(target=_do_connect, args=(ssid, password, prev, profile), daemon=True).start()
         return jsonify({"ok": True, "started": True})
 
     @app.route("/api/wifi/portal-login", methods=["POST"])
@@ -260,22 +323,24 @@ def register_wifi_routes(app):
         data = request.get_json(silent=True) or {}
         ssid = (data.get("ssid") or "").strip()
         password = data.get("password") or ""
+        profile = (data.get("profile") or "").strip() or None
         if not ssid:
             return jsonify({"ok": False, "error": "SSID required"}), 400
+        if profile and profile not in {p["name"] for p in saved_wifi_profiles()}:
+            return jsonify({"ok": False, "error": "No saved network named " + profile}), 400
         with _state_lock:
             if _connect_state["status"] in ("connecting", "checking", "portal"):
                 return jsonify({"ok": False, "error": "Busy"}), 409
             _connect_state.update(status="connecting", ssid=ssid, detail="Starting", ts=time.time())
         prev = _active_wlan_connection()
-        threading.Thread(target=_do_portal_login, args=(ssid, password, prev), daemon=True).start()
+        threading.Thread(target=_do_portal_login, args=(ssid, password, prev, profile), daemon=True).start()
         return jsonify({"ok": True, "started": True})
 
     @app.route("/api/wifi/saved")
     def api_wifi_saved():
-        _, out, _ = _run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"])
-        saved = [p[0] for p in (_split_terse(l) for l in out.splitlines())
-                 if len(p) >= 2 and p[1] == "802-11-wireless"]
-        return jsonify({"saved": saved})
+        profs = saved_wifi_profiles()
+        return jsonify({"saved": [p["name"] for p in profs], "profiles": profs,
+                        "active": _active_wlan_connection()})
 
     @app.route("/api/wifi/forget", methods=["POST"])
     def api_wifi_forget():
@@ -283,5 +348,7 @@ def register_wifi_routes(app):
         name = (data.get("name") or "").strip()
         if not name:
             return jsonify({"ok": False, "error": "name required"}), 400
+        if name not in {p["name"] for p in saved_wifi_profiles()}:   # never the AP profile
+            return jsonify({"ok": False, "error": "not a saved client network"}), 400
         rc, _, err = _run(["nmcli", "connection", "delete", name], timeout=15)
         return jsonify({"ok": rc == 0, "error": (err or "").strip()})
