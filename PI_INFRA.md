@@ -25,6 +25,14 @@ Records the things that are NOT in any app source file (network, tunnel, access,
 
 ## Internet uplink at gigs
 - Pi gets internet via the **Android hotspot** (wlan0). eth0 stays local for Art-Net/mixer/iPads.
+- Which interface carries internet = which one owns the default route (`ip -4 route show
+  default`, lowest metric; NM gives eth0 100, wlan0 600). The eth0 profile must therefore have
+  `ipv4.never-default yes` (+ `ignore-auto-dns yes`) or a router on the mixer LAN silently takes
+  all internet traffic. The `/wifi` page's **"Internet via" WiFi | Ethernet** control flips those two
+  keys on the eth0 profile in place (`nmcli device reapply eth0`, no link drop) -- "Ethernet" is for a
+  router on eth0 that really has a WAN (phone tethered into the EdgeRouter); WiFi stays the fallback.
+- First join to a WPA2/WPA3 mixed WiFi often fails with "Secrets were required" (handshake timeout,
+  brcmfmac + SAE) and works on the second try; the page now retries once by itself.
 - The `/wifi` page (lightboard) can move the Pi onto venue WiFi when available, with auto-revert to the
   previous network if it fails or hits a captive portal.
 - Captive-portal completion: the "Complete portal on Pi screen" button pops the venue login onto the

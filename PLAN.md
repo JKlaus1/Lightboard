@@ -120,6 +120,29 @@ blackout/overlay/cycler (backward-compatible).
   gating, scalars + subsystems set-if-scoped, blackout/overlay/cycler on-off and
   capture, missing-scene tolerance, normalize).
 
+## WiFi page: Internet-via selector + handshake retry (2026-10-18, `bc27e96`)
+
+Ported from the mixer repo's `netwifi` (its PLAN.md 2026-10-18 block has the full story: Presley's
+box routed all internet out eth0 to a router with no WAN because NM gives Ethernet metric 100 vs
+WiFi 600). Same code in both places -- keep them in step.
+- `wifi_routes.py`: `internet_source()` / `set_internet_source(mode)` -- the setting is the eth0
+  profile's `ipv4.never-default` + `ipv4.ignore-auto-dns` (`yes` = WiFi, `no` = Ethernet; WiFi is
+  the fallback by metric). The active / eth0-bound profile is edited in place and applied with
+  `nmcli device reapply eth0` (no link drop, Art-Net keeps flowing). A **static profile is edited,
+  never replaced** -- on this rig "Ethernet" only gives a route if that profile carries a gateway.
+  A netplan (`/run`) profile can't hold it; then `mixer-network` (DHCP, priority 10) is made.
+  `POST /api/wifi/internet-source {"mode"}`; `/api/wifi/status` gains `internet`.
+- `templates/wifi.html`: "Internet via" WiFi | Ethernet control + a route line under it.
+- Connect: NM's "Secrets were required, but not provided" is also what a 4-way-handshake timeout
+  looks like, and brcmfmac often fumbles the first join to a WPA2/WPA3 mixed network (SAE first);
+  `_do_connect` / `_do_portal_login` retry once after 3 s on the profile NM left behind (pinned to
+  `wifi-sec.key-mgmt wpa-psk` on a mixed network); a real bad password fails both tries and says
+  "(tried twice -- wrong password?)". Scan keeps `security` per SSID for that.
+- `test_wifi_routes.py` (new, nmcli faked, ALL PASS): route parsing, selector on plain / netplan /
+  static boxes, retry success + wrong-password double failure.
+- Not ported: the mixer's full diagnosis card (`netstate.diagnose`, `wrong_route` verdict) -- this
+  page still shows NM's connectivity word only. Deploy: `update lights` on the Rack Pi.
+
 ## Environment / workflow notes
 - Pi: `pi@192.168.1.34`, dir `/home/pi/lightboard`, restart `sudo systemctl restart lightboard`.
 - Repo: https://github.com/JKlaus1/Lightboard.git (public). Pi pulls; phone (Termux) pushes.
