@@ -50,6 +50,13 @@
   .forget{background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);
           font-size:0.6rem;letter-spacing:0.08em;text-transform:uppercase;padding:0.3rem 0.6rem;}
   .label{font-size:0.6rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin:0.5rem 0 0.4rem;}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;vertical-align:middle;}
+  .seg button{background:transparent;border:none;color:var(--muted);font-size:0.6rem;font-weight:700;letter-spacing:0.08em;
+       text-transform:uppercase;padding:0.3rem 0.6rem;font-family:inherit;cursor:pointer;}
+  .seg button+button{border-left:1px solid var(--border);}
+  .seg button.on{background:var(--accent);color:#fff;}
+  .seg button:disabled{opacity:0.5;}
+  #st-route{font-size:0.62rem;color:var(--muted);}
 </style>
 </head>
 <body>
@@ -59,6 +66,9 @@
     <div class="row"><span class="muted">Network</span><span id="st-ssid">—</span></div>
     <div class="row"><span class="muted">IP</span><span id="st-ip">—</span></div>
     <div class="row"><span class="muted">Internet</span><span id="st-conn"><span class="dot unknown"></span>—</span></div>
+    <div class="row"><span class="muted">Internet via</span><span><span class="seg" id="src-seg">
+      <button id="src-wifi" data-mode="wifi">WiFi</button><button id="src-eth" data-mode="ethernet">Ethernet</button></span></span></div>
+    <div class="row"><span></span><span id="st-route"></span></div>
   </div>
 
   <div id="msg"></div>
@@ -97,6 +107,34 @@
     }catch(e){ /* status poll takes over */ }
   }
 
+  // ── Internet via: WiFi | Ethernet (which interface owns the default route) ──
+  let SRC = null;
+  async function setSource(mode){
+    ['src-wifi','src-eth'].forEach(id => $(id).disabled = true);
+    showMsg('info', mode === 'wifi' ? 'Routing internet over WiFi — eth0 stays console / Art-Net only…'
+                                    : 'Routing internet over the Ethernet port (router on eth0)…');
+    try{
+      const r = await fetch('/api/wifi/internet-source', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode})});
+      const d = await r.json();
+      if(!d.ok) showMsg('err', 'Couldn’t switch: ' + (d.error || '?'));
+      else { showMsg('ok', 'Now ' + d.message + '.'); if(d.internet) renderSource(d.internet); }
+    }catch(e){ showMsg('err', 'Couldn’t switch (page lost the Pi for a moment — it’ll refresh).'); }
+    ['src-wifi','src-eth'].forEach(id => $(id).disabled = false);
+  }
+  $('src-wifi').addEventListener('click', () => { if(!SRC || SRC.mode !== 'wifi') setSource('wifi'); });
+  $('src-eth').addEventListener('click', () => { if(!SRC || SRC.mode !== 'ethernet') setSource('ethernet'); });
+  function renderSource(i){
+    SRC = i || null;
+    $('src-wifi').classList.toggle('on', !!i && i.mode === 'wifi');
+    $('src-eth').classList.toggle('on', !!i && i.mode === 'ethernet');
+    const eff = i ? i.effective : null;
+    $('st-route').textContent = !i ? '' :
+      eff === 'none' ? 'no internet route at all' :
+      'route: ' + (eff === 'wifi' ? 'WiFi' : eff === 'ethernet' ? 'Ethernet' : eff) + (i.route_via ? ' → ' + i.route_via : '') +
+      (i.mode !== 'unknown' && eff !== 'none' && eff !== i.mode ? ' (setting says ' + i.mode + ')' : '') +
+      (i.eth_profile ? ' · ' + i.eth_profile : '');
+  }
+
   // ── Live status (self-scheduling, survives tunnel blips) ──────────────
   async function refreshStatus(){
     try{
@@ -104,6 +142,7 @@
       const d = await r.json();
       $('st-ssid').textContent = d.ssid || '—';
       $('st-ip').textContent   = d.ip   || '—';
+      if(d.internet) renderSource(d.internet);
       const full = d.connectivity === 'full';
       $('st-conn').innerHTML =
         '<span class="dot ' + (full?'full':(d.connectivity==='unknown'?'unknown':'bad')) + '"></span>' +
