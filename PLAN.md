@@ -151,8 +151,10 @@ WiFi 600). Same code in both places -- keep them in step.
   may not run with HOME=/home/pi). Local opens -> same host, port 3000
   (`http://lights.local:3000/mixer`); through the Cloudflare tunnel (`Cf-Connecting-Ip` present) the port
   means nothing, so the URL is `config.json` `"mixer_url"` (new key, default `""` = no button; Rack Pi:
-  `https://stage-messenger.com/mixer` or whatever host `/mixer` lives on now). The mixer repo has the
-  mirror image (Settings -> This Pi -> Lightboard, `links.lightboard`). No tests touched; checked with the
+  `https://stage-messenger.com/mixer` or whatever host `/mixer` lives on now) -- or, from 2026-11-01, read
+  automatically from the locally managed `/etc/cloudflared/config.yml` ingress (`tunnel_public_url(3000,
+  "/mixer")`: the hostname whose `/mixer` path rule, or whole-host rule, maps to localhost:3000), so the
+  Rack Pi needs no config. The mixer repo has the mirror image (top-bar LIGHTS, `links.lightboard`). No tests touched; checked with the
   Flask test client (local / tunnel unset / tunnel set / no ~/mixer).
 
 ## Environment / workflow notes

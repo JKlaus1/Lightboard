@@ -6,6 +6,7 @@ Serves the control UI and REST API.
 import json
 import io
 import os
+import re
 import zipfile
 import logging
 from pathlib import Path
@@ -512,17 +513,71 @@ def add_no_cache_headers(response):
 
 # ── Pages ─────────────────────────────────────────────────────────────────
 
+CLOUDFLARED_CONFIG = '/etc/cloudflared/config.yml'
+
+
+def tunnel_public_url(port, path='', config=CLOUDFLARED_CONFIG):
+    """Public https URL for a service on this Pi, read from a locally managed cloudflared ingress
+    (hostname [+ path rule] -> http://localhost:<port>). None when the file is missing / unreadable
+    (dashboard-managed tunnels keep their ingress in the cloud) or no rule points at that port.
+    `path` picks among several rules for one port ('/mixer' -> the rule whose path regex starts with
+    /mixer); a rule with a path yields https://host/<first path segment>, one without yields https://host/."""
+    try:
+        with open(config, encoding='utf-8') as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    rules, cur, in_ingress = [], None, False
+    for raw in lines:
+        line = raw.split('#', 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            in_ingress = line.strip() == 'ingress:'
+            cur = None
+            continue
+        if not in_ingress:
+            continue
+        s = line.strip()
+        if s.startswith('- '):
+            cur = {}; rules.append(cur); s = s[2:].strip()
+        if cur is None or ':' not in s:
+            continue
+        k, _, v = s.partition(':')
+        cur[k.strip()] = v.strip().strip('"\'')
+    want = path.strip('/').split('/')[0] if path else ''
+    best = None
+    for r in rules:
+        svc, host = r.get('service', ''), r.get('hostname', '')
+        if not host or not svc.startswith('http') or not svc.rstrip('/').endswith((f'localhost:{port}', f'127.0.0.1:{port}')):
+            continue
+        seg = ''
+        if r.get('path'):
+            m = re.search(r'/([A-Za-z0-9_.-]+)', r['path'])
+            seg = m.group(1) if m else ''
+            if not seg or (want and seg != want):
+                continue
+        elif want:
+            if best is None:
+                best = f'https://{host}/{want}'          # whole-host rule: the app's prefix still applies
+            continue
+        return f'https://{host}/{seg}' if seg else f'https://{host}/'
+    return best
+
+
 def mixer_url():
     """Header link to /mixer when the mixer app is installed on this Pi (~/mixer -- the same test its updater
-    uses). Local: same host, port 3000. Through the Cloudflare tunnel the port means nothing, so the public URL
-    comes from config.json "mixer_url" (e.g. https://stage-messenger.com/mixer); unset -> no button.
+    uses). Local: same host, port 3000. Through the Cloudflare tunnel the port means nothing: config.json
+    "mixer_url" wins, else the local cloudflared ingress is read for the hostname whose /mixer path rule maps to
+    localhost:3000 (tunnel_public_url); neither -> no button.
     The mixer does the mirror image (links.lightboard in mixer_config.json)."""
     # ~ may not be /home/pi under a hand-written unit (root HOME), so the fixed path and the unit count too
     if not any(os.path.exists(p) for p in (os.path.expanduser("~/mixer"), "/home/pi/mixer",
                                            "/etc/systemd/system/mixer.service")):
         return None
     if request.headers.get("Cf-Connecting-Ip"):
-        return config.get("mixer_url") or None
+        return config.get("mixer_url") or tunnel_public_url(3000, "/mixer")
     return f"{request.scheme}://{request.host.rsplit(':', 1)[0]}:3000/mixer"
 
 
