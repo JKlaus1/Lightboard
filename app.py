@@ -517,7 +517,9 @@ def mixer_url():
     uses). Local: same host, port 3000. Through the Cloudflare tunnel the port means nothing, so the public URL
     comes from config.json "mixer_url" (e.g. https://stage-messenger.com/mixer); unset -> no button.
     The mixer does the mirror image (links.lightboard in mixer_config.json)."""
-    if not os.path.isdir(os.path.expanduser("~/mixer")):
+    # ~ may not be /home/pi under a hand-written unit (root HOME), so the fixed path and the unit count too
+    if not any(os.path.exists(p) for p in (os.path.expanduser("~/mixer"), "/home/pi/mixer",
+                                           "/etc/systemd/system/mixer.service")):
         return None
     if request.headers.get("Cf-Connecting-Ip"):
         return config.get("mixer_url") or None
