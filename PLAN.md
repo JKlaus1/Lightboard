@@ -143,6 +143,16 @@ WiFi 600). Same code in both places -- keep them in step.
 - Not ported: the mixer's full diagnosis card (`netstate.diagnose`, `wrong_route` verdict) -- this
   page still shows NM's connectivity word only. Deploy: `update lights` on the Rack Pi.
 
+## Mixer link in the header (2026-10-31)
+
+- `index.html` header: a 🎚 button (left of 💬) opening `/mixer` in a new tab, rendered only when the mixer
+  app is on this Pi (`app.py` `mixer_url()`: `~/mixer` exists). Local opens -> same host, port 3000
+  (`http://lights.local:3000/mixer`); through the Cloudflare tunnel (`Cf-Connecting-Ip` present) the port
+  means nothing, so the URL is `config.json` `"mixer_url"` (new key, default `""` = no button; Rack Pi:
+  `https://stage-messenger.com/mixer` or whatever host `/mixer` lives on now). The mixer repo has the
+  mirror image (Settings -> This Pi -> Lightboard, `links.lightboard`). No tests touched; checked with the
+  Flask test client (local / tunnel unset / tunnel set / no ~/mixer).
+
 ## Environment / workflow notes
 - Pi: `pi@192.168.1.34`, dir `/home/pi/lightboard`, restart `sudo systemctl restart lightboard`.
 - Repo: https://github.com/JKlaus1/Lightboard.git (public). Pi pulls; phone (Termux) pushes.

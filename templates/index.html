@@ -271,6 +271,7 @@
   <div class="show-name">🎛 {{ show.name }}</div>
   <div class="header-btns">
     <button class="icon-btn" onclick="toggleDmxMonitor()">DMX</button>
+    {% if mixer_url %}<button class="icon-btn" title="Mixer (opens in a new tab)" onclick="window.open({{ mixer_url | tojson }}, '_blank', 'noopener')">🎚</button>{% endif %}
     <button class="icon-btn" onclick="location.href='/messenger'">💬</button>
     <button class="icon-btn" onclick="location.href='/settings'">⚙</button>
   </div>

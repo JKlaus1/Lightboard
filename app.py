@@ -512,10 +512,23 @@ def add_no_cache_headers(response):
 
 # ── Pages ─────────────────────────────────────────────────────────────────
 
+def mixer_url():
+    """Header link to /mixer when the mixer app is installed on this Pi (~/mixer -- the same test its updater
+    uses). Local: same host, port 3000. Through the Cloudflare tunnel the port means nothing, so the public URL
+    comes from config.json "mixer_url" (e.g. https://stage-messenger.com/mixer); unset -> no button.
+    The mixer does the mirror image (links.lightboard in mixer_config.json)."""
+    if not os.path.isdir(os.path.expanduser("~/mixer")):
+        return None
+    if request.headers.get("Cf-Connecting-Ip"):
+        return config.get("mixer_url") or None
+    return f"{request.scheme}://{request.host.rsplit(':', 1)[0]}:3000/mixer"
+
+
 @app.route("/")
 def index():
     return render_template("index.html",
         show=show_config,
+        mixer_url=mixer_url(),
         scenes=get_show_scenes(show_config, scene_type="main"),
         cycler_scenes=get_show_cycler_scenes(show_config),
         library_scenes=list_library_scenes(),
