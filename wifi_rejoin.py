@@ -18,9 +18,13 @@ off (someone ran `nmcli device disconnect`); profiles with autoconnect off (the 
 off for a network it gave up on); AP-mode profiles; profiles bound to another interface; any time the
 host's busy() says a WiFi-page connect is running. A profile whose `up` fails sits out FAIL_BACKOFF_S.
 
-One process per box acts: a flock on /run/lock/wifi-rejoin.lock (fallback /tmp). A Pi running both
-Lightboard and the mixer app gets one watchdog, whichever started first; the other takes over if it
-stops.
+One process per box and radio acts: a flock on /run/lock/wifi-rejoin-<dev>.lock (fallback /tmp). A Pi
+running both Lightboard and the mixer app gets one watchdog, whichever started first; the other takes
+over if it stops.
+
+Second radio (mixer netwifi/dualradio.py): a Rejoiner(dev2, bound_only=True,
+respect_dev_autoconnect=False) brings up only profiles bound to the USB radio -- the uplink manager
+keeps that device's NM autoconnect off on purpose, so the flag is ignored there.
 
 SAME FILE in both repos -- keep them in step:
   mixer       netwifi/rejoin.py   (started by netwifi.init_netwifi)
@@ -38,7 +42,7 @@ TICK_S = 15
 RESCAN_EVERY_S = 30
 TUNE_EVERY_S = 300
 FAIL_BACKOFF_S = 120
-LOCK_PATHS = ("/run/lock/wifi-rejoin.lock", "/tmp/wifi-rejoin.lock")
+LOCK_PATHS = ("/run/lock/wifi-rejoin-{dev}.lock", "/tmp/wifi-rejoin-{dev}.lock")
 
 
 def _run_default(args, timeout=20):
@@ -86,8 +90,11 @@ PROFILE_FIELDS = ("connection.autoconnect,connection.autoconnect-priority,connec
 
 
 class Rejoiner:
-    def __init__(self, dev="wlan0", busy=None, on_join=None, run=None, log=None, clock=None):
+    def __init__(self, dev="wlan0", busy=None, on_join=None, run=None, log=None, clock=None,
+                 bound_only=False, respect_dev_autoconnect=True):
         self.dev = dev
+        self.bound_only = bound_only                    # only profiles with interface-name == dev
+        self.respect_dev_autoconnect = respect_dev_autoconnect
         self.busy = busy or (lambda: False)
         self.on_join = on_join
         self.run = run or _run_default
@@ -195,6 +202,7 @@ class Rejoiner:
         if self._lock_fd is not None:
             return True
         for path in LOCK_PATHS:
+            path = path.format(dev=self.dev)
             try:
                 fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
             except OSError:
@@ -228,14 +236,15 @@ class Rejoiner:
             return "skip:" + str(st)
         if self.busy():
             return "busy"
-        if not self.dev_autoconnect():
+        if self.respect_dev_autoconnect and not self.dev_autoconnect():
             return "dev_off"
         rescan = now - self._last_rescan >= RESCAN_EVERY_S
         if rescan:
             self._last_rescan = now
         seen = self.visible(rescan)
         cands = [p for p in self.profiles()
-                 if p["autoconnect"] and p["iface"] in ("", self.dev) and p["ssid"] in seen
+                 if p["autoconnect"] and p["iface"] in ((self.dev,) if self.bound_only else ("", self.dev))
+                 and p["ssid"] in seen
                  and now - self._failed.get(p["name"], -1e9) >= FAIL_BACKOFF_S]
         if not cands:
             if not self._said_waiting:

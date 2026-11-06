@@ -153,8 +153,10 @@ PLAN.md 2026-11-06 block has the detail); ported here so a Lightboard-only Pi ge
   highest autoconnect-priority (then signal). Skips autoconnect-off profiles, AP profiles, profiles bound
   to another interface, device autoconnect off, and a /wifi connect in progress. Failed `up` -> 120 s
   backoff. Also sets `autoconnect-retries 0` + `powersave 2` on saved client profiles (first tick, every
-  5 min, and right after a /wifi join). One watchdog per box via `flock /run/lock/wifi-rejoin.lock`, so on
-  the Rack Pi it's whichever of Lightboard / mixer started first.
+  5 min, and right after a /wifi join). One watchdog per box and radio via `flock /run/lock/wifi-rejoin-<dev>.lock`
+  (per-device since 2026-11-06), so on the Rack Pi it's whichever of Lightboard / mixer started first.
+- 2026-11-06 sync: `bound_only` / `respect_dev_autoconnect` added for the mixer's USB-WiFi second radio
+  (`netwifi/dualradio.py`, mixer repo -- not ported here: Lightboard has no remote sign-in browser).
 - `wifi_routes.py`: `start_rejoin()` called from `register_wifi_routes`; `BUSY` tuple (also used by the
   connect / portal-login guards); `_keep()` tunes the joined profile; `/api/wifi/status` gains `rejoin`.
   Off switch: `"wifi_rejoin": false` in config.json. Journal: `journalctl -u lightboard | grep rejoin`.

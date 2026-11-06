@@ -94,7 +94,7 @@ Superseded 2026-11-06 by the in-app rejoin watchdog (`wifi_rejoin.py` here,
 `disconnected` it rescans and brings up the best saved network in range, and it
 keeps every saved client profile at `autoconnect-retries 0` / power save off
 (re-applied every 5 min, so netplan `/run` profiles get it back after a reboot).
-Watch: `journalctl -u lightboard -u mixer | grep rejoin`. Off: `"wifi_rejoin": false`
+Watch: `journalctl -u lightboard -u mixer | grep rejoin`. Lock: `/run/lock/wifi-rejoin-<dev>.lock`. Off: `"wifi_rejoin": false`
 in config.json (Lightboard) / mixer_config.json (mixer).
 
 ## Repo layout note (2026-07-03)
