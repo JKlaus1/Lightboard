@@ -143,6 +143,24 @@ WiFi 600). Same code in both places -- keep them in step.
 - Not ported: the mixer's full diagnosis card (`netstate.diagnose`, `wrong_route` verdict) -- this
   page still shows NM's connectivity word only. Deploy: `update lights` on the Rack Pi.
 
+## WiFi rejoin watchdog (2026-11-06)
+
+Why: Presley's (mixer-only) Pi booted before his hotspot was broadcasting and never joined it -- NM
+blocks a saved profile after 4 autoconnect tries. Fixed in the mixer repo (`netwifi/rejoin.py`, its
+PLAN.md 2026-11-06 block has the detail); ported here so a Lightboard-only Pi gets it too.
+- `wifi_rejoin.py` (new) -- SAME FILE as mixer `netwifi/rejoin.py`, keep in step. Every 15 s, only when
+  wlan0 is `disconnected`: rescan (<= every 30 s), `nmcli connection up` the saved profile in range with the
+  highest autoconnect-priority (then signal). Skips autoconnect-off profiles, AP profiles, profiles bound
+  to another interface, device autoconnect off, and a /wifi connect in progress. Failed `up` -> 120 s
+  backoff. Also sets `autoconnect-retries 0` + `powersave 2` on saved client profiles (first tick, every
+  5 min, and right after a /wifi join). One watchdog per box via `flock /run/lock/wifi-rejoin.lock`, so on
+  the Rack Pi it's whichever of Lightboard / mixer started first.
+- `wifi_routes.py`: `start_rejoin()` called from `register_wifi_routes`; `BUSY` tuple (also used by the
+  connect / portal-login guards); `_keep()` tunes the joined profile; `/api/wifi/status` gains `rejoin`.
+  Off switch: `"wifi_rejoin": false` in config.json. Journal: `journalctl -u lightboard | grep rejoin`.
+- Tests: `test_wifi_rejoin.py` (same body as the mixer's, nmcli faked, ALL PASS); `test_wifi_routes.py`
+  still ALL PASS.
+
 ## Mixer link in the header (2026-10-31)
 
 - `index.html` header: a 🎚 link (`<a target="_blank">`, left of 💬 -- a `window.open` button was blocked

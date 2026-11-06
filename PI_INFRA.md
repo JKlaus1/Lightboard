@@ -89,6 +89,13 @@ Plus: disable auto-timeout on the phone's hotspot so it keeps broadcasting.
 Verify applied:  nmcli -f connection.autoconnect-retries,connection.autoconnect-priority connection show android-hotspot
 (An optional systemd watchdog timer was discussed as a gig-reliability
 backstop — documented only, not built.)
+Superseded 2026-11-06 by the in-app rejoin watchdog (`wifi_rejoin.py` here,
+`netwifi/rejoin.py` in the mixer repo; one acts per box): whenever wlan0 is
+`disconnected` it rescans and brings up the best saved network in range, and it
+keeps every saved client profile at `autoconnect-retries 0` / power save off
+(re-applied every 5 min, so netplan `/run` profiles get it back after a reboot).
+Watch: `journalctl -u lightboard -u mixer | grep rejoin`. Off: `"wifi_rejoin": false`
+in config.json (Lightboard) / mixer_config.json (mixer).
 
 ## Repo layout note (2026-07-03)
 This doc, BOOT_FIX.md, and the OS-level support files now live in the

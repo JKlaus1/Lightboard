@@ -9,13 +9,19 @@
 #
 # Requires a polkit rule letting the service user (pi) manage NetworkManager
 # (see 50-lightboard-nm.rules). nmcli auto-saves connected profiles with
-# autoconnect on, so returning to a venue reconnects on its own.
+# autoconnect on, so returning to a venue reconnects on its own. The rejoin
+# watchdog (wifi_rejoin.py, started here) joins a saved network whenever wlan0
+# sits disconnected -- e.g. a hotspot switched on after the Pi booted.
 
+import json
+import os
 import subprocess
 import threading
 import time
 import urllib.request
 from flask import render_template, request, jsonify
+
+import wifi_rejoin
 
 WIFI_DEV = "wlan0"
 ETH_DEV = "eth0"
@@ -29,6 +35,8 @@ PORTAL_TRIGGER_URL = "http://neverssl.com"     # plain-HTTP URL that trips the c
 _connect_state = {"status": "idle", "ssid": None, "detail": "", "ts": 0.0}
 _state_lock = threading.Lock()
 _scan_sec = {}                       # ssid -> nmcli SECURITY string from the last scan
+BUSY = ("connecting", "checking", "portal")
+_rejoiner = None                     # wifi_rejoin.Rejoiner: joins a saved network whenever wlan0 sits disconnected
 
 
 def _run(args, timeout=20):
@@ -196,6 +204,8 @@ def _join_retry(conn, created, security=""):
 def _keep(conn):
     """Joined with internet: make sure it auto-reconnects (an earlier no-internet revert turns that off)."""
     _run(["nmcli", "connection", "modify", conn, "connection.autoconnect", "yes"], timeout=10)
+    if _rejoiner:                    # and retry forever / no power save, like the watchdog's tuning
+        _rejoiner.tune(only=conn)
 
 
 def _wlan_ip():
@@ -358,6 +368,7 @@ def get_status():
         "connectivity": _nm_connectivity(),
         "internet": internet_source(),
         "connect": connect,
+        "rejoin": dict(_rejoiner.last) if _rejoiner else None,   # last watchdog action (joined / waiting / failed)
     }
 
 
@@ -444,7 +455,28 @@ def _do_portal_login(ssid, password, prev, profile=None):
     _set_state("portal_timeout", ssid, "Portal not completed in time — reverted to your previous network.")
 
 
+def _rejoin_enabled():
+    """config.json "wifi_rejoin": false turns the rejoin watchdog off (default on)."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json"), encoding="utf-8") as f:
+            return json.load(f).get("wifi_rejoin", True) is not False
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def start_rejoin():
+    """WiFi rejoin watchdog (wifi_rejoin.py). On a box that also runs the mixer app only one of the two
+    acts (shared lock); a Lightboard-only Pi gets it from here."""
+    global _rejoiner
+    if _rejoiner is None and _rejoin_enabled():
+        _rejoiner = wifi_rejoin.Rejoiner(WIFI_DEV, busy=lambda: _connect_state.get("status") in BUSY).start()
+    print("[wifi] rejoin watchdog " + ("on" if _rejoiner else "off (wifi_rejoin false)"), flush=True)
+    return _rejoiner
+
+
 def register_wifi_routes(app):
+    start_rejoin()
+
     @app.route("/wifi")
     def wifi_page():
         return render_template("wifi.html")
@@ -469,7 +501,7 @@ def register_wifi_routes(app):
         if profile and profile not in {p["name"] for p in saved_wifi_profiles()}:
             return jsonify({"ok": False, "error": "No saved network named " + profile}), 400
         with _state_lock:
-            if _connect_state["status"] in ("connecting", "checking"):
+            if _connect_state["status"] in BUSY:
                 return jsonify({"ok": False, "error": "A connect attempt is already running"}), 409
             _connect_state.update(status="connecting", ssid=ssid, detail="Starting", ts=time.time())
         prev = _active_wlan_connection()
@@ -487,7 +519,7 @@ def register_wifi_routes(app):
         if profile and profile not in {p["name"] for p in saved_wifi_profiles()}:
             return jsonify({"ok": False, "error": "No saved network named " + profile}), 400
         with _state_lock:
-            if _connect_state["status"] in ("connecting", "checking", "portal"):
+            if _connect_state["status"] in BUSY:
                 return jsonify({"ok": False, "error": "Busy"}), 409
             _connect_state.update(status="connecting", ssid=ssid, detail="Starting", ts=time.time())
         prev = _active_wlan_connection()
