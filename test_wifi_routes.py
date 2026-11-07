@@ -5,7 +5,9 @@ handshake timeout ("Secrets were required"). nmcli / ip are faked -- nothing tou
 
   python3 test_wifi_routes.py
 """
+import os
 import sys
+import tempfile
 
 import wifi_routes as w
 
@@ -139,6 +141,25 @@ def main():
     check("half-made profile dropped, back on the old network",
           ["nmcli", "connection", "delete", "Venue2"] in calls and active["wlan"] == "Old Net")
     check("WPA2-only: no key-mgmt pin", not any("wifi-sec.key-mgmt" in c for c in calls))
+
+    print("client radio pick: onboard by bus, not by name")
+    def fake_sys(layout):
+        root = tempfile.mkdtemp()
+        net = os.path.join(root, "net")
+        os.makedirs(net)
+        for dev, bus in layout.items():
+            tgt = os.path.join(root, "devices", bus, dev)
+            os.makedirs(tgt)
+            os.makedirs(os.path.join(net, dev))
+            os.symlink(tgt, os.path.join(net, dev, "device"))
+        return net
+    check("normal: wlan0 onboard, wlan1 USB -> wlan0",
+          w._pick_client_dev(fake_sys({"wlan0": "mmc1/mmc1:0001", "wlan1": "usb1/1-1/1-1.2"})) == "wlan0")
+    check("swapped: wlan0 = USB dongle -> wlan1",
+          w._pick_client_dev(fake_sys({"wlan0": "usb1/1-1/1-1.2", "wlan1": "mmc1/mmc1:0001"})) == "wlan1")
+    check("USB only (no onboard) -> wlan0 fallback",
+          w._pick_client_dev(fake_sys({"wlan0": "usb1/1-1/1-1.2"})) == "wlan0")
+    check("no sysfs -> wlan0", w._pick_client_dev("/nonexistent/net") == "wlan0")
 
     print(f"\n{'ALL PASS' if not FAILS else str(len(FAILS)) + ' FAILED'}")
     sys.exit(1 if FAILS else 0)

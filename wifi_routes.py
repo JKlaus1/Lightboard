@@ -23,7 +23,23 @@ from flask import render_template, request, jsonify
 
 import wifi_rejoin
 
-WIFI_DEV = "wlan0"
+def _pick_client_dev(net="/sys/class/net"):
+    """The WiFi client radio = the onboard (non-USB) one. wlan0/wlan1 names follow probe order, and a
+    USB AP dongle that drops off the bus and re-enumerates (Venue Pi 3B, 2026-11-06: 117 times in one
+    night) must never be scanned / joined as a client. Prefers wlan0 if it's onboard; no onboard radio
+    found (or no sysfs) -> wlan0 as before."""
+    try:
+        devs = sorted(d for d in os.listdir(net) if d.startswith("wl"))
+    except OSError:
+        return "wlan0"
+    onboard = [d for d in devs if os.path.exists(os.path.join(net, d, "device"))
+               and "/usb" not in os.path.realpath(os.path.join(net, d, "device"))]
+    if "wlan0" in onboard:
+        return "wlan0"
+    return onboard[0] if onboard else "wlan0"
+
+
+WIFI_DEV = _pick_client_dev()
 ETH_DEV = "eth0"
 ETH_PROFILE = "mixer-network"   # the DHCP eth0 profile the mixer install makes (console LAN only)
 KIOSK_CMD_FILE = "/tmp/lightboard_kiosk_cmd"   # watched by kiosk_portal_watch.sh in the GUI session

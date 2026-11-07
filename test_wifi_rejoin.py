@@ -31,15 +31,18 @@ class FakeNM:
     """Just enough nmcli for rejoin.py."""
     def __init__(self):
         self.profiles = {}           # name -> dict of nmcli fields
+        self.macs = {}               # name -> 802-11-wireless.mac-address pin
         self.state = "disconnected"
         self.dev_auto = "yes"
         self.visible = {}            # ssid -> signal
         self.up_rc = {}              # profile -> rc for `connection up`
         self.calls = []
         self.rescans = 0
+        self.hwaddr = "DC:A6:32:00:00:01"
 
     def add(self, name, ssid=None, auto="yes", prio=0, retries="-1 (default)", iface="", mode="infrastructure",
-            ps="0 (default)"):
+            ps="0 (default)", mac=""):
+        self.macs[name] = mac
         self.profiles[name] = {"connection.autoconnect": auto, "connection.autoconnect-priority": str(prio),
                                "connection.autoconnect-retries": retries, "connection.interface-name": iface,
                                "802-11-wireless.ssid": ssid or name, "802-11-wireless.mode": mode,
@@ -60,6 +63,16 @@ class FakeNM:
             if p is None:
                 return 10, "", "no such connection"
             return 0, "".join(f"{k}:{self.esc(v)}\n" for k, v in p.items()), ""
+        if a[:4] == ["nmcli", "-t", "-f", R.AP_FIELDS] and a[4:6] == ["connection", "show"]:
+            p = self.profiles.get(a[6])
+            if p is None:
+                return 10, "", "no such connection"
+            f = {"802-11-wireless.mode": p["802-11-wireless.mode"],
+                 "802-11-wireless.mac-address": self.macs.get(a[6], ""),
+                 "connection.interface-name": p["connection.interface-name"]}
+            return 0, "".join(f"{k}:{self.esc(v)}\n" for k, v in f.items()), ""
+        if a[:5] == ["nmcli", "-t", "-f", "GENERAL.HWADDR", "device"]:
+            return 0, f"GENERAL.HWADDR:{self.esc(self.hwaddr)}\n", ""
         if a == ["nmcli", "-t", "-f", "DEVICE,STATE", "device"]:
             wl = f"wlan0:{self.state}\n" if self.state is not None else ""
             return 0, "eth0:connected\n" + wl + "lo:connected (externally)\n", ""
@@ -201,6 +214,21 @@ def main():
     check("inside backoff -> not retried", r.tick() == "nothing" and nm.ups() == ["WrongPass"])
     clk.t += R.FAIL_BACKOFF_S
     check("after backoff -> retried", r.tick() == "failed:WrongPass" and nm.ups() == ["WrongPass", "WrongPass"])
+
+    print("AP radio guard (USB AP dongle re-enumerated as wlan0)")
+    nm = FakeNM(); nm.add("VenueGuest", prio=5); nm.visible = {"VenueGuest": 70}
+    nm.add("venue-ap", ssid="Lights-Rig", mode="ap", mac="9c:ef:d5:f6:19:35")
+    nm.hwaddr = "9C:EF:D5:F6:19:35"
+    r, clk, _ = make(nm)
+    check("AP pinned to this radio by MAC -> left alone", r.tick() == "ap_radio" and nm.ups() == [])
+    nm = FakeNM(); nm.add("VenueGuest"); nm.visible = {"VenueGuest": 70}
+    nm.add("venue-ap", ssid="Lights-Rig", mode="ap", iface="wlan0")
+    r, clk, _ = make(nm)
+    check("AP pinned to this radio by ifname -> left alone", r.tick() == "ap_radio" and nm.ups() == [])
+    nm = FakeNM(); nm.add("VenueGuest"); nm.visible = {"VenueGuest": 70}
+    nm.add("venue-ap", ssid="Lights-Rig", mode="ap", mac="9C:EF:D5:F6:19:35")
+    r, clk, _ = make(nm)
+    check("AP pinned to another radio -> normal rejoin", r.tick() == "joined:VenueGuest")
 
     print("periodic re-tune + one watchdog per box")
     lock = os.path.join(tempfile.mkdtemp(), "wifi-rejoin.lock")

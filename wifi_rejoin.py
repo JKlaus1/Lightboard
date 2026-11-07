@@ -14,9 +14,10 @@ up (Presley's gig, 2026-11). Two layers:
                retry block, so this works even on a profile that still has the default 4.
 
 Left alone: wlan0 connected / connecting / unavailable (radio off) / unmanaged; device autoconnect
-off (someone ran `nmcli device disconnect`); profiles with autoconnect off (the WiFi page turns that
-off for a network it gave up on); AP-mode profiles; profiles bound to another interface; any time the
-host's busy() says a WiFi-page connect is running. A profile whose `up` fails sits out FAIL_BACKOFF_S.
+off (someone ran `nmcli device disconnect`); a radio an AP-mode profile is pinned to (MAC or ifname --
+a USB AP dongle that re-enumerates under this name sits 'disconnected' for a moment); profiles with
+autoconnect off (the WiFi page turns that off for a network it gave up on); AP-mode profiles; profiles
+bound to another interface; any time the host's busy() says a WiFi-page connect is running. A profile whose `up` fails sits out FAIL_BACKOFF_S.
 
 One process per box and radio acts: a flock on /run/lock/wifi-rejoin-<dev>.lock (fallback /tmp). A Pi
 running both Lightboard and the mixer app gets one watchdog, whichever started first; the other takes
@@ -87,6 +88,7 @@ def _lead_int(s, default=None):
 PROFILE_FIELDS = ("connection.autoconnect,connection.autoconnect-priority,connection.autoconnect-retries,"
                   "connection.interface-name,802-11-wireless.ssid,802-11-wireless.mode,"
                   "802-11-wireless.powersave")
+AP_FIELDS = "802-11-wireless.mode,802-11-wireless.mac-address,connection.interface-name"
 
 
 class Rejoiner:
@@ -105,6 +107,7 @@ class Rejoiner:
         self._failed = {}            # profile name -> time its `up` failed
         self._lock_fd = None
         self._said_waiting = False   # "nothing in range" logged once per disconnect, not every tick
+        self._said_ap = False
         self.last = {"action": None, "ts": 0.0, "detail": ""}
 
     # ── NetworkManager reads ────────────────────────────────────────────────
@@ -147,6 +150,35 @@ class Rejoiner:
             if len(p) >= 2 and p[0] == self.dev:
                 return p[1].strip()
         return None
+
+    def is_ap_radio(self):
+        """True if an AP-mode profile is pinned to this radio (by MAC or interface name). Such a radio
+        sits 'disconnected' for a few seconds every time it re-enumerates (a flaky USB AP dongle) --
+        joining a client network on it then would take the AP down for good."""
+        _, out, _ = self.run(["nmcli", "-t", "-f", "GENERAL.HWADDR", "device", "show", self.dev], timeout=10)
+        mac = ""
+        for line in out.splitlines():
+            p = _split_terse(line)
+            if len(p) >= 2 and p[0] == "GENERAL.HWADDR":
+                mac = ":".join(p[1:]).strip().upper()
+        _, out, _ = self.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], timeout=10)
+        names = [p[0] for p in (_split_terse(l) for l in out.splitlines())
+                 if len(p) >= 2 and p[1] == "802-11-wireless" and p[0]]
+        for name in names:
+            rc, o, _ = self.run(["nmcli", "-t", "-f", AP_FIELDS, "connection", "show", name], timeout=10)
+            if rc != 0:
+                continue
+            f = {}
+            for line in o.splitlines():
+                parts = _split_terse(line)
+                if len(parts) >= 2:
+                    f[parts[0]] = ":".join(parts[1:]).strip()
+            if f.get("802-11-wireless.mode") != "ap":
+                continue
+            pin_mac = (f.get("802-11-wireless.mac-address") or "").upper()
+            if (mac and pin_mac == mac) or f.get("connection.interface-name") == self.dev:
+                return True
+        return False
 
     def dev_autoconnect(self):
         """False only when NM says the device itself has autoconnect off (`nmcli device disconnect`)."""
@@ -224,7 +256,7 @@ class Rejoiner:
 
     def tick(self):
         """One check. Returns what happened: 'not_owner' | 'busy' | 'skip:<state>' | 'dev_off' |
-        'nothing' | 'joined:<profile>' | 'failed:<profile>'."""
+        'ap_radio' | 'nothing' | 'joined:<profile>' | 'failed:<profile>'."""
         if not self._have_lock():
             return "not_owner"
         now = self.clock()
@@ -238,6 +270,11 @@ class Rejoiner:
             return "busy"
         if self.respect_dev_autoconnect and not self.dev_autoconnect():
             return "dev_off"
+        if self.is_ap_radio():
+            if not self._said_ap:
+                self.log(f"rejoin: {self.dev} is the AP radio -- leaving it alone")
+                self._said_ap = True
+            return "ap_radio"
         rescan = now - self._last_rescan >= RESCAN_EVERY_S
         if rescan:
             self._last_rescan = now
