@@ -143,6 +143,41 @@ WiFi 600). Same code in both places -- keep them in step.
 - Not ported: the mixer's full diagnosis card (`netstate.diagnose`, `wrong_route` verdict) -- this
   page still shows NM's connectivity word only. Deploy: `update lights` on the Rack Pi.
 
+## Venue Pi: Lights-Rig outages + radio-safety hardening (2026-11-07, `f946ea4`)
+
+Symptom (two gig nights, 11-05 and 11-06): `Lights-Rig` stopped broadcasting, all light control
+lost (this install runs **all Art-Net over WiFi** -- no eth0), kiosk still worked. Unplug/replug of the
+Panda brought everything back.
+- Root cause = **USB, not software**: the Panda (`0e8d:7610`, port `1-1.2`) logged **117
+  `USB disconnect`s** in one boot (sporadic from ~19:52, bursts of 10-18/min from ~22:40 -- Pi clock,
+  ~1 h slow, see PI_INFRA). Each drop = ~10 s AP outage until NM re-activates `venue-ap`; the fatal
+  one is `probe with driver mt76x0u failed with error -110` -- dongle back on the bus, driver never
+  binds, no wlan1, AP dead until a replug. Also `tx urb failed: -71` (EPROTO) and `MAC RX did not
+  stop!`. `vcgencmd get_throttled` = `0x0` (input rail fine; doesn't see USB-port sag). A reseat
+  stopped the burst at once -> contact / port-power problem.
+- **The Venue Pi is a Raspberry Pi 3 Model B Rev 1.2**, not the 4B it was benched as: `dwc_otg`
+  controller, all 4 USB ports + Ethernet behind one USB2 hub, ~1.2 A shared. The 52Pi touchscreen's
+  touch is also powered from a Pi USB port.
+- Fix plan (hardware, Joseph): powered USB 2.0 hub for Panda + touchscreen, or move the SD card to a
+  Pi 4B if it keeps acting up. Not done yet.
+- Software (`f946ea4`): `wifi_routes._pick_client_dev()` -- `WIFI_DEV` = the onboard (non-USB)
+  wlan by its sysfs bus path, prefer wlan0, fallback wlan0 (a re-enumerating dongle could otherwise
+  come up as wlan0 and the /wifi page would scan/join on the AP radio). `wifi_rejoin.Rejoiner.is_ap_radio()`
+  -- tick returns `ap_radio` and does nothing on a radio an AP-mode profile is pinned to (MAC or
+  ifname). Tests: `test_wifi_rejoin.py` + `test_wifi_routes.py` ALL PASS (new cases: AP guard by MAC /
+  ifname / other radio; radio pick normal / swapped / USB-only / no sysfs). **Mixer repo
+  `netwifi/rejoin.py` NOT yet synced** with this guard (same-file rule) -- do it next mixer session.
+- Pre-existing, unrelated: `test_remote.py` 39/40 -- "master reset to 100% by clear_all" fails on
+  `7a419ab` too (likely the 2026-08-08 configurable fader startup levels). Not touched.
+- Venue Pi updated `4444f37` -> `f946ea4` **offline** (no internet at the venue) with a git-bundle
+  tarball over SSH (method in PI_INFRA). Verified on the Pi: `## main...origin/main`, `/api/state` 200,
+  `[wifi] rejoin watchdog on` acting on wlan0, `wlan1 connected venue-ap`. The Pi had **deleted 30
+  tracked repo scenes/shows** (sample + old scenes, `shows/blizzard_bars_only`, `shows/test2`) --
+  kept deleted. `presets.json` is untracked (git never touches it). The 4444f37 config migration had
+  already run in October. AI deps (`anthropic`) not installed there yet -- needs internet.
+- Joseph's next step: join `wlan0` to venue WiFi or his phone hotspot from the kiosk /wifi page (the
+  Fold hotspot + `Lindentree` profiles are saved and now retry forever).
+
 ## WiFi rejoin watchdog (2026-11-06)
 
 Why: Presley's (mixer-only) Pi booted before his hotspot was broadcasting and never joined it -- NM

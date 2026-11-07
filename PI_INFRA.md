@@ -112,6 +112,10 @@ Pi are unchanged and are what BOOT_FIX.md / this doc describe:
 Separate Pi from the rack `Lights`. Bench unit: Pi 4B, hostname `Venue`, Trixie,
 built by the wizard `install.sh` (ROLE=venue). Was reachable at `192.168.1.84`
 on home WiFi during the bench.
+**Correction 2026-11-07: the deployed `Venue` is a Raspberry Pi 3 Model B Rev 1.2**
+(`cat /proc/device-tree/model`), kernel 6.18 aarch64. See "Venue Pi 3B: USB AP
+dropouts" below. Current install runs all Art-Net over WiFi (EasyNode on
+Lights-Rig); eth0 unused (`unavailable`).
 - eth0: static `192.168.0.50/24`, profile `venue-artnet`, never-default. Art-Net
   **broadcast** `192.168.0.255`; CR011R (PKnight) lives on this segment.
 - wlan1 = Panda MT7610U (MAC `9c:ef:d5:f6:19:35`): AP `Lights-Rig` / PSK
@@ -139,6 +143,43 @@ on home WiFi during the bench.
   Touch Config faders can also target the Master (Colour) or Singer dimmer
   directly (system faders), not just fixtures/groups.
 - SSH: pubkey-only. authorized_keys = `josep@MSI`, `termux@phone`.
+
+## Venue Pi 3B: USB AP dropouts + offline update (2026-11-07)
+- Pi 3B USB = `dwc_otg`, one USB2 hub (ports `1-1.2`..`1-1.5`, Ethernet `1-1.1`),
+  ~1.2 A shared across ports. The Panda on `1-1.2` dropped off USB 117 times in
+  one night; a drop that ends in `mt76x0u ... probe ... failed with error -110`
+  leaves no wlan1 and Lights-Rig down until a replug. Touchscreen touch is also
+  USB-powered from the Pi. Plan: powered USB 2.0 hub for both, or Pi 4B swap.
+- Triage, current boot (paste as pi):
+    vcgencmd get_throttled
+    sudo journalctl -k -b --no-pager | grep "USB disconnect" | grep -oE "usb [0-9.-]+:" | sort | uniq -c
+    sudo journalctl -k -b --no-pager | grep "USB disconnect" | cut -c1-12 | uniq -c | tail -30
+    sudo journalctl -k -b --no-pager | grep -iE "mt76|-71|-110" | tail -30
+  Field recovery: unplug/replug the Panda; NM auto-activates `venue-ap` ~5 s
+  after wlan1 reappears.
+- Interface names: client radio is chosen by bus since `f946ea4` (onboard = not
+  under `/usb` in `/sys/class/net/<dev>/device`), and the rejoin watchdog skips
+  any radio an AP profile is pinned to. `venue-ap` stays MAC-pinned to the Panda.
+- Clock: no RTC and no internet at the venue -> the Pi ran ~1 h+ slow on
+  2026-11-06 (fake-hwclock). Journal times from that night are early by that
+  much. Fixes itself once wlan0 has internet (NTP).
+- SSH from the Fold over Lights-Rig: `pi@venue.local` (password auth works).
+- **Offline update (no internet on the Pi)** -- what was used 2026-11-07:
+  build on a machine with the repo: `git bundle create lightboard.bundle main`
+  (full bundle, no prerequisites, works on a shallow or old checkout) + an
+  `apply.sh` that: backs up `~/lightboard` (minus venvs) to
+  `~/lightboard-backup-<time>/lightboard.tgz`; `git fetch <bundle> main`;
+  refuses if HEAD isn't an ancestor or code files are edited/deleted; keeps the
+  Pi's own edits AND deletions under `config.json|palette.json|presets.json|
+  scene_library/|shows/|fixtures/`; `git merge --ff-only FETCH_HEAD`;
+  `git update-ref refs/remotes/origin/main <target>` (so a later online
+  `git pull` is clean); refreshes `~/kiosk-sleep-watch.py` if deployed;
+  py_compiles in the unit's venv (`.venv` on Venue); restarts and checks
+  `/api/state`. Transfer: `scp <tarball> pi@venue.local:~/`, then
+  `tar xzf ... && bash .../apply.sh && sudo reboot` (chain the reboot so it
+  only runs on success). Once online, `git pull` works normally again.
+- After the update `anthropic` is not in Venue's `.venv` (AI only, lazy import):
+  once online `~/lightboard/.venv/bin/python -m pip install -r ~/lightboard/requirements.txt`.
 
 ## Rack <-> Venue remote control (two-Pi link, validated 2026-07-05)
 - Rack Pi (`Lights`) joins the venue AP as a WiFi client: profile `venue-link`
